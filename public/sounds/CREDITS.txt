@@ -1,4 +1,0 @@
-Sound credits
-=============
-- engine.mp3 — Mixkit (Mixkit Free Sound Effects License)
-- wind.ogg, wood.ogg, crash.ogg, pop.ogg — Google Sound Library (CC BY 4.0)
