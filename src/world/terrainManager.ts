@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { worldToChunk, chunkKey, chunkOrigin, type ChunkCoord } from './chunk';
 import { diffChunks } from './terrainSelection';
 import { buildTerrainMesh } from '../render/terrainMesh';
+import type { Biome } from './biome';
 
 interface Resp { cx: number; cz: number; heights: Float32Array }
 
@@ -17,7 +18,12 @@ export class TerrainManager {
   private heights = new Map<string, Float32Array>();
   private pending = new Set<string>();
 
-  constructor(private seed: number, private scene: THREE.Scene, private physics?: TerrainPhysicsHooks) {
+  constructor(
+    private seed: number,
+    private scene: THREE.Scene,
+    private biome: Biome,
+    private physics?: TerrainPhysicsHooks,
+  ) {
     this.worker = new Worker(new URL('./terrainWorker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent<Resp>) => this.onChunk(e.data);
   }
@@ -27,7 +33,7 @@ export class TerrainManager {
     this.pending.delete(key);
     if (!this.isWanted({ cx, cz })) return; // moved away while generating
     const origin = chunkOrigin({ cx, cz });
-    const mesh = buildTerrainMesh(heights, origin.x, origin.z);
+    const mesh = buildTerrainMesh(heights, origin.x, origin.z, this.biome);
     this.scene.add(mesh);
     this.meshes.set(key, mesh);
     this.heights.set(key, heights);

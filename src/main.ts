@@ -1,6 +1,7 @@
 // src/main.ts
 import { createRenderer } from './render/renderer';
 import { createHeightField } from './world/noise';
+import { createBiome } from './world/biome';
 import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
@@ -10,6 +11,7 @@ import { ChaseCamera } from './render/chaseCamera';
 import { connectToArena } from './net/connection';
 import { PlayerViews } from './net/playerViews';
 import { TireTracks } from './render/groundDecals';
+import { Water } from './render/water';
 import { sanitizeInput, SERVER_PORT } from '../shared/protocol';
 import type RAPIER from '@dimforge/rapier3d-compat';
 
@@ -19,13 +21,14 @@ window.addEventListener('resize', ctx.resize);
 
 const conn = await connectToArena(`ws://${location.hostname}:${SERVER_PORT}`, 'rider');
 const heightField = createHeightField(conn.seed);
+const biome = createBiome(conn.seed);
 
 // The local player's buggy is simulated LOCALLY at 60fps for smooth, instant control; inputs are
 // also sent to the server so other players see us. The server stays authoritative for everyone
 // else (full prediction + reconciliation that ties the two together is Plan 2b).
 const world = await initPhysics();
 const colliders = new Map<string, RAPIER.Collider>();
-const terrain = new TerrainManager(conn.seed, ctx.scene, {
+const terrain = new TerrainManager(conn.seed, ctx.scene, biome, {
   onLoad: (key, heights, ox, oz) => colliders.set(key, addChunkCollider(world, heights, ox, oz)),
   onUnload: (key) => {
     const c = colliders.get(key);
@@ -46,6 +49,7 @@ const views = new PlayerViews(ctx.scene); // remote players only
 const keyboard = new Keyboard();
 const chase = new ChaseCamera(ctx.camera, heightField);
 const tracks = new TireTracks(ctx.scene, heightField);
+const water = new Water(ctx.scene, biome.waterLevel);
 const playerCountEl = document.getElementById('player-count');
 const speedEl = document.getElementById('speed');
 
@@ -95,6 +99,7 @@ function frame() {
   const p = buggy.position();
   terrain.update(p.x, p.z, 3);
   tracks.update(buggy.mesh, buggy.speed());
+  water.update(p.x, p.z);
   ctx.focusSun(p.x, p.y, p.z);
   chase.update(buggy.mesh);
 
