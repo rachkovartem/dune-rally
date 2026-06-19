@@ -1,6 +1,7 @@
 // src/main.ts
 import { createRenderer } from './render/renderer';
 import { resolveSeed } from './world/seed';
+import { createHeightField } from './world/noise';
 import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
@@ -14,6 +15,7 @@ const ctx = createRenderer(canvas);
 window.addEventListener('resize', ctx.resize);
 
 const seed = resolveSeed(window.location.href, '2026-06-19');
+const heightField = createHeightField(seed);
 const world = await initPhysics();
 
 const colliders = new Map<string, RAPIER.Collider>();
@@ -25,9 +27,9 @@ const terrain = new TerrainManager(seed, ctx.scene, {
   },
 });
 
-const buggy = new Buggy(world, ctx.scene, { x: 32, y: 30, z: 32 });
+const buggy = new Buggy(world, ctx.scene, { x: 32, y: heightField(32, 32) + 5, z: 32 });
 const keyboard = new Keyboard();
-const chase = new ChaseCamera(ctx.camera);
+const chase = new ChaseCamera(ctx.camera, heightField);
 
 // Fixed-step physics with an accumulator; render every animation frame.
 const STEP = world.timestep;

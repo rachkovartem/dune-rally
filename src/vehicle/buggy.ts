@@ -20,7 +20,10 @@ export class Buggy {
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(spawn.x, spawn.y, spawn.z)
         .setLinearDamping(0.1)
-        .setAngularDamping(0.5),
+        .setAngularDamping(0.5)
+        // A player vehicle must never sleep: a sleeping body ignores the controller's engine
+        // force, so the buggy would settle and then refuse to respond to throttle.
+        .setCanSleep(false),
     );
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(cfg.chassis.hx, cfg.chassis.hy, cfg.chassis.hz)

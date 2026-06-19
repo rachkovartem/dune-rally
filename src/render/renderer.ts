@@ -27,10 +27,12 @@ export function createRenderer(canvas: HTMLCanvasElement): RenderContext {
   camera.position.set(0, 30, 40);
   camera.lookAt(0, 0, 0);
 
-  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+  // Key light (sun) plus a hemisphere fill so shadowed faces pick up warm sky / sand bounce
+  // instead of crushing to black — keeps the cel-shaded terrain readable and lively.
+  const sun = new THREE.DirectionalLight(0xfff2d6, 1.8);
   sun.position.set(60, 120, 40);
   scene.add(sun);
-  scene.add(new THREE.AmbientLight(0xffe6b3, 0.6));
+  scene.add(new THREE.HemisphereLight(0xffe9c0, 0x8a6a44, 1.1));
 
   function resize() {
     const w = canvas.clientWidth || window.innerWidth;
