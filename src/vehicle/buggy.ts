@@ -1,7 +1,7 @@
 // src/vehicle/buggy.ts
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { makeToonMaterial } from '../render/celShading';
+import { buildBuggyMesh } from '../render/buggyMesh';
 import { vehicleConfig as cfg } from './vehicleConfig';
 
 export class Buggy {
@@ -49,21 +49,9 @@ export class Buggy {
     }
 
     // Visuals
-    this.mesh = new THREE.Group();
-    this.chassisMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(cfg.chassis.hx * 2, cfg.chassis.hy * 2, cfg.chassis.hz * 2),
-      makeToonMaterial(0xff8a3d),
-    );
-    this.mesh.add(this.chassisMesh);
-    for (const _ of cfg.wheel.positions) {
-      const w = new THREE.Mesh(
-        new THREE.CylinderGeometry(cfg.wheel.radius, cfg.wheel.radius, 0.4, 16),
-        makeToonMaterial(0x222222),
-      );
-      w.rotation.z = Math.PI / 2;
-      this.wheelMeshes.push(w);
-      this.mesh.add(w);
-    }
+    this.mesh = buildBuggyMesh();
+    this.chassisMesh = this.mesh.children[0] as THREE.Mesh;
+    this.wheelMeshes = this.mesh.children.slice(1) as THREE.Mesh[];
     scene.add(this.mesh);
   }
 
