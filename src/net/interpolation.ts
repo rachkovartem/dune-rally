@@ -49,10 +49,10 @@ function nlerpQuat(a: Snapshot, b: Snapshot, f: number) {
   // shortest-path normalised lerp
   const dot = a.qx * b.qx + a.qy * b.qy + a.qz * b.qz + a.qw * b.qw;
   const s = dot < 0 ? -1 : 1;
-  let qx = lerp(a.qx, b.qx * s, f);
-  let qy = lerp(a.qy, b.qy * s, f);
-  let qz = lerp(a.qz, b.qz * s, f);
-  let qw = lerp(a.qw, b.qw * s, f);
+  const qx = lerp(a.qx, b.qx * s, f);
+  const qy = lerp(a.qy, b.qy * s, f);
+  const qz = lerp(a.qz, b.qz * s, f);
+  const qw = lerp(a.qw, b.qw * s, f);
   const len = Math.hypot(qx, qy, qz, qw) || 1;
   return { qx: qx / len, qy: qy / len, qz: qz / len, qw: qw / len };
 }

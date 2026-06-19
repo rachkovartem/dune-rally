@@ -7,13 +7,13 @@ import { controlsFromKeys } from './input/controls';
 import { ChaseCamera } from './render/chaseCamera';
 import { connectToArena } from './net/connection';
 import { PlayerViews } from './net/playerViews';
-import { sanitizeInput } from '../shared/protocol';
+import { sanitizeInput, SERVER_PORT } from '../shared/protocol';
 
 const canvas = document.getElementById('app') as HTMLCanvasElement;
 const ctx = createRenderer(canvas);
 window.addEventListener('resize', ctx.resize);
 
-const serverUrl = `ws://${location.hostname}:2567`;
+const serverUrl = `ws://${location.hostname}:${SERVER_PORT}`;
 const conn = await connectToArena(serverUrl, 'rider');
 
 // Terrain visuals use the server's seed so every client renders the same arena.

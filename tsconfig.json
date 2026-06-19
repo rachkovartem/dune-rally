@@ -4,6 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    "useDefineForClassFields": false,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "esModuleInterop": true,

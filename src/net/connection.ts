@@ -34,6 +34,16 @@ export async function connectToArena(url: string, name: string): Promise<Connect
     for (const cb of removeCbs) cb(id);
   });
 
+  // The arena seed arrives with the first state sync (not synchronously at join time).
+  // Wait for it so the client generates terrain visuals from the same seed the server uses.
+  if (!room.state.seed) {
+    await new Promise<void>((resolve) => {
+      const check = () => { if (room.state.seed) resolve(); };
+      room.onStateChange(check);
+      check();
+    });
+  }
+
   return {
     sessionId: room.sessionId,
     seed: room.state.seed,
