@@ -6,13 +6,18 @@ import { buildTerrainMesh } from '../render/terrainMesh';
 
 interface Resp { cx: number; cz: number; heights: Float32Array }
 
+export interface TerrainPhysicsHooks {
+  onLoad(key: string, heights: Float32Array, originX: number, originZ: number): void;
+  onUnload(key: string): void;
+}
+
 export class TerrainManager {
   private worker: Worker;
   private meshes = new Map<string, THREE.Mesh>();
   private heights = new Map<string, Float32Array>();
   private pending = new Set<string>();
 
-  constructor(private seed: number, private scene: THREE.Scene) {
+  constructor(private seed: number, private scene: THREE.Scene, private physics?: TerrainPhysicsHooks) {
     this.worker = new Worker(new URL('./terrainWorker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent<Resp>) => this.onChunk(e.data);
   }
@@ -26,6 +31,7 @@ export class TerrainManager {
     this.scene.add(mesh);
     this.meshes.set(key, mesh);
     this.heights.set(key, heights);
+    this.physics?.onLoad(key, heights, origin.x, origin.z);
   }
 
   private wantedRadius = 0;
@@ -54,6 +60,7 @@ export class TerrainManager {
         this.meshes.delete(key);
       }
       this.heights.delete(key);
+      this.physics?.onUnload(key);
     }
   }
 
