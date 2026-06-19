@@ -1,6 +1,7 @@
 // src/world/chunkGeometry.ts
-import { CHUNK_SIZE } from './chunk';
+import { CHUNK_SIZE, CHUNK_RES } from './chunk';
 import { VERTS_PER_SIDE } from './heightfieldData';
+import type { Height2D } from './noise';
 
 export interface ChunkGeometry {
   /** World-space vertex positions, 3 floats (x, y, z) per vertex. */
@@ -47,4 +48,27 @@ export function buildChunkGeometry(
   }
 
   return { positions, indices };
+}
+
+const GRID_STEP = CHUNK_SIZE / CHUNK_RES;
+
+/**
+ * Exact height of the rendered/collided terrain surface at (x, z) — the SAME value the chunk
+ * mesh and trimesh collider use. The surface is a triangulated grid (step GRID_STEP), so this
+ * barycentric-interpolates the triangle the point lands in, matching the mesh's faceting
+ * exactly (unlike the smooth heightField, which deviates between grid vertices). Use this to
+ * place anything that must sit precisely ON the ground (tyre tracks, decals).
+ */
+export function terrainSurfaceHeight(h: Height2D, x: number, z: number): number {
+  const gx = Math.floor(x / GRID_STEP) * GRID_STEP;
+  const gz = Math.floor(z / GRID_STEP) * GRID_STEP;
+  const fx = (x - gx) / GRID_STEP;
+  const fz = (z - gz) / GRID_STEP;
+  const h00 = h(gx, gz);
+  const h10 = h(gx + GRID_STEP, gz);
+  const h01 = h(gx, gz + GRID_STEP);
+  const h11 = h(gx + GRID_STEP, gz + GRID_STEP);
+  // Mesh splits each cell into triangles (a,c,b) and (b,c,d); fx+fz<=1 is the first triangle.
+  if (fx + fz <= 1) return h00 + fx * (h10 - h00) + fz * (h01 - h00);
+  return h11 + (1 - fx) * (h01 - h11) + (1 - fz) * (h10 - h11);
 }

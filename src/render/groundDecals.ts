@@ -1,9 +1,10 @@
 // src/render/groundDecals.ts
 import * as THREE from 'three';
 import type { Height2D } from '../world/noise';
+import { terrainSurfaceHeight } from '../world/chunkGeometry';
 
-const CAP = 700;       // ribs per ribbon (ring buffer) → trail length ≈ CAP * STEP
-const STEP = 0.45;     // min distance between ribs
+const CAP = 900;       // ribs per ribbon (ring buffer) → trail length ≈ CAP * STEP
+const STEP = 0.3;      // min distance between ribs (denser → conforms to bumps)
 const HALF_W = 0.24;   // half tyre width (ribbon half-width)
 const WHEEL_X = 1.0;   // half rear-track (left/right wheel offset)
 const REAR = 1.4;      // distance behind centre to the rear axle
@@ -18,7 +19,7 @@ class Ribbon {
   private pos = new Float32Array(CAP * 2 * 3);
   private count = 0;
 
-  constructor(scene: THREE.Scene, mat: THREE.Material, private height: Height2D) {
+  constructor(scene: THREE.Scene, mat: THREE.Material, private surfaceAt: (x: number, z: number) => number) {
     const attr = new THREE.BufferAttribute(this.pos, 3);
     attr.setUsage(THREE.DynamicDrawUsage);
     this.geom.setAttribute('position', attr);
@@ -37,10 +38,10 @@ class Ribbon {
     const px = cx + rx * HALF_W;
     const pz = cz + rz * HALF_W;
     this.pos[vL * 3] = lx;
-    this.pos[vL * 3 + 1] = this.height(lx, lz) + 0.02;
+    this.pos[vL * 3 + 1] = this.surfaceAt(lx, lz) + 0.015;
     this.pos[vL * 3 + 2] = lz;
     this.pos[vR * 3] = px;
-    this.pos[vR * 3 + 1] = this.height(px, pz) + 0.02;
+    this.pos[vR * 3 + 1] = this.surfaceAt(px, pz) + 0.015;
     this.pos[vR * 3 + 2] = pz;
     this.count++;
     this.rebuildIndex();
@@ -81,8 +82,9 @@ export class TireTracks {
     mat.polygonOffsetFactor = -2;
     mat.polygonOffsetUnits = -2;
     mat.userData.outlineParameters = { visible: false };
-    this.left = new Ribbon(scene, mat, height);
-    this.right = new Ribbon(scene, mat, height);
+    const surfaceAt = (x: number, z: number) => terrainSurfaceHeight(height, x, z);
+    this.left = new Ribbon(scene, mat, surfaceAt);
+    this.right = new Ribbon(scene, mat, surfaceAt);
   }
 
   update(car: THREE.Object3D, speed: number): void {
