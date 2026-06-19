@@ -46,5 +46,8 @@ export function buildTerrainMesh(
   geom.setIndex(new THREE.BufferAttribute(indices, 1));
   geom.computeVertexNormals();
 
-  return new THREE.Mesh(geom, terrainMaterial);
+  const mesh = new THREE.Mesh(geom, terrainMaterial);
+  mesh.receiveShadow = true;
+  mesh.castShadow = true; // dunes self-shadow for depth
+  return mesh;
 }

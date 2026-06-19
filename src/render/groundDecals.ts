@@ -74,27 +74,3 @@ export class TireTracks {
     }
   }
 }
-
-/** A soft blob shadow that follows the car along the ground (cheap, stylised). */
-export class BlobShadow {
-  private mesh: THREE.Mesh;
-
-  constructor(scene: THREE.Scene) {
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false,
-    });
-    mat.userData.outlineParameters = { visible: false };
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 4.8), mat);
-    this.mesh.renderOrder = 1;
-    scene.add(this.mesh);
-  }
-
-  update(car: THREE.Object3D, height: Height2D): void {
-    const p = car.position;
-    const { yaw, fwd } = headingOf(car);
-    // Nudge the shadow slightly away from the sun (sun is up-and-front-right) so it reads cast.
-    const x = p.x - fwd.x * 0.3 - 0.4;
-    const z = p.z - fwd.z * 0.3 - 0.4;
-    laydown(this.mesh, x, height(x, z) + 0.05, z, yaw);
-  }
-}

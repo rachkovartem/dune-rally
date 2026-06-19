@@ -9,7 +9,7 @@ import { controlsFromKeys } from './input/controls';
 import { ChaseCamera } from './render/chaseCamera';
 import { connectToArena } from './net/connection';
 import { PlayerViews } from './net/playerViews';
-import { TireTracks, BlobShadow } from './render/groundDecals';
+import { TireTracks } from './render/groundDecals';
 import { sanitizeInput, SERVER_PORT } from '../shared/protocol';
 import type RAPIER from '@dimforge/rapier3d-compat';
 
@@ -46,7 +46,6 @@ const views = new PlayerViews(ctx.scene); // remote players only
 const keyboard = new Keyboard();
 const chase = new ChaseCamera(ctx.camera, heightField);
 const tracks = new TireTracks(ctx.scene, heightField);
-const shadow = new BlobShadow(ctx.scene);
 const playerCountEl = document.getElementById('player-count');
 const speedEl = document.getElementById('speed');
 
@@ -96,7 +95,7 @@ function frame() {
   const p = buggy.position();
   terrain.update(p.x, p.z, 3);
   tracks.update(buggy.mesh, buggy.speed());
-  shadow.update(buggy.mesh, heightField);
+  ctx.focusSun(p.x, p.y, p.z);
   chase.update(buggy.mesh);
 
   if (playerCountEl) playerCountEl.textContent = String(conn.players().size);

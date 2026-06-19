@@ -176,5 +176,9 @@ export function buildBuggyMesh(): THREE.Group {
     group.add(buildWheel(p));
   }
 
+  group.traverse((o) => {
+    if (o instanceof THREE.Mesh) o.castShadow = true;
+  });
+
   return group;
 }
