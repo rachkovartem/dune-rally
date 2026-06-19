@@ -67,7 +67,9 @@ export class Buggy {
 
   applyControls(c: { throttle: number; brake: number; steer: number }) {
     // Negative engine force drives the buggy toward its front (+Z, away from the chase camera).
-    const engine = -c.throttle * cfg.engineForce;
+    // Force tapers to 0 as speed approaches maxSpeed → a modest, heavy top speed.
+    const speedFactor = Math.max(0, 1 - this.speed() / cfg.maxSpeed);
+    const engine = -c.throttle * cfg.engineForce * speedFactor;
     const brake = c.brake * cfg.brakeForce;
     for (const i of cfg.drivenWheels) this.controller.setWheelEngineForce(i, engine);
     for (let i = 0; i < cfg.wheel.positions.length; i++) this.controller.setWheelBrake(i, brake);
