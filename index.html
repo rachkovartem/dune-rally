@@ -25,6 +25,12 @@
         background: rgba(0,0,0,0.35); padding: 6px 12px; border-radius: 999px;
       }
       #hud-players b { color: #ffd23d; }
+      #hud-speed {
+        position: absolute; bottom: 18px; right: 24px; text-align: right;
+        font-weight: 800; line-height: 1;
+      }
+      #hud-speed #speed { font-size: 44px; color: #ffd23d; }
+      #hud-speed .unit { font-size: 16px; opacity: 0.85; margin-left: 4px; }
       #hud-controls {
         position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
         font-size: 15px; font-weight: 600; white-space: nowrap;
@@ -65,9 +71,10 @@
     <div id="hud">
       <div id="hud-title">DUNE RALLY</div>
       <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b></div>
+      <div id="hud-speed"><span id="speed">0</span><span class="unit">км/ч</span></div>
       <div id="hud-controls">
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp;
-        <kbd>S</kbd> — тормоз/назад
+        <kbd>S</kbd> — тормоз/назад &nbsp;·&nbsp; <kbd>R</kbd> — сброс
       </div>
     </div>
     <div id="start">
@@ -75,7 +82,7 @@
         <div class="start-title">DUNE RALLY</div>
         <div class="start-sub">Багги-покатушки по процедурной пустыне · мультиплеер</div>
         <div class="start-controls">
-          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp; <kbd>S</kbd> — тормоз/назад
+          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp; <kbd>S</kbd> — тормоз &nbsp;·&nbsp; <kbd>R</kbd> — сброс
         </div>
         <div class="start-go">▶ Нажми, чтобы ехать</div>
       </div>

@@ -14,8 +14,8 @@ export const vehicleConfig = {
       { x: 1.1, y: -0.3, z: -1.5 },  // rear-right
     ],
   },
-  engineForce: 9000,
-  brakeForce: 1200,
+  engineForce: 9500,
+  brakeForce: 2200,
   maxSteer: 0.5, // radians
   steeredWheels: [0, 1], // front
   drivenWheels: [2, 3],  // rear

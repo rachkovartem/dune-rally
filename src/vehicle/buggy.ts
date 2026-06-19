@@ -19,15 +19,21 @@ export class Buggy {
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(spawn.x, spawn.y, spawn.z)
-        .setLinearDamping(0.1)
-        .setAngularDamping(0.5)
-        // A player vehicle must never sleep: a sleeping body ignores the controller's engine
-        // force, so the buggy would settle and then refuse to respond to throttle.
-        .setCanSleep(false),
+        .setLinearDamping(0.4)
+        .setAngularDamping(2.0)
+        // Never sleep: a sleeping body ignores the controller's engine force.
+        .setCanSleep(false)
+        // Low centre of mass + solid angular inertia so the buggy resists flipping/tumbling.
+        .setAdditionalMassProperties(
+          cfg.chassis.mass,
+          { x: 0, y: -0.9, z: 0 },
+          { x: 1600, y: 1600, z: 900 },
+          { x: 0, y: 0, z: 0, w: 1 },
+        ),
     );
+    // Density 0: all mass comes from setAdditionalMassProperties above (keeping the low COM).
     world.createCollider(
-      RAPIER.ColliderDesc.cuboid(cfg.chassis.hx, cfg.chassis.hy, cfg.chassis.hz)
-        .setMass(cfg.chassis.mass),
+      RAPIER.ColliderDesc.cuboid(cfg.chassis.hx, cfg.chassis.hy, cfg.chassis.hz).setDensity(0),
       this.body,
     );
 
@@ -56,7 +62,8 @@ export class Buggy {
   }
 
   applyControls(c: { throttle: number; brake: number; steer: number }) {
-    const engine = c.throttle * cfg.engineForce;
+    // Negative force drives the buggy toward its front (+Z, away from the chase camera).
+    const engine = -c.throttle * cfg.engineForce;
     const brake = c.brake * cfg.brakeForce;
     const steer = c.steer * cfg.maxSteer;
     for (const i of cfg.drivenWheels) this.controller.setWheelEngineForce(i, engine);
@@ -82,5 +89,20 @@ export class Buggy {
 
   position(): RAPIER.Vector {
     return this.body.translation();
+  }
+
+  /** Horizontal speed in world units per second. */
+  speed(): number {
+    const v = this.body.linvel();
+    return Math.hypot(v.x, v.z);
+  }
+
+  /** Flip the buggy back upright a little above its current spot and kill its velocity. */
+  reset() {
+    const t = this.body.translation();
+    this.body.setTranslation({ x: t.x, y: t.y + 3, z: t.z }, true);
+    this.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
 }
