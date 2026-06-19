@@ -1,57 +1,52 @@
 // src/main.ts
 import { createRenderer } from './render/renderer';
-import { resolveSeed } from './world/seed';
 import { createHeightField } from './world/noise';
 import { TerrainManager } from './world/terrainManager';
-import { initPhysics, addChunkCollider, removeCollider } from './physics/physicsWorld';
-import { Buggy } from './vehicle/buggy';
 import { Keyboard } from './input/keyboard';
 import { controlsFromKeys } from './input/controls';
 import { ChaseCamera } from './render/chaseCamera';
-import RAPIER from '@dimforge/rapier3d-compat';
+import { connectToArena } from './net/connection';
+import { PlayerViews } from './net/playerViews';
+import { sanitizeInput } from '../shared/protocol';
 
 const canvas = document.getElementById('app') as HTMLCanvasElement;
 const ctx = createRenderer(canvas);
 window.addEventListener('resize', ctx.resize);
 
-const seed = resolveSeed(window.location.href, '2026-06-19');
-const heightField = createHeightField(seed);
-const world = await initPhysics();
+const serverUrl = `ws://${location.hostname}:2567`;
+const conn = await connectToArena(serverUrl, 'rider');
 
-const colliders = new Map<string, RAPIER.Collider>();
-const terrain = new TerrainManager(seed, ctx.scene, {
-  onLoad: (key, heights, ox, oz) => colliders.set(key, addChunkCollider(world, heights, ox, oz)),
-  onUnload: (key) => {
-    const c = colliders.get(key);
-    if (c) { removeCollider(world, c); colliders.delete(key); }
-  },
-});
+// Terrain visuals use the server's seed so every client renders the same arena.
+const heightField = createHeightField(conn.seed);
+const terrain = new TerrainManager(conn.seed, ctx.scene, undefined);
 
-const buggy = new Buggy(world, ctx.scene, { x: 32, y: heightField(32, 32) + 5, z: 32 });
+const views = new PlayerViews(ctx.scene);
 const keyboard = new Keyboard();
 const chase = new ChaseCamera(ctx.camera, heightField);
 
-// Fixed-step physics with an accumulator; render every animation frame.
-const STEP = world.timestep;
-let last = performance.now() / 1000;
-let acc = 0;
+// Mirror server players into views.
+for (const [id] of conn.players()) views.add(id);
+conn.onAdd((id) => views.add(id));
+conn.onRemove((id) => views.remove(id));
 
 function frame() {
-  const now = performance.now() / 1000;
-  acc += Math.min(now - last, 0.1); // clamp to avoid spiral-of-death after a tab pause
-  last = now;
+  const now = performance.now();
 
-  const controls = controlsFromKeys(keyboard.keys);
-  while (acc >= STEP) {
-    buggy.applyControls(controls);
-    world.step();
-    buggy.update();
-    acc -= STEP;
+  // send input
+  conn.sendInput(sanitizeInput(controlsFromKeys(keyboard.keys)));
+
+  // push latest server transforms into interpolation buffers
+  for (const [id, p] of conn.players()) views.pushState(id, p, now);
+
+  // render slightly in the past for smooth interpolation
+  const renderTime = now - 1000 / 10;
+  views.update(renderTime);
+
+  const me = views.group(conn.sessionId);
+  if (me) {
+    terrain.update(me.position.x, me.position.z, 3);
+    chase.update(me);
   }
-
-  const p = buggy.position();
-  terrain.update(p.x, p.z, 3);
-  chase.update(buggy.mesh);
   ctx.render();
   requestAnimationFrame(frame);
 }
