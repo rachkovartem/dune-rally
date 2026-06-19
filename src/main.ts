@@ -28,7 +28,7 @@ const biome = createBiome(conn.seed);
 // else (full prediction + reconciliation that ties the two together is Plan 2b).
 const world = await initPhysics();
 const colliders = new Map<string, RAPIER.Collider>();
-const terrain = new TerrainManager(conn.seed, ctx.scene, biome, {
+const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, {
   onLoad: (key, heights, ox, oz) => colliders.set(key, addChunkCollider(world, heights, ox, oz)),
   onUnload: (key) => {
     const c = colliders.get(key);

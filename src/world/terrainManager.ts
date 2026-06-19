@@ -3,7 +3,9 @@ import * as THREE from 'three';
 import { worldToChunk, chunkKey, chunkOrigin, type ChunkCoord } from './chunk';
 import { diffChunks } from './terrainSelection';
 import { buildTerrainMesh } from '../render/terrainMesh';
+import { createChunkScatter } from '../render/scatter';
 import type { Biome } from './biome';
+import type { Height2D } from './noise';
 
 interface Resp { cx: number; cz: number; heights: Float32Array }
 
@@ -15,6 +17,7 @@ export interface TerrainPhysicsHooks {
 export class TerrainManager {
   private worker: Worker;
   private meshes = new Map<string, THREE.Mesh>();
+  private scatter = new Map<string, THREE.Group>();
   private heights = new Map<string, Float32Array>();
   private pending = new Set<string>();
 
@@ -22,6 +25,7 @@ export class TerrainManager {
     private seed: number,
     private scene: THREE.Scene,
     private biome: Biome,
+    private heightField: Height2D,
     private physics?: TerrainPhysicsHooks,
   ) {
     this.worker = new Worker(new URL('./terrainWorker.ts', import.meta.url), { type: 'module' });
@@ -37,6 +41,11 @@ export class TerrainManager {
     this.scene.add(mesh);
     this.meshes.set(key, mesh);
     this.heights.set(key, heights);
+
+    const props = createChunkScatter(cx, cz, this.seed, this.heightField, this.biome);
+    this.scene.add(props);
+    this.scatter.set(key, props);
+
     this.physics?.onLoad(key, heights, origin.x, origin.z);
   }
 
@@ -64,6 +73,11 @@ export class TerrainManager {
         this.scene.remove(mesh);
         mesh.geometry.dispose();
         this.meshes.delete(key);
+      }
+      const props = this.scatter.get(key);
+      if (props) {
+        this.scene.remove(props); // shared geometries/materials — don't dispose them
+        this.scatter.delete(key);
       }
       this.heights.delete(key);
       this.physics?.onUnload(key);
