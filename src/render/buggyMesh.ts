@@ -4,30 +4,30 @@ import { makeToonMaterial } from './celShading';
 import { vehicleConfig as cfg } from '../vehicle/vehicleConfig';
 
 /**
- * A low-poly buggy: a wide body with a raised cabin, and four wheels at the corner
- * positions from vehicleConfig. Group layout is [body, wheel0..wheel3] so the physics
- * Buggy (which reads children[0] as chassis and children.slice(1) as wheels) still works.
+ * A low-poly buggy: body + raised cabin + a front bar, and four wheels at the corner positions.
+ *
+ * Each wheel is a pivot (positioned + steered by yaw) containing a spinner (rolls around the
+ * axle) containing the tyre cylinder. Group layout is [body, wheelPivot0..3] so the physics
+ * Buggy can read children[0] as the chassis and children.slice(1) as the wheel pivots.
  */
 export function buildBuggyMesh(): THREE.Group {
   const group = new THREE.Group();
 
   const body = new THREE.Mesh(
-    new THREE.BoxGeometry(cfg.chassis.hx * 2, cfg.chassis.hy * 1.3, cfg.chassis.hz * 2),
+    new THREE.BoxGeometry(cfg.chassis.hx * 2, cfg.chassis.hy * 1.4, cfg.chassis.hz * 2),
     makeToonMaterial(0xff7a1f),
   );
   body.position.y = -0.05;
 
-  // Cabin rides on the body (child) so the group's child list stays [body, ...wheels].
   const cabin = new THREE.Mesh(
-    new THREE.BoxGeometry(cfg.chassis.hx * 1.5, cfg.chassis.hy * 1.2, cfg.chassis.hz * 0.95),
+    new THREE.BoxGeometry(cfg.chassis.hx * 1.5, cfg.chassis.hy * 1.3, cfg.chassis.hz * 0.95),
     makeToonMaterial(0xffd23d),
   );
-  cabin.position.set(0, cfg.chassis.hy * 1.0, -cfg.chassis.hz * 0.3);
+  cabin.position.set(0, cfg.chassis.hy * 1.05, -cfg.chassis.hz * 0.3);
   body.add(cabin);
 
-  // A dark front bar for a bit of character.
   const bar = new THREE.Mesh(
-    new THREE.BoxGeometry(cfg.chassis.hx * 2.1, 0.25, 0.25),
+    new THREE.BoxGeometry(cfg.chassis.hx * 2.05, 0.22, 0.22),
     makeToonMaterial(0x222222),
   );
   bar.position.set(0, cfg.chassis.hy * 0.4, cfg.chassis.hz * 1.0);
@@ -36,13 +36,18 @@ export function buildBuggyMesh(): THREE.Group {
   group.add(body);
 
   for (const p of cfg.wheel.positions) {
-    const wheel = new THREE.Mesh(
-      new THREE.CylinderGeometry(cfg.wheel.radius, cfg.wheel.radius, 0.5, 18),
+    const pivot = new THREE.Group(); // position + steering yaw
+    pivot.position.set(p.x, p.y, p.z);
+
+    const spinner = new THREE.Group(); // rolls around the axle (local X)
+    const tyre = new THREE.Mesh(
+      new THREE.CylinderGeometry(cfg.wheel.radius, cfg.wheel.radius, cfg.wheel.width, 18),
       makeToonMaterial(0x1a1a1a),
     );
-    wheel.rotation.z = Math.PI / 2; // axle along X
-    wheel.position.set(p.x, p.y, p.z);
-    group.add(wheel);
+    tyre.rotation.z = Math.PI / 2; // lay the cylinder so its axle is along X
+    spinner.add(tyre);
+    pivot.add(spinner);
+    group.add(pivot);
   }
 
   return group;

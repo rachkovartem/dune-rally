@@ -8,8 +8,9 @@ export class Buggy {
   readonly mesh: THREE.Group;
   private body: RAPIER.RigidBody;
   private controller: RAPIER.DynamicRayCastVehicleController;
-  private chassisMesh: THREE.Mesh;
-  private wheelMeshes: THREE.Mesh[] = [];
+  private wheelPivots: THREE.Group[] = [];
+  private currentSteer = 0;
+  private rollAngle = 0;
 
   constructor(
     private world: RAPIER.World,
@@ -19,21 +20,23 @@ export class Buggy {
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(spawn.x, spawn.y, spawn.z)
-        .setLinearDamping(0.4)
-        .setAngularDamping(2.0)
-        // Never sleep: a sleeping body ignores the controller's engine force.
-        .setCanSleep(false)
-        // Low centre of mass + solid angular inertia so the buggy resists flipping/tumbling.
+        .setLinearDamping(cfg.linearDamping)
+        .setAngularDamping(cfg.angularDamping)
+        .setCanSleep(false) // a sleeping body ignores the controller's engine force
         .setAdditionalMassProperties(
           cfg.chassis.mass,
-          { x: 0, y: -0.9, z: 0 },
-          { x: 1600, y: 1600, z: 900 },
+          cfg.com,
+          cfg.inertia,
           { x: 0, y: 0, z: 0, w: 1 },
         ),
     );
-    // Density 0: all mass comes from setAdditionalMassProperties above (keeping the low COM).
+    // Density 0: mass comes from setAdditionalMassProperties (keeping the low COM). Restitution +
+    // friction give terrain/obstacle hits some bounce and scrub instead of a dead stop.
     world.createCollider(
-      RAPIER.ColliderDesc.cuboid(cfg.chassis.hx, cfg.chassis.hy, cfg.chassis.hz).setDensity(0),
+      RAPIER.ColliderDesc.cuboid(cfg.chassis.hx, cfg.chassis.hy, cfg.chassis.hz)
+        .setDensity(0)
+        .setRestitution(cfg.restitution)
+        .setFriction(cfg.friction),
       this.body,
     );
 
@@ -51,24 +54,30 @@ export class Buggy {
     }
     for (let i = 0; i < cfg.wheel.positions.length; i++) {
       this.controller.setWheelSuspensionStiffness(i, cfg.wheel.suspensionStiffness);
+      this.controller.setWheelSuspensionCompression(i, cfg.wheel.suspensionCompression);
+      this.controller.setWheelSuspensionRelaxation(i, cfg.wheel.suspensionRelaxation);
       this.controller.setWheelMaxSuspensionTravel(i, cfg.wheel.maxSuspensionTravel);
+      this.controller.setWheelFrictionSlip(i, cfg.wheel.frictionSlip);
     }
 
-    // Visuals
     this.mesh = buildBuggyMesh();
-    this.chassisMesh = this.mesh.children[0] as THREE.Mesh;
-    this.wheelMeshes = this.mesh.children.slice(1) as THREE.Mesh[];
+    this.wheelPivots = this.mesh.children.slice(1) as THREE.Group[];
     scene.add(this.mesh);
   }
 
   applyControls(c: { throttle: number; brake: number; steer: number }) {
-    // Negative force drives the buggy toward its front (+Z, away from the chase camera).
+    // Negative engine force drives the buggy toward its front (+Z, away from the chase camera).
     const engine = -c.throttle * cfg.engineForce;
     const brake = c.brake * cfg.brakeForce;
-    const steer = c.steer * cfg.maxSteer;
     for (const i of cfg.drivenWheels) this.controller.setWheelEngineForce(i, engine);
     for (let i = 0; i < cfg.wheel.positions.length; i++) this.controller.setWheelBrake(i, brake);
-    for (const i of cfg.steeredWheels) this.controller.setWheelSteering(i, steer);
+
+    // Ramp steering toward the target for an analog feel (not a snap). Negated so A/left turns
+    // the buggy left: measured steer-angle and yaw share a sign, so left input needs +angle.
+    const target = -c.steer * cfg.maxSteer;
+    const maxStep = cfg.steerSpeed * this.world.timestep;
+    this.currentSteer += Math.max(-maxStep, Math.min(maxStep, target - this.currentSteer));
+    for (const i of cfg.steeredWheels) this.controller.setWheelSteering(i, this.currentSteer);
   }
 
   update() {
@@ -76,14 +85,25 @@ export class Buggy {
 
     const t = this.body.translation();
     const r = this.body.rotation();
-    this.chassisMesh.position.set(0, 0, 0);
     this.mesh.position.set(t.x, t.y, t.z);
     this.mesh.quaternion.set(r.x, r.y, r.z, r.w);
 
-    for (let i = 0; i < this.wheelMeshes.length; i++) {
+    // Roll the wheels based on forward speed (local +Z projected from world velocity).
+    const lv = this.body.linvel();
+    const fwdX = 2 * (r.x * r.z + r.w * r.y);
+    const fwdY = 2 * (r.y * r.z - r.w * r.x);
+    const fwdZ = 1 - 2 * (r.x * r.x + r.y * r.y);
+    const fwdSpeed = lv.x * fwdX + lv.y * fwdY + lv.z * fwdZ;
+    this.rollAngle += (fwdSpeed * this.world.timestep) / cfg.wheel.radius;
+
+    for (let i = 0; i < this.wheelPivots.length; i++) {
+      const pivot = this.wheelPivots[i];
       const conn = this.controller.wheelChassisConnectionPointCs(i);
       const susp = this.controller.wheelSuspensionLength(i) ?? cfg.wheel.suspensionRestLength;
-      if (conn) this.wheelMeshes[i].position.set(conn.x, conn.y - susp, conn.z);
+      if (conn) pivot.position.set(conn.x, conn.y - susp, conn.z);
+      pivot.rotation.y = cfg.steeredWheels.includes(i) ? this.currentSteer : 0;
+      const spinner = pivot.children[0] as THREE.Object3D;
+      spinner.rotation.x = this.rollAngle;
     }
   }
 
