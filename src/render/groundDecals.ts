@@ -2,75 +2,111 @@
 import * as THREE from 'three';
 import type { Height2D } from '../world/noise';
 
-// Lay a flat plane on the ground, yawed to a heading (the plane's local +Y runs along travel).
-function laydown(mesh: THREE.Object3D, x: number, y: number, z: number, yaw: number): void {
-  mesh.position.set(x, y, z);
-  const flat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
-  const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-  mesh.quaternion.copy(yawQ).multiply(flat);
-}
-
-function headingOf(obj: THREE.Object3D): { yaw: number; fwd: THREE.Vector3; right: THREE.Vector3 } {
-  const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(obj.quaternion);
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(obj.quaternion);
-  return { yaw: Math.atan2(fwd.x, fwd.z), fwd, right };
-}
+const CAP = 700;       // ribs per ribbon (ring buffer) → trail length ≈ CAP * STEP
+const STEP = 0.45;     // min distance between ribs
+const HALF_W = 0.24;   // half tyre width (ribbon half-width)
+const WHEEL_X = 1.0;   // half rear-track (left/right wheel offset)
+const REAR = 1.4;      // distance behind centre to the rear axle
 
 /**
- * Tyre tracks: a ring-buffer pool of flat dark marks dropped behind the rear wheels as the car
- * drives. Marks rest on the terrain surface (sampled height) and reuse the oldest when full.
+ * One continuous ribbon ("trail") following a wheel. Each rib is a 2-vertex cross-segment
+ * placed on the terrain surface; consecutive ribs are joined into quads so the strip is gapless
+ * and hugs the ground. Ring buffer: the oldest rib is overwritten once CAP is reached.
  */
+class Ribbon {
+  private geom = new THREE.BufferGeometry();
+  private pos = new Float32Array(CAP * 2 * 3);
+  private count = 0;
+
+  constructor(scene: THREE.Scene, mat: THREE.Material, private height: Height2D) {
+    const attr = new THREE.BufferAttribute(this.pos, 3);
+    attr.setUsage(THREE.DynamicDrawUsage);
+    this.geom.setAttribute('position', attr);
+    const mesh = new THREE.Mesh(this.geom, mat);
+    mesh.frustumCulled = false; // vertices move every frame; don't cull on a stale bound
+    mesh.renderOrder = 1;
+    scene.add(mesh);
+  }
+
+  addRib(cx: number, cz: number, rx: number, rz: number): void {
+    const slot = this.count % CAP;
+    const vL = slot * 2;
+    const vR = slot * 2 + 1;
+    const lx = cx - rx * HALF_W;
+    const lz = cz - rz * HALF_W;
+    const px = cx + rx * HALF_W;
+    const pz = cz + rz * HALF_W;
+    this.pos[vL * 3] = lx;
+    this.pos[vL * 3 + 1] = this.height(lx, lz) + 0.02;
+    this.pos[vL * 3 + 2] = lz;
+    this.pos[vR * 3] = px;
+    this.pos[vR * 3 + 1] = this.height(px, pz) + 0.02;
+    this.pos[vR * 3 + 2] = pz;
+    this.count++;
+    this.rebuildIndex();
+    this.geom.attributes.position.needsUpdate = true;
+  }
+
+  private rebuildIndex(): void {
+    const n = Math.min(this.count, CAP);
+    if (n < 2) return;
+    const start = this.count <= CAP ? 0 : this.count % CAP; // oldest rib slot
+    const idx: number[] = [];
+    for (let k = 0; k < n - 1; k++) {
+      const a = (start + k) % CAP;
+      const b = (start + k + 1) % CAP;
+      const aL = a * 2;
+      const aR = a * 2 + 1;
+      const bL = b * 2;
+      const bR = b * 2 + 1;
+      idx.push(aL, bL, aR, aR, bL, bR);
+    }
+    this.geom.setIndex(idx);
+  }
+}
+
+/** Two ground-hugging ribbons laid behind the rear wheels as the car drives. */
 export class TireTracks {
-  private marks: THREE.Mesh[] = [];
-  private idx = 0;
+  private left: Ribbon;
+  private right: Ribbon;
   private lastX = 0;
   private lastZ = 0;
   private started = false;
 
-  private static readonly MAX = 280;
-  private static readonly SPACING = 1.0;   // world units between dropped rows
-  private static readonly REAR = 1.5;      // distance behind centre to the rear axle
-  private static readonly HALF = 0.95;     // half track width (left/right wheel offset)
-
-  constructor(scene: THREE.Scene, private height: Height2D) {
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x2c1d0f, transparent: true, opacity: 0.42, depthWrite: false,
-    });
+  constructor(scene: THREE.Scene, height: Height2D) {
+    // Opaque + polygonOffset so the track sits on the surface without z-fighting or
+    // transparency-sort drop-outs; excluded from the ink outline pass.
+    const mat = new THREE.MeshBasicMaterial({ color: 0x5b4226 });
+    mat.polygonOffset = true;
+    mat.polygonOffsetFactor = -2;
+    mat.polygonOffsetUnits = -2;
     mat.userData.outlineParameters = { visible: false };
-    const geo = new THREE.PlaneGeometry(0.34, 1.25);
-    for (let i = 0; i < TireTracks.MAX; i++) {
-      const m = new THREE.Mesh(geo, mat);
-      m.visible = false;
-      m.renderOrder = 1;
-      scene.add(m);
-      this.marks.push(m);
-    }
+    this.left = new Ribbon(scene, mat, height);
+    this.right = new Ribbon(scene, mat, height);
   }
 
   update(car: THREE.Object3D, speed: number): void {
-    const pos = car.position;
+    const p = car.position;
     if (!this.started) {
-      this.lastX = pos.x;
-      this.lastZ = pos.z;
+      this.lastX = p.x;
+      this.lastZ = p.z;
       this.started = true;
       return;
     }
-    const dx = pos.x - this.lastX;
-    const dz = pos.z - this.lastZ;
-    if (speed < 1.5 || dx * dx + dz * dz < TireTracks.SPACING * TireTracks.SPACING) return;
-    this.lastX = pos.x;
-    this.lastZ = pos.z;
+    const dx = p.x - this.lastX;
+    const dz = p.z - this.lastZ;
+    if (speed < 1.2 || dx * dx + dz * dz < STEP * STEP) return;
+    this.lastX = p.x;
+    this.lastZ = p.z;
 
-    const { yaw, fwd, right } = headingOf(car);
-    const rearX = pos.x - fwd.x * TireTracks.REAR;
-    const rearZ = pos.z - fwd.z * TireTracks.REAR;
-    for (const s of [-1, 1]) {
-      const x = rearX + right.x * TireTracks.HALF * s;
-      const z = rearZ + right.z * TireTracks.HALF * s;
-      const m = this.marks[this.idx];
-      this.idx = (this.idx + 1) % TireTracks.MAX;
-      laydown(m, x, this.height(x, z) + 0.06, z, yaw);
-      m.visible = true;
-    }
+    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(car.quaternion);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(car.quaternion);
+    const rl = Math.hypot(right.x, right.z) || 1;
+    const rx = right.x / rl;
+    const rz = right.z / rl;
+    const rearX = p.x - fwd.x * REAR;
+    const rearZ = p.z - fwd.z * REAR;
+    this.left.addRib(rearX - rx * WHEEL_X, rearZ - rz * WHEEL_X, rx, rz);
+    this.right.addRib(rearX + rx * WHEEL_X, rearZ + rz * WHEEL_X, rx, rz);
   }
 }
