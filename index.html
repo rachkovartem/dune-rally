@@ -7,10 +7,79 @@
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1208; }
       #app { width: 100vw; height: 100vh; display: block; }
+
+      /* HUD overlay */
+      #hud {
+        position: fixed; inset: 0; pointer-events: none;
+        font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
+        color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.6);
+      }
+      #hud-title {
+        position: absolute; top: 18px; left: 22px;
+        font-size: 28px; font-weight: 800; letter-spacing: 3px;
+        color: #ffd23d; text-shadow: 0 0 2px #000, 2px 3px 0 #000;
+      }
+      #hud-players {
+        position: absolute; top: 22px; right: 24px;
+        font-size: 16px; font-weight: 700;
+        background: rgba(0,0,0,0.35); padding: 6px 12px; border-radius: 999px;
+      }
+      #hud-players b { color: #ffd23d; }
+      #hud-controls {
+        position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+        font-size: 15px; font-weight: 600; white-space: nowrap;
+        background: rgba(0,0,0,0.35); padding: 8px 16px; border-radius: 10px;
+      }
+      #hud-controls kbd {
+        background: #ffd23d; color: #1a1208; border-radius: 4px;
+        padding: 1px 6px; font-weight: 800; font-family: inherit; margin: 0 1px;
+      }
+
+      /* Start / focus gate */
+      #start {
+        position: fixed; inset: 0; z-index: 10; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        background: radial-gradient(circle at 50% 40%, rgba(40,24,8,0.55), rgba(10,6,2,0.88));
+        font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif; color: #fff;
+        text-align: center;
+      }
+      #start .start-title {
+        font-size: 56px; font-weight: 800; letter-spacing: 6px; color: #ffd23d;
+        text-shadow: 0 0 2px #000, 3px 4px 0 #000;
+      }
+      #start .start-sub { margin-top: 10px; font-size: 18px; opacity: 0.9; }
+      #start .start-controls { margin-top: 22px; font-size: 16px; opacity: 0.95; }
+      #start .start-controls kbd {
+        background: #ffd23d; color: #1a1208; border-radius: 4px;
+        padding: 1px 7px; font-weight: 800; font-family: inherit; margin: 0 1px;
+      }
+      #start .start-go {
+        margin-top: 30px; font-size: 22px; font-weight: 800; color: #fff;
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+      @keyframes pulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
     </style>
   </head>
   <body>
     <canvas id="app"></canvas>
+    <div id="hud">
+      <div id="hud-title">DUNE RALLY</div>
+      <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b></div>
+      <div id="hud-controls">
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp;
+        <kbd>S</kbd> — тормоз/назад
+      </div>
+    </div>
+    <div id="start">
+      <div class="start-card">
+        <div class="start-title">DUNE RALLY</div>
+        <div class="start-sub">Багги-покатушки по процедурной пустыне · мультиплеер</div>
+        <div class="start-controls">
+          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp; <kbd>S</kbd> — тормоз/назад
+        </div>
+        <div class="start-go">▶ Нажми, чтобы ехать</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

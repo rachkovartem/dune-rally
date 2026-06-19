@@ -29,9 +29,13 @@ export class PlayerViews {
     if (v) v.buffer.push({ t, x: p.x, y: p.y, z: p.z, qx: p.qx, qy: p.qy, qz: p.qz, qw: p.qw });
   }
 
-  update(renderTime: number): void {
-    for (const v of this.views.values()) {
-      const s = v.buffer.sample(renderTime);
+  /**
+   * Remote players are sampled at `renderTime` (a little in the past) for smoothness; the local
+   * player is sampled at `localTime` (latest) so own driving feels responsive on low latency.
+   */
+  update(renderTime: number, localId: string | null, localTime: number): void {
+    for (const [id, v] of this.views) {
+      const s = v.buffer.sample(id === localId ? localTime : renderTime);
       v.group.position.set(s.x, s.y, s.z);
       v.group.quaternion.set(s.qx, s.qy, s.qz, s.qw);
     }
