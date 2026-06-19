@@ -23,6 +23,12 @@ export function createHeightField(seed: number): Height2D {
     // Carve canyons: a separate low-frequency channel cut downward where ridged noise is high.
     const ridge = Math.abs(noise(x / 160 + 1000, z / 160 - 1000));
     height -= Math.pow(ridge, 3) * 18;
-    return height;
+    // SPEC DEVIATION (task-4 step 3): The prescribed formula yields a theoretical minimum of
+    // -(26+8+2.5) - 18 = -54.5 world units (empirical: -37.8 for seed=7). This violates the
+    // documented output contract of "roughly [-8, 40] world units" and the spec's own range-test
+    // lower bound of -10. A clamp at -10 enforces the documented interface; without it, the
+    // spec's range test cannot pass. Alternative fixes (reducing octave amps or canyon multiplier)
+    // would equally deviate from the prescribed constants.
+    return Math.max(-10, height);
   };
 }
