@@ -21,6 +21,8 @@ export class Knockables {
   private items = new Set<THREE.Object3D>();
   private q = new THREE.Quaternion();
 
+  constructor(private onKnock?: () => void) {}
+
   add(obj: THREE.Object3D): void {
     (obj.userData as KnockState).fall = 0;
     this.items.add(obj);
@@ -46,6 +48,7 @@ export class Knockables {
         st.axis = new THREE.Vector3(fz, 0, -fx); // horizontal, perpendicular to travel
         st.base = obj.quaternion.clone();
         st.fall = 0.0001;
+        this.onKnock?.();
       }
 
       if (st.fall > 0 && st.fall < 1 && st.axis && st.base) {

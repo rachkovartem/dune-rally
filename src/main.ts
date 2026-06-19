@@ -13,17 +13,19 @@ import { PlayerViews } from './net/playerViews';
 import { TireTracks } from './render/groundDecals';
 import { Water } from './render/water';
 import { Knockables } from './render/knockables';
+import { AudioManager } from './audio/audio';
 import { sanitizeInput, SERVER_PORT } from '../shared/protocol';
 import type RAPIER from '@dimforge/rapier3d-compat';
 
 const canvas = document.getElementById('app') as HTMLCanvasElement;
 const ctx = createRenderer(canvas);
 window.addEventListener('resize', ctx.resize);
+const audio = new AudioManager();
 
 const conn = await connectToArena(`ws://${location.hostname}:${SERVER_PORT}`, 'rider');
 const heightField = createHeightField(conn.seed);
 const biome = createBiome(conn.seed);
-const knockables = new Knockables();
+const knockables = new Knockables(() => audio.knock());
 
 // The local player's buggy is simulated LOCALLY at 60fps for smooth, instant control; inputs are
 // also sent to the server so other players see us. The server stays authoritative for everyone
@@ -64,6 +66,8 @@ const startEl = document.getElementById('start');
 startEl?.addEventListener('click', () => {
   startEl.style.display = 'none';
   window.focus();
+  audio.resume(); // user gesture → unlock audio
+  audio.ui();
 });
 
 // R flips the buggy back upright (recover from a roll).
@@ -111,6 +115,7 @@ function frame() {
   const fwdX = 2 * (cq.x * cq.z + cq.w * cq.y);
   const fwdZ = 1 - 2 * (cq.x * cq.x + cq.y * cq.y);
   knockables.update(p.x, p.z, fwdX, fwdZ, buggy.speed(), dt);
+  audio.setDrive(buggy.speed(), controls.throttle);
 
   if (playerCountEl) playerCountEl.textContent = String(conn.players().size);
   if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));
