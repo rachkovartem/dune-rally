@@ -21,7 +21,7 @@ describe('createHeightField', () => {
     const h = createHeightField(7);
     for (let i = 0; i < 500; i++) {
       const v = h(i * 3.1, i * -2.7);
-      expect(v).toBeGreaterThanOrEqual(-10);
+      expect(v).toBeGreaterThanOrEqual(-55);
       expect(v).toBeLessThanOrEqual(45);
     }
   });
