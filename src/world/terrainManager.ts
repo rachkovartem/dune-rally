@@ -4,6 +4,7 @@ import { worldToChunk, chunkKey, chunkOrigin, type ChunkCoord } from './chunk';
 import { diffChunks } from './terrainSelection';
 import { buildTerrainMesh } from '../render/terrainMesh';
 import { createChunkScatter } from '../render/scatter';
+import type { Knockables } from '../render/knockables';
 import type { Biome } from './biome';
 import type { Height2D } from './noise';
 
@@ -18,6 +19,7 @@ export class TerrainManager {
   private worker: Worker;
   private meshes = new Map<string, THREE.Mesh>();
   private scatter = new Map<string, THREE.Group>();
+  private scatterKnock = new Map<string, THREE.Object3D[]>();
   private heights = new Map<string, Float32Array>();
   private pending = new Set<string>();
 
@@ -26,6 +28,7 @@ export class TerrainManager {
     private scene: THREE.Scene,
     private biome: Biome,
     private heightField: Height2D,
+    private knockables: Knockables,
     private physics?: TerrainPhysicsHooks,
   ) {
     this.worker = new Worker(new URL('./terrainWorker.ts', import.meta.url), { type: 'module' });
@@ -42,9 +45,13 @@ export class TerrainManager {
     this.meshes.set(key, mesh);
     this.heights.set(key, heights);
 
-    const props = createChunkScatter(cx, cz, this.seed, this.heightField, this.biome);
+    const { group: props, knockables: knockTrees } = createChunkScatter(
+      cx, cz, this.seed, this.heightField, this.biome,
+    );
     this.scene.add(props);
     this.scatter.set(key, props);
+    this.scatterKnock.set(key, knockTrees);
+    for (const t of knockTrees) this.knockables.add(t);
 
     this.physics?.onLoad(key, heights, origin.x, origin.z);
   }
@@ -78,6 +85,11 @@ export class TerrainManager {
       if (props) {
         this.scene.remove(props); // shared geometries/materials — don't dispose them
         this.scatter.delete(key);
+      }
+      const knockTrees = this.scatterKnock.get(key);
+      if (knockTrees) {
+        for (const t of knockTrees) this.knockables.remove(t);
+        this.scatterKnock.delete(key);
       }
       this.heights.delete(key);
       this.physics?.onUnload(key);

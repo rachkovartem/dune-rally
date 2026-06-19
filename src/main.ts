@@ -12,6 +12,7 @@ import { connectToArena } from './net/connection';
 import { PlayerViews } from './net/playerViews';
 import { TireTracks } from './render/groundDecals';
 import { Water } from './render/water';
+import { Knockables } from './render/knockables';
 import { sanitizeInput, SERVER_PORT } from '../shared/protocol';
 import type RAPIER from '@dimforge/rapier3d-compat';
 
@@ -22,13 +23,14 @@ window.addEventListener('resize', ctx.resize);
 const conn = await connectToArena(`ws://${location.hostname}:${SERVER_PORT}`, 'rider');
 const heightField = createHeightField(conn.seed);
 const biome = createBiome(conn.seed);
+const knockables = new Knockables();
 
 // The local player's buggy is simulated LOCALLY at 60fps for smooth, instant control; inputs are
 // also sent to the server so other players see us. The server stays authoritative for everyone
 // else (full prediction + reconciliation that ties the two together is Plan 2b).
 const world = await initPhysics();
 const colliders = new Map<string, RAPIER.Collider>();
-const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, {
+const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, knockables, {
   onLoad: (key, heights, ox, oz) => colliders.set(key, addChunkCollider(world, heights, ox, oz)),
   onUnload: (key) => {
     const c = colliders.get(key);
@@ -75,7 +77,8 @@ let acc = 0;
 
 function frame() {
   const nowS = performance.now() / 1000;
-  acc += Math.min(nowS - last, 0.1); // clamp after a tab pause
+  const dt = Math.min(nowS - last, 0.1); // clamp after a tab pause
+  acc += dt;
   last = nowS;
   const now = performance.now();
 
@@ -102,6 +105,12 @@ function frame() {
   water.update(p.x, p.z);
   ctx.focusSun(p.x, p.y, p.z);
   chase.update(buggy.mesh);
+
+  // knock over trees/cacti the car ploughs through (fall toward travel direction)
+  const cq = buggy.mesh.quaternion;
+  const fwdX = 2 * (cq.x * cq.z + cq.w * cq.y);
+  const fwdZ = 1 - 2 * (cq.x * cq.x + cq.y * cq.y);
+  knockables.update(p.x, p.z, fwdX, fwdZ, buggy.speed(), dt);
 
   if (playerCountEl) playerCountEl.textContent = String(conn.players().size);
   if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));

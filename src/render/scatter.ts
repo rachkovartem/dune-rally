@@ -44,6 +44,7 @@ function tree(rng: () => number): THREE.Object3D {
   }
   const s = 0.8 + rng() * 0.6;
   g.scale.setScalar(s);
+  g.userData.knockable = true;
   return g;
 }
 
@@ -67,6 +68,7 @@ function cactus(rng: () => number): THREE.Object3D {
     g.add(arm);
   }
   g.scale.setScalar(0.8 + rng() * 0.5);
+  g.userData.knockable = true;
   return g;
 }
 
@@ -85,14 +87,20 @@ function pick(cover: Cover, rng: () => number): THREE.Object3D | null {
 }
 
 /** Deterministic low-poly props scattered across one chunk, placed by coverage type. */
+export interface ChunkScatter {
+  group: THREE.Group;
+  knockables: THREE.Object3D[]; // trees & cacti that can be knocked over
+}
+
 export function createChunkScatter(
   cx: number,
   cz: number,
   seed: number,
   height: Height2D,
   biome: Biome,
-): THREE.Group {
+): ChunkScatter {
   const g = new THREE.Group();
+  const knockables: THREE.Object3D[] = [];
   const rng = mulberry32(((cx * 73856093) ^ (cz * 19349663) ^ seed) >>> 0);
   const ox = cx * CHUNK_SIZE;
   const oz = cz * CHUNK_SIZE;
@@ -116,6 +124,7 @@ export function createChunkScatter(
       if (o instanceof THREE.Mesh) o.castShadow = true;
     });
     g.add(obj);
+    if (obj.userData.knockable) knockables.push(obj);
   }
-  return g;
+  return { group: g, knockables };
 }
