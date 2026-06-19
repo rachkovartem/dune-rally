@@ -24,6 +24,8 @@ export class AudioManager {
   private combGain!: GainNode;
   private windGain?: GainNode;
   private windLP?: BiquadFilterNode;
+  private tireGain?: GainNode;
+  private tireBP?: BiquadFilterNode;
 
   constructor() {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -56,6 +58,22 @@ export class AudioManager {
     this.started = true;
     this.buildEngine();
     this.buildWind();
+    this.buildTire();
+  }
+
+  private buildTire(): void {
+    const c = this.ctx;
+    const src = this.noiseSource(true);
+    this.tireBP = c.createBiquadFilter();
+    this.tireBP.type = 'bandpass';
+    this.tireBP.frequency.value = 480;
+    this.tireBP.Q.value = 0.6;
+    this.tireGain = c.createGain();
+    this.tireGain.gain.value = 0;
+    src.connect(this.tireBP);
+    this.tireBP.connect(this.tireGain);
+    this.tireGain.connect(this.master);
+    src.start();
   }
 
   private buildEngine(): void {
@@ -142,13 +160,18 @@ export class AudioManager {
     set(this.sub.frequency, fund * 0.5);
     set(this.lp.frequency, 420 + f * 2000);
 
-    const base = 0.06 + throttle * 0.11 + f * 0.07;
+    // Engine is heard ONLY while accelerating — release the throttle and it fades out.
+    const base = throttle * (0.18 + f * 0.05);
     set(this.engineGain.gain, base);
     set(this.trem.gain, base * 0.6);            // tremolo depth scales with loudness
     set(this.lfo.frequency, 18 + f * 60);       // firing rate
-    set(this.combGain.gain, 0.02 + throttle * 0.06 + f * 0.03);
+    set(this.combGain.gain, throttle * 0.07);
 
-    this.windGain?.gain.setTargetAtTime(Math.min(0.4, f * f * 0.45), t, 0.15);
+    // Tyre roll — the rustle you hear whenever the car moves; the ONLY sound while coasting.
+    this.tireGain?.gain.setTargetAtTime(Math.min(0.32, f * 0.42), t, 0.1);
+    this.tireBP?.frequency.setTargetAtTime(380 + f * 520, t, 0.12);
+
+    this.windGain?.gain.setTargetAtTime(Math.min(0.3, f * f * 0.4), t, 0.15);
     this.windLP?.frequency.setTargetAtTime(450 + f * 1400, t, 0.15);
   }
 
