@@ -1,11 +1,10 @@
 // src/main.ts
-import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { createRenderer } from './render/renderer';
-import { makeToonMaterial } from './render/celShading';
 import { resolveSeed } from './world/seed';
 import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, removeCollider } from './physics/physicsWorld';
+import { Buggy } from './vehicle/buggy';
 
 const canvas = document.getElementById('app') as HTMLCanvasElement;
 const ctx = createRenderer(canvas);
@@ -25,19 +24,16 @@ const seed = resolveSeed(window.location.href, '2026-06-19');
     },
   });
 
-  // Drop test: a sphere falls and should rest on the terrain.
-  const ballBody = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(32, 80, 32));
-  world.createCollider(RAPIER.ColliderDesc.ball(2), ballBody);
-  const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(2, 16, 16), makeToonMaterial(0x4dd2ff));
-  ctx.scene.add(ballMesh);
-
+  const buggy = new Buggy(world, ctx.scene, { x: 32, y: 30, z: 32 });
   terrain.update(32, 32, 3);
-  ctx.camera.position.set(32, 60, 110);
 
   function loop() {
+    buggy.applyControls({ throttle: 0, brake: 0, steer: 0 }); // no input yet (Task 13)
     world.step();
-    const p = ballBody.translation();
-    ballMesh.position.set(p.x, p.y, p.z);
+    buggy.update();
+    const p = buggy.position();
+    terrain.update(p.x, p.z, 3);
+    ctx.camera.position.set(p.x, p.y + 25, p.z + 45);
     ctx.camera.lookAt(p.x, p.y, p.z);
     ctx.render();
     requestAnimationFrame(loop);
