@@ -1,5 +1,23 @@
 // src/audio/audio.ts
 import { vehicleConfig } from '../vehicle/vehicleConfig';
+import type { Cover } from '../world/biome';
+
+// Per-surface tyre-rustle character: band centre (Hz), resonance, and a loudness multiplier.
+// Higher freq = thin fizz/rustle; low freq = a quiet roll/hum; high Q = crunchy (gravel/rock).
+const SURFACE: Record<Cover, { freq: number; q: number; gain: number }> = {
+  water: { freq: 1500, q: 0.8, gain: 0.7 },
+  mud: { freq: 360, q: 0.7, gain: 0.5 },
+  beach: { freq: 2100, q: 0.9, gain: 0.9 },
+  sand: { freq: 1900, q: 0.9, gain: 1.0 },
+  dryGrass: { freq: 1200, q: 0.8, gain: 0.65 },
+  grass: { freq: 950, q: 0.7, gain: 0.5 },
+  forest: { freq: 900, q: 0.7, gain: 0.5 },
+  dirt: { freq: 1100, q: 0.8, gain: 0.8 },
+  rock: { freq: 1600, q: 1.7, gain: 1.05 },
+  snow: { freq: 600, q: 0.6, gain: 0.4 },
+  road: { freq: 700, q: 0.5, gain: 0.7 },
+  gravel: { freq: 1500, q: 1.9, gain: 1.1 },
+};
 
 /**
  * Fully procedural sound (Web Audio) — no files, so nothing loops with a seam and every parameter
@@ -26,6 +44,7 @@ export class AudioManager {
   private windLP?: BiquadFilterNode;
   private tireGain?: GainNode;
   private tireBP?: BiquadFilterNode;
+  private tireGainMul = 0.8;
 
   constructor() {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -167,12 +186,22 @@ export class AudioManager {
     set(this.lfo.frequency, 18 + f * 60);       // firing rate
     set(this.combGain.gain, throttle * 0.07);
 
-    // Tyre roll — the rustle you hear whenever the car moves; the ONLY sound while coasting.
-    this.tireGain?.gain.setTargetAtTime(Math.min(0.32, f * 0.42), t, 0.1);
-    this.tireBP?.frequency.setTargetAtTime(380 + f * 520, t, 0.12);
+    // Tyre rustle — barely-there texture of the wheels on the current surface; the only sound
+    // while coasting. Quiet, and its character/level come from setSurface().
+    this.tireGain?.gain.setTargetAtTime(Math.min(0.1, f * 0.11 * this.tireGainMul), t, 0.1);
 
     this.windGain?.gain.setTargetAtTime(Math.min(0.3, f * f * 0.4), t, 0.15);
     this.windLP?.frequency.setTargetAtTime(450 + f * 1400, t, 0.15);
+  }
+
+  /** Set the tyre-rustle character from the surface the car is currently on. */
+  setSurface(cover: Cover): void {
+    if (!this.tireBP) return;
+    const p = SURFACE[cover];
+    const t = this.ctx.currentTime;
+    this.tireBP.frequency.setTargetAtTime(p.freq, t, 0.2);
+    this.tireBP.Q.setTargetAtTime(p.q, t, 0.2);
+    this.tireGainMul = p.gain;
   }
 
   /** Short synthesised impact: a noise whoosh + a low thump. */

@@ -2,6 +2,7 @@
 import { createRenderer } from './render/renderer';
 import { createHeightField } from './world/noise';
 import { createBiome } from './world/biome';
+import { terrainSurfaceHeight } from './world/chunkGeometry';
 import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
@@ -115,6 +116,15 @@ function frame() {
   const fwdX = 2 * (cq.x * cq.z + cq.w * cq.y);
   const fwdZ = 1 - 2 * (cq.x * cq.x + cq.y * cq.y);
   knockables.update(p.x, p.z, fwdX, fwdZ, buggy.speed(), dt);
+
+  // tyre sound matched to the surface under the car
+  const sh = terrainSurfaceHeight(heightField, p.x, p.z);
+  const sd = 1.5;
+  const slope = Math.hypot(
+    terrainSurfaceHeight(heightField, p.x + sd, p.z) - terrainSurfaceHeight(heightField, p.x - sd, p.z),
+    terrainSurfaceHeight(heightField, p.x, p.z + sd) - terrainSurfaceHeight(heightField, p.x, p.z - sd),
+  ) / (2 * sd);
+  audio.setSurface(biome.coverAt(p.x, p.z, sh, slope));
   audio.setDrive(buggy.speed(), controls.throttle);
 
   if (playerCountEl) playerCountEl.textContent = String(conn.players().size);
