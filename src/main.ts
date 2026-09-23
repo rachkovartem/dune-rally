@@ -3,8 +3,10 @@ import { createRenderer } from './render/renderer';
 import { createHeightField } from './world/noise';
 import { createBiome } from './world/biome';
 import { terrainSurfaceHeight } from './world/chunkGeometry';
+import { CHUNK_SIZE } from './world/chunk';
+import { featuresInChunk, SPAWN } from './world/worldDef';
 import { TerrainManager } from './world/terrainManager';
-import { initPhysics, addChunkCollider, removeCollider } from './physics/physicsWorld';
+import { initPhysics, addChunkCollider, addFeatureColliders, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
 import { Keyboard } from './input/keyboard';
 import { controlsFromKeys } from './input/controls';
@@ -33,18 +35,28 @@ const knockables = new Knockables(() => audio.knock());
 // else (full prediction + reconciliation that ties the two together is Plan 2b).
 const world = await initPhysics();
 const colliders = new Map<string, RAPIER.Collider>();
+const featureColliders = new Map<string, RAPIER.Collider[]>();
 const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, knockables, {
-  onLoad: (key, heights, ox, oz) => colliders.set(key, addChunkCollider(world, heights, ox, oz)),
+  onLoad: (key, heights, ox, oz) => {
+    colliders.set(key, addChunkCollider(world, heights, ox, oz));
+    const cx = Math.round(ox / CHUNK_SIZE);
+    const cz = Math.round(oz / CHUNK_SIZE);
+    const cols = addFeatureColliders(world, featuresInChunk(cx, cz), heightField);
+    if (cols.length) featureColliders.set(key, cols);
+  },
   onUnload: (key) => {
     const c = colliders.get(key);
     if (c) { removeCollider(world, c); colliders.delete(key); }
+    const fc = featureColliders.get(key);
+    if (fc) { for (const col of fc) removeCollider(world, col); featureColliders.delete(key); }
   },
 });
 
-const mePlayer = conn.players().get(conn.sessionId);
-const spawnX = mePlayer?.x ?? 32;
-const spawnZ = mePlayer?.z ?? 32;
-terrain.update(spawnX, spawnZ, 3); // request colliders around the spawn before the buggy drops
+// Spawn the local car at the authored town plaza. (The server places each player on a small
+// spawn spiral there too; with no reconciliation yet, the local car is what our own camera follows.)
+const spawnX = SPAWN.x;
+const spawnZ = SPAWN.z;
+terrain.update(spawnX, spawnZ, 4); // request colliders around the spawn before the buggy drops
 // Spawn well above the surface so the async terrain colliders have loaded by the time it lands
 // on its wheels (a too-low spawn lands on the chassis belly → wheels never grip).
 const spawn = { x: spawnX, y: heightField(spawnX, spawnZ) + 8, z: spawnZ };
@@ -52,6 +64,18 @@ const buggy = new Buggy(world, ctx.scene, spawn);
 
 const views = new PlayerViews(ctx.scene); // remote players only
 const keyboard = new Keyboard();
+// TEMP debug hook
+(window as unknown as { __dbg: () => unknown }).__dbg = () => {
+  const p = buggy.position();
+  return {
+    pos: { x: +p.x.toFixed(1), y: +p.y.toFixed(2), z: +p.z.toFixed(1) },
+    speed: +buggy.speed().toFixed(2),
+    ...buggy.debug(),
+    keys: [...keyboard.keys],
+  };
+};
+(window as unknown as { __tp: (x: number, z: number) => void }).__tp = (x, z) =>
+  buggy.teleport(x, heightField(x, z) + 3, z);
 const chase = new ChaseCamera(ctx.camera, heightField);
 const tracks = new TireTracks(ctx.scene, heightField);
 const water = new Water(ctx.scene, biome.waterLevel);
@@ -105,7 +129,7 @@ function frame() {
   views.update(renderTime, null, renderTime);
 
   const p = buggy.position();
-  terrain.update(p.x, p.z, 3);
+  terrain.update(p.x, p.z, 4);
   tracks.update(buggy.mesh, buggy.speed());
   water.update(p.x, p.z);
   ctx.focusSun(p.x, p.y, p.z);

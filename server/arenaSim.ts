@@ -3,7 +3,8 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { createHeightField, type Height2D } from '../src/world/noise';
 import { generateChunkHeights } from '../src/world/heightfieldData';
 import { chunkOrigin } from '../src/world/chunk';
-import { addChunkCollider } from '../src/physics/physicsWorld';
+import { featuresInChunk, SPAWN } from '../src/world/worldDef';
+import { addChunkCollider, addFeatureColliders } from '../src/physics/physicsWorld';
 import { createVehiclePhysics, type VehiclePhysics } from '../shared/vehiclePhysics';
 import { ARENA_CHUNKS, type InputMsg } from '../shared/protocol';
 
@@ -37,16 +38,20 @@ export class ArenaSim {
         const heights = generateChunkHeights(height, { cx, cz });
         const origin = chunkOrigin({ cx, cz });
         addChunkCollider(world, heights, origin.x, origin.z);
+        // Solid placed features (buildings, ramps, landmarks) — same deterministic placement as the client.
+        addFeatureColliders(world, featuresInChunk(cx, cz), height);
       }
     }
     return new ArenaSim(world, height);
   }
 
   addPlayer(id: string): void {
-    // Deterministic spread of spawn points across the arena.
+    // Deterministic spread of spawn points across the hub-town plaza (golden-angle spiral).
     const n = this.spawnIndex++;
-    const x = 32 + (n % 4) * 24;
-    const z = 32 + Math.floor(n / 4) * 24;
+    const ang = n * 2.39996;
+    const r = 4 + (n % 4) * 4;
+    const x = SPAWN.x + Math.cos(ang) * r;
+    const z = SPAWN.z + Math.sin(ang) * r;
     const vehicle = createVehiclePhysics(this.world, { x, y: this.height(x, z) + 4, z });
     this.players.set(id, { vehicle, input: { throttle: 0, brake: 0, steer: 0 } });
   }

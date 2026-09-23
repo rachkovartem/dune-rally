@@ -1,6 +1,7 @@
 // src/world/biome.ts
 import { createNoise2D } from 'simplex-noise';
 import { mulberry32 } from './rng';
+import * as W from './worldDef';
 
 // Coverage palette (hex; converted to vertex colours by the mesh builder).
 export const COVER = {
@@ -22,40 +23,44 @@ export type Cover = keyof typeof COVER;
 
 export interface Biome {
   waterLevel: number;
-  /** Coverage TYPE at a world point (height + slope + seeded fields). */
+  /** Coverage TYPE at a world point (authored zones + height/slope). */
   coverAt(x: number, z: number, h: number, slope: number): Cover;
   /** Hex coverage colour at a world point. */
   colorAt(x: number, z: number, h: number, slope: number): number;
 }
 
 export function createBiome(seed: number): Biome {
-  const moist = createNoise2D(mulberry32((seed ^ 0x9e3779b1) >>> 0));
+  // A little fixed-feel variation for the open desert ground (kept seed-deterministic).
   const vary = createNoise2D(mulberry32((seed ^ 0x85ebca6b) >>> 0));
-  const road = createNoise2D(mulberry32((seed ^ 0xc2b2ae35) >>> 0));
-  const patch = createNoise2D(mulberry32((seed ^ 0x27d4eb2f) >>> 0));
-
   const waterLevel = -22;
 
   const coverAt = (x: number, z: number, h: number, slope: number): Cover => {
-    // Winding tracks: a narrow band of a low-frequency field on gentle, dry ground.
-    const r = road(x * 0.0016 + 70, z * 0.0016 - 70);
-    if (slope < 0.45 && h > waterLevel + 4 && h < 22 && Math.abs(r) < 0.03) return 'road';
+    // Road network: flat corridor + gravel shoulder, on the carved geometry.
+    const rd = W.nearestRoad(x, z);
+    if (rd) {
+      if (rd.dist < W.ROAD_HALF) return 'road';
+      if (rd.dist < W.ROAD_HALF + W.ROAD_SHOULDER) return 'gravel';
+    }
+    // Hub-town plaza: packed earth between the buildings.
+    if (W.townDist(x, z) < W.TOWN.plaza) return 'dirt';
 
-    if (slope > 1.05) return 'rock';
-    if (slope > 0.75) return 'gravel';
-    if (h > 31) return 'snow';
+    // Cliff ring + steep faces.
+    if (h > W.BORDER_HEIGHT * 0.5) return 'rock';
+    if (slope > 0.55) return 'rock';
+    if (slope > 0.3) return 'gravel';
 
-    if (h < waterLevel + 1.2) return 'mud';
-    if (h < waterLevel + 4) return 'beach';
+    // Mesa plateau / heights.
+    if (h > 12) return 'gravel';
+    if (h > 7) return 'dryGrass';
 
-    const m = moist(x * 0.004, z * 0.004) * 0.5 + 0.5; // 0..1 moisture
-    const v = vary(x * 0.012, z * 0.012);              // -1..1 variation
-    const p = patch(x * 0.03, z * 0.03);               // -1..1 fine patchiness
+    // Themed flats.
+    if (W.inSaltFlat(x, z)) return 'beach';     // pale salt straight
+    if (W.inDuneSea(x, z)) return 'sand';       // golden dunes
 
-    if (m > 0.6) return v > 0.15 ? 'forest' : 'grass';
-    if (m > 0.42) return v > 0.05 ? 'grass' : 'dirt';
-    if (p > 0.25) return 'dirt';
-    if (p < -0.25) return 'dryGrass';
+    // Open desert basin with gentle variation.
+    const v = vary(x * 0.01, z * 0.01);
+    if (v > 0.45) return 'dryGrass';
+    if (v < -0.5) return 'dirt';
     return 'sand';
   };
 

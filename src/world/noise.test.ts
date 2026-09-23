@@ -1,35 +1,45 @@
 // src/world/noise.test.ts
 import { describe, it, expect } from 'vitest';
 import { createHeightField } from './noise';
+import { MESA, BORDER_HEIGHT, WORLD_SIZE } from './worldDef';
 
-describe('createHeightField', () => {
-  it('is deterministic for the same seed', () => {
+describe('createHeightField (authored world)', () => {
+  it('is deterministic', () => {
     const a = createHeightField(123);
     const b = createHeightField(123);
-    for (const [x, z] of [[0, 0], [12.5, -7.25], [400, 400]]) {
+    for (const [x, z] of [[0, 0], [256, 256], [400, 150]]) {
       expect(a(x, z)).toBeCloseTo(b(x, z), 10);
     }
   });
 
-  it('produces different terrain for different seeds', () => {
+  it('is the SAME unique world regardless of seed', () => {
     const a = createHeightField(1);
-    const b = createHeightField(2);
-    expect(a(50, 50)).not.toBeCloseTo(b(50, 50), 5);
+    const b = createHeightField(99999);
+    for (const [x, z] of [[100, 100], [256, 96], [430, 360]]) {
+      expect(a(x, z)).toBeCloseTo(b(x, z), 10);
+    }
   });
 
-  it('never exceeds its theoretical bounds', () => {
-    // Octave amplitudes (26 + 8 + 2.5 = 36.5) bound the upside; the canyon cut subtracts
-    // up to 18. The field can therefore never leave [-54.5, 36.5], whatever the seed.
-    const MAX = 36.5;
-    const MIN = -54.5;
-    const EPS = 1e-6;
-    for (const seed of [1, 7, 123, 9999]) {
-      const h = createHeightField(seed);
-      for (let i = 0; i < 500; i++) {
-        const v = h(i * 3.1, i * -2.7);
-        expect(v).toBeGreaterThanOrEqual(MIN - EPS);
-        expect(v).toBeLessThanOrEqual(MAX + EPS);
-      }
+  it('raises a mesa plateau and a flat town plaza', () => {
+    const h = createHeightField(1);
+    expect(h(MESA.x, MESA.z)).toBeGreaterThan(MESA.top - 2); // mesa top is high
+    expect(Math.abs(h(256, 256))).toBeLessThan(1.5);          // town plaza ~ flat at 0
+  });
+
+  it('walls the world with un-climbable cliffs at the border', () => {
+    const h = createHeightField(1);
+    expect(h(4, 256)).toBeGreaterThan(BORDER_HEIGHT - 5);            // near the edge
+    expect(h(WORLD_SIZE - 4, 256)).toBeGreaterThan(BORDER_HEIGHT - 5);
+  });
+
+  it('stays within sane bounds across the playable area', () => {
+    const h = createHeightField(1);
+    for (let i = 0; i < 600; i++) {
+      const x = (i * 17.3) % WORLD_SIZE;
+      const z = (i * 29.7) % WORLD_SIZE;
+      const v = h(x, z);
+      expect(v).toBeGreaterThanOrEqual(-2);
+      expect(v).toBeLessThanOrEqual(BORDER_HEIGHT + 2);
     }
   });
 });

@@ -113,6 +113,22 @@ export class Buggy {
     return this.body.translation();
   }
 
+  /** TEMP debug teleport. */
+  teleport(x: number, y: number, z: number) {
+    this.body.setTranslation({ x, y, z }, true);
+    this.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  }
+
+  /** TEMP debug snapshot. */
+  debug() {
+    const v = this.body.linvel();
+    const w = this.body.angvel();
+    const grounded = [0, 1, 2, 3].map((i) => this.controller.wheelIsInContact(i));
+    return { v: { x: v.x, y: v.y, z: v.z }, w: { x: w.x, y: w.y, z: w.z }, grounded };
+  }
+
   /** Horizontal speed in world units per second. */
   speed(): number {
     const v = this.body.linvel();

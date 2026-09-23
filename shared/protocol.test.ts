@@ -18,6 +18,6 @@ describe('sanitizeInput', () => {
 describe('constants', () => {
   it('are the documented values', () => {
     expect(TICK_HZ).toBe(30);
-    expect(ARENA_CHUNKS).toBe(16);
+    expect(ARENA_CHUNKS).toBe(8);
   });
 });
