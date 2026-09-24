@@ -10,7 +10,7 @@ export const vehicleConfig = {
   angularDamping: 0.9,
 
   wheel: {
-    radius: 0.62,
+    radius: 0.44,
     width: 0.45,
     suspensionRestLength: 0.5,
     suspensionStiffness: 34,        // stiffer springs for a heavy vehicle
@@ -19,10 +19,10 @@ export const vehicleConfig = {
     maxSuspensionTravel: 0.55,
     frictionSlip: 3.4,              // grippy, planted
     positions: [
-      { x: -1.0, y: -0.25, z: 1.4 },  // front-left
-      { x: 1.0, y: -0.25, z: 1.4 },   // front-right
-      { x: -1.0, y: -0.25, z: -1.4 }, // rear-left
-      { x: 1.0, y: -0.25, z: -1.4 },  // rear-right
+      { x: -1.0, y: -0.40, z: 1.4 },  // front-left
+      { x: 1.0, y: -0.40, z: 1.4 },   // front-right
+      { x: -1.0, y: -0.40, z: -1.4 }, // rear-left
+      { x: 1.0, y: -0.40, z: -1.4 },  // rear-right
     ],
   },
 

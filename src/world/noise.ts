@@ -46,6 +46,11 @@ export function createHeightField(_seed: number): Height2D {
       h = W.lerp(h, roadH, 1 - W.smoothstep(W.ROAD_HALF, ROAD_INFL, rd.dist));
     }
 
+    // Lake: carve a basin toward lakeDepthAt near the centre, blending back to natural terrain
+    // by the outer feather — same late-blend shape as the town plaza and road grading above.
+    const li = W.lakeInfluence(x, z);
+    if (li > 0) h = W.lerp(h, W.lakeDepthAt(x, z), li);
+
     return h;
   };
 }

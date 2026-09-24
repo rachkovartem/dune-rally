@@ -3,6 +3,7 @@ dist/
 *.local
 .DS_Store
 .vite/
+.cache/
 
 # Internal design docs (specs/plans) — kept locally, not published
 docs/superpowers/

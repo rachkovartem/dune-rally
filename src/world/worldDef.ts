@@ -69,6 +69,24 @@ export function inSaltFlat(x: number, z: number): boolean {
   return x >= SALT.minX && x <= SALT.maxX && z >= SALT.minZ && z <= SALT.maxZ;
 }
 
+// ── LAKE (NW of town, off the town→mesa road) ──────────────────────────
+export const LAKE = { x: 200, z: 190, radius: 20, feather: 14, floor: -4, rim: -1, waterLevel: -1.2 } as const;
+
+/** Flat-plane distance from (x, z) to the lake's centre. */
+export function lakeDist(x: number, z: number): number {
+  return Math.hypot(x - LAKE.x, z - LAKE.z);
+}
+
+/** Carved basin floor height at (x, z): deepest at the centre, shallower toward the rim. */
+export function lakeDepthAt(x: number, z: number): number {
+  return lerp(LAKE.floor, LAKE.rim, smoothstep(0, LAKE.radius, lakeDist(x, z)));
+}
+
+/** How strongly the lake carve should pull the natural terrain toward `lakeDepthAt`, 1 at the centre, 0 past the feather. */
+export function lakeInfluence(x: number, z: number): number {
+  return 1 - smoothstep(LAKE.radius, LAKE.radius + LAKE.feather, lakeDist(x, z));
+}
+
 // ── CLIFF RING (world boundary) ────────────────────────────────────────
 export function cliffHeight(x: number, z: number): number {
   const dx = Math.max(0, PLAYABLE_MIN - x, x - PLAYABLE_MAX);
