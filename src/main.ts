@@ -7,7 +7,7 @@ import { surfaceSampleAt } from './world/surfaceSample';
 import { CHUNK_SIZE, chunkKey, chunkOrigin, chunksInRadius, worldToChunk, type ChunkCoord } from './world/chunk';
 import { featuresInChunk, SPAWN } from './world/worldDef';
 import { TerrainManager } from './world/terrainManager';
-import { initPhysics, addChunkCollider, addFeatureColliders, removeCollider } from './physics/physicsWorld';
+import { initPhysics, addChunkCollider, addFeatureColliders, addSolidPropColliders, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
 import { vehicleConfigFor, type VehicleConfig } from './vehicle/vehicleConfig';
 import { CAR_IDS, type CarId } from './vehicle/cars';
@@ -20,7 +20,7 @@ import { PlayerViews } from './net/playerViews';
 import { TireTracks } from './render/groundDecals';
 import { Water } from './render/water';
 import { Knockables } from './render/knockables';
-import { AudioManager } from './audio/audio';
+import { AudioManager, type RemoteCarPose } from './audio/audio';
 import { sanitizeCarId, sanitizeInput, SERVER_PORT } from '../shared/protocol';
 import { terrainGripFor } from '../shared/terrainGrip';
 import type RAPIER from '@dimforge/rapier3d-compat';
@@ -34,7 +34,10 @@ import { PROP_TEXTURE_SETS, type PropKind } from './assets/textureManifest';
 import { createTerrainMaterial } from './render/terrainMaterial';
 import { setTerrainMaterial } from './render/terrainMesh';
 import { createPropMaterials } from './render/propMaterials';
-import { setPropMaterials } from './render/scatter';
+import { setHighTierPropsVisible, setPropMaterials, updatePropVisibility } from './render/scatter';
+import { boulderRockTexture, GRASS_MODEL_ID, POLY_PROP_IDS, polyPropUrl, registerPolyProps } from './render/polyProps';
+import { Grass } from './render/grass';
+import { otherQuality } from './render/qualityTiers';
 import { SRGBColorSpace, RepeatWrapping, Object3D, Vector3, type DataTexture, type Group, type Texture } from 'three';
 import { readSavedCarId, saveCarId } from './ui/carChoice';
 import { createCarPicker } from './ui/carPicker';
@@ -46,6 +49,7 @@ if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Expected a <canvas id="app"> element in the page.');
 }
 const audio = new AudioManager();
+window.__audio = () => audio.snapshot();
 
 const startEl = document.getElementById('start');
 const carsEl = startEl?.querySelector<HTMLElement>('.start-cars');
@@ -71,7 +75,7 @@ const carModelEntryId = (carId: CarId): string => `car:${carId}`;
 // One manifest and one progress readout for the sky, the ground and prop textures, and the car.
 // Any failed file stops the game with its message in the start overlay: there is no fallback
 // sky or car, so a missing file cannot hide behind a look that almost works.
-const SKY_HDR_URL = '/sky/goegap_1k.hdr';
+const SKY_HDR_URL = '/sky/goegap_2k.hdr';
 const SKY_BACKGROUND_URL = '/sky/goegap_sky_4k.webp';
 const SAND_SET_ID = 'Ground054';
 const manifest: AssetManifestEntry[] = [
@@ -81,6 +85,11 @@ const manifest: AssetManifestEntry[] = [
     id: carModelEntryId(carId),
     kind: 'model',
     url: carDefinitionFor(carId).modelUrl,
+  })),
+  ...[...POLY_PROP_IDS, GRASS_MODEL_ID].map((propId): AssetManifestEntry => ({
+    id: `prop:${propId}`,
+    kind: 'model',
+    url: polyPropUrl(propId),
   })),
 ];
 const addedTextureUrls = new Set<string>();
@@ -151,7 +160,8 @@ for (const texture of [sandSet.color, sandSet.normal, sandSet.arm]) {
   texture.wrapT = RepeatWrapping;
   texture.anisotropy = 8;
 }
-setTerrainMaterial(createTerrainMaterial(sandSet));
+registerPolyProps((propId) => loadedModel(`prop:${propId}`));
+setTerrainMaterial(createTerrainMaterial(sandSet, boulderRockTexture()));
 
 const propTextureSetFor = (kind: PropKind) => ({
   color: colorMap(`${PROP_TEXTURE_SETS[kind]}-color`),
@@ -174,12 +184,12 @@ const colliders = new Map<string, RAPIER.Collider>();
 const featureColliders = new Map<string, RAPIER.Collider[]>();
 const solidChunks = new Map<string, ChunkCoord>();
 const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, knockables, {
-  onLoad: (key, heights, ox, oz) => {
+  onLoad: (key, heights, ox, oz, solidProps) => {
     colliders.set(key, addChunkCollider(world, heights, ox, oz));
     const cx = Math.round(ox / CHUNK_SIZE);
     const cz = Math.round(oz / CHUNK_SIZE);
     solidChunks.set(key, { cx, cz });
-    const cols = addFeatureColliders(world, featuresInChunk(cx, cz), heightField);
+    const cols = [...addFeatureColliders(world, featuresInChunk(cx, cz), heightField), ...addSolidPropColliders(world, solidProps)];
     if (cols.length) featureColliders.set(key, cols);
   },
   onUnload: (key) => {
@@ -191,7 +201,7 @@ const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, kno
   },
 });
 
-// Spawn the local car at the authored town plaza. (The server places each player on a small
+// Spawn the local car on the authored spawn knoll. (The server places each player on a small
 // spawn spiral there too; with no reconciliation yet, the local car is what our own camera follows.)
 const spawnX = SPAWN.x;
 const spawnZ = SPAWN.z;
@@ -259,13 +269,25 @@ window.__dbg = () => {
     cameraClearance: +(ctx.camera.position.y - terrainSurfaceHeight(heightField, ctx.camera.position.x, ctx.camera.position.z)).toFixed(2),
   };
 };
-window.__tp = (x, z) => localCar?.buggy.teleport(x, heightField(x, z) + 3, z);
+window.__tp = (x, z) => {
+  localCar?.buggy.teleport(x, heightField(x, z) + 3, z);
+  tracks.breakChains();
+};
 const chase = new ChaseCamera(ctx.camera, (x, z) => terrainSurfaceHeight(heightField, x, z));
 chase.bindInput(canvas);
+window.__orbit = chase.orbit;
 // What the camera looks at while the start overlay is up and no car exists yet.
 const spawnViewTarget = new Object3D();
 spawnViewTarget.position.set(spawn.x, heightField(spawn.x, spawn.z), spawn.z);
-const tracks = new TireTracks(ctx.scene, heightField);
+const tracks = new TireTracks(ctx.scene, heightField, biome, sandSet, 4);
+const grass = new Grass(ctx.scene, loadedModel(`prop:${GRASS_MODEL_ID}`), heightField, biome);
+ctx.onQualityChange((tier) => {
+  grass.setTier(tier);
+  setHighTierPropsVisible(tier.extraProps);
+});
+window.addEventListener('keydown', (event) => {
+  if (!event.repeat && event.code === 'KeyQ') ctx.setQuality(otherQuality(ctx.quality()));
+});
 const water = new Water(ctx.scene, biome.waterLevel);
 const playerCountEl = document.getElementById('player-count');
 const speedEl = document.getElementById('speed');
@@ -299,6 +321,7 @@ startEl.addEventListener('click', () => {
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'KeyR' || !localCar) return;
   localCar.buggy.reset();
+  tracks.breakChains();
   conn.sendResetCar();
 });
 
@@ -338,6 +361,7 @@ function recoverIfFallenThrough(buggy: Buggy): void {
     + `x=${landing.x.toFixed(1)} y=${landing.y.toFixed(1)} z=${landing.z.toFixed(1)}`,
   );
   buggy.placeUprightAt(landing.x, landing.y, landing.z);
+  tracks.breakChains();
 }
 
 const guard = createFrameGuard((subsystem, message) => {
@@ -380,7 +404,10 @@ function frame() {
 
     const p = buggy.position();
     guard.run('terrain', () => terrain.update(p.x, p.z, 5));
-    guard.run('tyre tracks', () => tracks.update(buggy.mesh, buggy.speed()));
+    guard.run('tyre tracks', () => {
+      const forward = new Vector3(0, 0, 1).applyQuaternion(buggy.mesh.quaternion);
+      tracks.update(buggy.wheelContacts(), p.x, p.z, Math.atan2(forward.x, forward.z), buggy.tyreWidth());
+    });
     guard.run('water', () => water.update(p.x, p.z));
     guard.run('sun', () => ctx.focusSun(p.x, p.y, p.z));
     guard.run('camera', () => chase.update(buggy.mesh, dt));
@@ -398,8 +425,21 @@ function frame() {
       const surface = surfaceSampleAt(heightField, p.x, p.z);
       const cover = biome.coverAt(p.x, p.z, surface.height, surface.slope);
       car.grip = terrainGripFor(cover, car.config);
-      audio.setSurface(cover);
-      audio.setDrive(buggy.speed(), controls.throttle, car.config.drivetrain.topSpeed);
+      audio.updateLocal({
+        carId: car.carId,
+        spec: car.config.drivetrain,
+        drivetrain: buggy.drivetrain(),
+        throttle: controls.throttle,
+        brake: controls.brake,
+        forwardSpeed: buggy.forwardSpeed(),
+        speed: buggy.speed(),
+        wheelsInContact: buggy.wheelsInContact(),
+        wheelCount: buggy.wheelCount(),
+        cover,
+        rotation: buggy.mesh.quaternion,
+        groundClearance: p.y - terrainSurfaceHeight(heightField, p.x, p.z),
+        dt,
+      });
     });
     guard.run('hud', () => {
       if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));
@@ -420,10 +460,22 @@ function frame() {
     }
     views.update(renderTime, null, renderTime);
   });
+  guard.run('remote engine sound', () => {
+    audio.setListener(ctx.camera);
+    const remoteCars: RemoteCarPose[] = [];
+    for (const id of conn.players().keys()) {
+      const group = views.group(id);
+      const carId = views.carIdOf(id);
+      if (id !== conn.sessionId && group && carId) remoteCars.push({ id, carId, position: group.position, rotation: group.quaternion });
+    }
+    audio.updateRemotes(remoteCars, dt);
+  });
   guard.run('hud', () => {
     if (playerCountEl) playerCountEl.textContent = String(conn.players().size);
   });
 
+  guard.run('grass', () => grass.update(ctx.camera.position));
+  guard.run('prop draw distance', () => updatePropVisibility(ctx.camera.position.x, ctx.camera.position.z));
   guard.run('render', () => ctx.render());
 }
 requestAnimationFrame(frame);

@@ -1,255 +1,325 @@
 // src/audio/audio.ts
-import type { Cover } from '../world/biome';
+import { Quaternion as ThreeQuaternion, Vector3, type Camera } from 'three';
+import type { CarId } from '../vehicle/cars';
+import { readSavedCarId } from '../ui/carChoice';
+import { EngineAudio, EngineInputError, assertFiniteFrame, type LocalEngineFrame, type LocalEngineSnapshot } from './engineAudio';
+import { RemoteEngines, type RemoteCarPose, type RemoteEngineSnapshot } from './remoteEngines';
+import {
+  defaultCarChoice, parseSoundSettings, recordedRpmOf, serializeSoundSettings, SOUND_SETTINGS_STORAGE_KEY, type SoundSettings,
+} from './soundChoice';
+import {
+  LAYER_NAMES, parseSoundManifest, SOUND_BASE_URL, SOUND_MANIFEST_URL, soundEntryFor, type LayerName, type SoundEntry, type SoundManifest,
+} from './soundManifest';
+import { createSoundPicker, type SoundPicker } from './soundPicker';
 
-// Per-surface tyre-rustle character: band centre (Hz), resonance, and a loudness multiplier.
-// Higher freq = thin fizz/rustle; low freq = a quiet roll/hum; high Q = crunchy (gravel/rock).
-const SURFACE: Record<Cover, { freq: number; q: number; gain: number }> = {
-  water: { freq: 1500, q: 0.8, gain: 0.7 },
-  mud: { freq: 360, q: 0.7, gain: 0.5 },
-  beach: { freq: 2100, q: 0.9, gain: 0.9 },
-  sand: { freq: 1900, q: 0.9, gain: 1.0 },
-  dryGrass: { freq: 1200, q: 0.8, gain: 0.65 },
-  grass: { freq: 950, q: 0.7, gain: 0.5 },
-  forest: { freq: 900, q: 0.7, gain: 0.5 },
-  dirt: { freq: 1100, q: 0.8, gain: 0.8 },
-  rock: { freq: 1600, q: 1.7, gain: 1.05 },
-  snow: { freq: 600, q: 0.6, gain: 0.4 },
-  road: { freq: 700, q: 0.5, gain: 0.7 },
-  gravel: { freq: 1500, q: 1.9, gain: 1.1 },
-};
+export type { LocalEngineFrame } from './engineAudio';
+export type { RemoteCarPose } from './remoteEngines';
+
+/** Names the sound file that failed, so the console says which one and why. */
+export class SoundLoadError extends Error {
+  constructor(readonly url: string, reason: string) {
+    super(`${url} (${reason})`);
+    this.name = 'SoundLoadError';
+  }
+}
+
+interface LoadedSound {
+  manifest: SoundManifest;
+  settings: SoundSettings;
+}
+
+interface Preview {
+  entryId: string;
+  source: AudioBufferSourceNode;
+  gain: GainNode;
+}
+
+export interface AudioSnapshot {
+  state: AudioContextState;
+  started: boolean;
+  loaded: boolean;
+  errors: string[];
+  volume: number;
+  local: LocalEngineSnapshot | null;
+  remotes: RemoteEngineSnapshot[];
+  pickerOpen: boolean;
+  pickerCar: CarId | null;
+  previewing: string | null;
+}
 
 /**
- * Fully procedural sound (Web Audio) — no files, so nothing loops with a seam and every parameter
- * is tunable. The engine is built from detuned sawtooth oscillators + a sub + combustion noise +
- * a firing-rate tremolo, all driven by speed/throttle; wind is filtered noise; knock and UI are
- * short synthesised one-shots. Must be resumed on a user gesture (autoplay policy).
+ * The game's sound. Engines are recorded loops (see public/sound/ATTRIBUTION.md) driven by each
+ * car's own drivetrain rpm; tyres, wind, scrape, knock and UI blips are synthesised. The context
+ * starts suspended and is resumed on the start click (autoplay policy).
  */
 export class AudioManager {
-  private ctx: AudioContext;
-  private master: GainNode;
-  private noise: AudioBuffer;
+  private readonly context = new AudioContext({ latencyHint: 'interactive' });
+  private readonly master: GainNode;
+  private readonly noise: AudioBuffer;
+  private readonly loops = new Map<string, Promise<AudioBuffer>>();
+  private readonly errors: string[] = [];
   private started = false;
-
-  // engine graph
-  private lp!: BiquadFilterNode;
-  private engineGain!: GainNode;
-  private osc1!: OscillatorNode;
-  private osc2!: OscillatorNode;
-  private sub!: OscillatorNode;
-  private lfo!: OscillatorNode;
-  private trem!: GainNode;
-  private combGain!: GainNode;
-  private windGain?: GainNode;
-  private windLP?: BiquadFilterNode;
-  private tireGain?: GainNode;
-  private tireBP?: BiquadFilterNode;
-  private tireGainMul = 0.8;
+  private sound: LoadedSound | null = null;
+  private local: EngineAudio | null = null;
+  private remotes: RemoteEngines | null = null;
+  private picker: SoundPicker | null = null;
+  private preview: Preview | null = null;
+  private readonly listenerPosition = new Vector3();
+  private readonly listenerForward = new Vector3();
+  private readonly listenerUp = new Vector3();
+  private readonly listenerRotation = new ThreeQuaternion();
+  /** Settles once the manifest and the chosen loops are in; a failure is already reported. */
+  readonly ready: Promise<void>;
 
   constructor() {
-    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    this.ctx = new AC();
-    this.master = this.ctx.createGain();
+    this.master = this.context.createGain();
     this.master.gain.value = 0.7;
-    this.master.connect(this.ctx.destination);
-    this.noise = this.makeNoise(2);
+    // Many loops and noise layers sum up; the limiter keeps a full-throttle crash from clipping.
+    const limiter = this.context.createDynamicsCompressor();
+    limiter.threshold.value = -10;
+    limiter.ratio.value = 8;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.15;
+    this.master.connect(limiter).connect(this.context.destination);
+    this.noise = this.makeNoise(2.3);
+    this.ready = this.loadSound().catch((error: unknown) => {
+      this.reportError(`engine sound is off: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
+  private reportError(message: string): void {
+    this.errors.push(message);
+    console.error(`[sound] ${message}`);
   }
 
   private makeNoise(seconds: number): AudioBuffer {
-    const len = Math.floor(this.ctx.sampleRate * seconds);
-    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    return buf;
+    const length = Math.floor(this.context.sampleRate * seconds);
+    const buffer = this.context.createBuffer(1, length, this.context.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let index = 0; index < length; index++) data[index] = Math.random() * 2 - 1;
+    return buffer;
   }
 
   private noiseSource(loop: boolean): AudioBufferSourceNode {
-    const n = this.ctx.createBufferSource();
-    n.buffer = this.noise;
-    n.loop = loop;
-    return n;
+    const source = this.context.createBufferSource();
+    source.buffer = this.noise;
+    source.loop = loop;
+    return source;
+  }
+
+  // Loaded apart from the asset loader, from page load on: a suspended context still decodes, so
+  // the chosen loops are ready by the start click without holding up the world.
+  private async loadSound(): Promise<void> {
+    const response = await fetch(SOUND_MANIFEST_URL);
+    if (!response.ok) throw new SoundLoadError(SOUND_MANIFEST_URL, `HTTP ${response.status}`);
+    const manifest = parseSoundManifest(await response.json());
+    const parsed = parseSoundSettings(localStorage.getItem(SOUND_SETTINGS_STORAGE_KEY), manifest);
+    for (const warning of parsed.warnings) console.warn(`[sound] ${warning}`);
+    this.sound = { manifest, settings: parsed.settings };
+    this.master.gain.value = parsed.settings.volume;
+    this.picker = createSoundPicker({
+      manifest,
+      settings: parsed.settings,
+      currentCar: () => this.local?.carId ?? readSavedCarId(localStorage),
+      save: () => localStorage.setItem(SOUND_SETTINGS_STORAGE_KEY, serializeSoundSettings(parsed.settings)),
+      layerChanged: (carId, name) => this.applyLayer(carId, name),
+      resetToDefaults: (carId) => {
+        parsed.settings.choices[carId] = defaultCarChoice(carId);
+        localStorage.setItem(SOUND_SETTINGS_STORAGE_KEY, serializeSoundSettings(parsed.settings));
+        for (const name of LAYER_NAMES) this.applyLayer(carId, name);
+      },
+      setVolume: (volume) => this.master.gain.setTargetAtTime(volume, this.context.currentTime, 0.02),
+      togglePreview: (entry) => this.togglePreview(entry),
+      stopPreview: () => this.stopPreview(),
+    });
+    const chosen = Object.values(parsed.settings.choices).flatMap((choice) => LAYER_NAMES.map((name) => soundEntryFor(manifest, choice.layers[name])));
+    // loadLoop has already reported any failure; here only the wait matters.
+    await Promise.allSettled(chosen.map((entry) => this.loadLoop(entry)));
+  }
+
+  private loadLoop = (entry: SoundEntry): Promise<AudioBuffer> => {
+    const cached = this.loops.get(entry.id);
+    if (cached) return cached;
+    const url = SOUND_BASE_URL + entry.file;
+    const loading = fetch(url)
+      .then((response) => {
+        if (!response.ok) throw new SoundLoadError(url, `HTTP ${response.status}`);
+        return response.arrayBuffer();
+      })
+      .then((data) => this.context.decodeAudioData(data))
+      .catch((error: unknown) => {
+        const failure = error instanceof SoundLoadError ? error : new SoundLoadError(url, error instanceof Error ? error.message : String(error));
+        this.reportError(failure.message);
+        throw failure;
+      });
+    this.loops.set(entry.id, loading);
+    return loading;
+  };
+
+  private layerEntry(carId: CarId, name: LayerName): SoundEntry {
+    const sound = this.requireSound();
+    return soundEntryFor(sound.manifest, sound.settings.choices[carId].layers[name]);
+  }
+
+  private recordedRpm(carId: CarId, entry: SoundEntry): number {
+    const sound = this.requireSound();
+    return recordedRpmOf(sound.manifest, sound.settings.choices[carId], entry.id);
+  }
+
+  private requireSound(): LoadedSound {
+    if (!this.sound) throw new Error('AudioManager: the sound manifest is not loaded yet');
+    return this.sound;
+  }
+
+  private applyLayer(carId: CarId, name: LayerName): void {
+    const entry = this.layerEntry(carId, name);
+    if (this.local?.carId === carId) this.local.setLayer(name, entry);
+    this.remotes?.setLayer(carId, name, entry);
+  }
+
+  private async togglePreview(entry: SoundEntry): Promise<boolean> {
+    const wasSame = this.preview?.entryId === entry.id;
+    this.stopPreview();
+    if (wasSame) return false;
+    if (this.context.state === 'suspended') await this.context.resume();
+    const buffer = await this.loadLoop(entry);
+    const source = this.context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const gain = this.context.createGain();
+    gain.gain.value = 0.9;
+    source.connect(gain).connect(this.master);
+    source.start();
+    this.preview = { entryId: entry.id, source, gain };
+    return true;
+  }
+
+  private stopPreview(): void {
+    if (!this.preview) return;
+    const now = this.context.currentTime;
+    this.preview.gain.gain.setTargetAtTime(0, now, 0.03);
+    this.preview.source.stop(now + 0.2);
+    this.preview = null;
   }
 
   /** Call on a user gesture (the start click). */
   resume(): void {
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
-    if (this.started) return;
+    if (this.context.state === 'suspended') void this.context.resume();
     this.started = true;
-    this.buildEngine();
-    this.buildWind();
-    this.buildTire();
   }
 
-  private buildTire(): void {
-    const c = this.ctx;
-    const src = this.noiseSource(true);
-    this.tireBP = c.createBiquadFilter();
-    this.tireBP.type = 'bandpass';
-    this.tireBP.frequency.value = 480;
-    this.tireBP.Q.value = 0.6;
-    this.tireGain = c.createGain();
-    this.tireGain.gain.value = 0;
-    src.connect(this.tireBP);
-    this.tireBP.connect(this.tireGain);
-    this.tireGain.connect(this.master);
-    src.start();
-  }
-
-  private buildEngine(): void {
-    const c = this.ctx;
-    this.lp = c.createBiquadFilter();
-    this.lp.type = 'lowpass';
-    this.lp.frequency.value = 500;
-    this.lp.Q.value = 5;
-
-    this.engineGain = c.createGain();
-    this.engineGain.gain.value = 0;
-    this.lp.connect(this.engineGain);
-    this.engineGain.connect(this.master);
-
-    this.osc1 = c.createOscillator();
-    this.osc1.type = 'sawtooth';
-    this.osc1.frequency.value = 36;
-    this.osc1.connect(this.lp);
-    this.osc1.start();
-
-    this.osc2 = c.createOscillator();
-    this.osc2.type = 'sawtooth';
-    this.osc2.frequency.value = 36.3;
-    this.osc2.connect(this.lp);
-    this.osc2.start();
-
-    this.sub = c.createOscillator();
-    this.sub.type = 'sine';
-    this.sub.frequency.value = 18;
-    const subG = c.createGain();
-    subG.gain.value = 0.5;
-    this.sub.connect(subG);
-    subG.connect(this.lp);
-    this.sub.start();
-
-    // combustion roughness
-    const comb = this.noiseSource(true);
-    const bp = c.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = 280;
-    bp.Q.value = 1.2;
-    this.combGain = c.createGain();
-    this.combGain.gain.value = 0;
-    comb.connect(bp);
-    bp.connect(this.combGain);
-    this.combGain.connect(this.engineGain);
-    comb.start();
-
-    // firing-rate tremolo modulating the engine gain (the "brap" pulse)
-    this.lfo = c.createOscillator();
-    this.lfo.type = 'sawtooth';
-    this.lfo.frequency.value = 20;
-    this.trem = c.createGain();
-    this.trem.gain.value = 0;
-    this.lfo.connect(this.trem);
-    this.trem.connect(this.engineGain.gain);
-    this.lfo.start();
-  }
-
-  private buildWind(): void {
-    const c = this.ctx;
-    const src = this.noiseSource(true);
-    this.windLP = c.createBiquadFilter();
-    this.windLP.type = 'lowpass';
-    this.windLP.frequency.value = 500;
-    this.windGain = c.createGain();
-    this.windGain.gain.value = 0;
-    src.connect(this.windLP);
-    this.windLP.connect(this.windGain);
-    this.windGain.connect(this.master);
-    src.start();
-  }
-
-  /** Drive the engine + wind from the car's speed and throttle. */
-  setDrive(speed: number, throttle: number, maxSpeed: number): void {
-    // A NaN here would reach setTargetAtTime as "non-finite value", which does not say whose value.
-    for (const [name, value] of [['speed', speed], ['throttle', throttle], ['maxSpeed', maxSpeed]] as const) {
-      if (!Number.isFinite(value)) throw new Error(`AudioManager.setDrive: ${name} is ${value}`);
+  /** The local car's engine, tyres, wind and scrape, once per rendered frame. */
+  updateLocal(frame: LocalEngineFrame): void {
+    // Checked before anything else, so a broken caller is named even before the sound has loaded.
+    assertFiniteFrame(frame);
+    if (!this.started || !this.sound) return;
+    if (this.local?.carId !== frame.carId) {
+      this.local?.stop();
+      const engine = new EngineAudio(frame.carId, this.context, this.master, this.noise, this.loadLoop, (message) => this.reportError(message));
+      for (const name of LAYER_NAMES) engine.setLayer(name, this.layerEntry(frame.carId, name));
+      this.local = engine;
     }
-    if (maxSpeed <= 0) throw new Error(`AudioManager.setDrive: maxSpeed must be positive, got ${maxSpeed}`);
-    if (!this.started) return;
-    const f = Math.min(1, speed / maxSpeed);
-    const t = this.ctx.currentTime;
-    const set = (p: AudioParam, v: number, tc = 0.08) => p.setTargetAtTime(v, t, tc);
-
-    const fund = 36 + f * 105; // fundamental rises with speed
-    set(this.osc1.frequency, fund);
-    set(this.osc2.frequency, fund * 1.008);
-    set(this.sub.frequency, fund * 0.5);
-    set(this.lp.frequency, 420 + f * 2000);
-
-    // Engine is heard ONLY while accelerating — release the throttle and it fades out.
-    const base = throttle * (0.18 + f * 0.05);
-    set(this.engineGain.gain, base);
-    set(this.trem.gain, base * 0.6);            // tremolo depth scales with loudness
-    set(this.lfo.frequency, 18 + f * 60);       // firing rate
-    set(this.combGain.gain, throttle * 0.07);
-
-    // Tyre rustle — barely-there texture of the wheels on the current surface; the only sound
-    // while coasting. Quiet, and its character/level come from setSurface().
-    this.tireGain?.gain.setTargetAtTime(Math.min(0.1, f * 0.11 * this.tireGainMul), t, 0.1);
-
-    this.windGain?.gain.setTargetAtTime(Math.min(0.3, f * f * 0.4), t, 0.15);
-    this.windLP?.frequency.setTargetAtTime(450 + f * 1400, t, 0.15);
+    const carId = frame.carId;
+    this.local.update(frame, this.preview !== null, (entry) => this.recordedRpm(carId, entry));
   }
 
-  /** Set the tyre-rustle character from the surface the car is currently on. */
-  setSurface(cover: Cover): void {
-    if (!this.tireBP) return;
-    const p = SURFACE[cover];
-    const t = this.ctx.currentTime;
-    this.tireBP.frequency.setTargetAtTime(p.freq, t, 0.2);
-    this.tireBP.Q.setTargetAtTime(p.q, t, 0.2);
-    this.tireGainMul = p.gain;
+  /** Engines of the other players, placed where their cars are drawn. */
+  updateRemotes(cars: readonly RemoteCarPose[], dt: number): void {
+    if (!Number.isFinite(dt)) throw new EngineInputError(`remote engine sound: dt is ${dt}`);
+    for (const car of cars) {
+      for (const [name, value] of Object.entries(car.position)) {
+        if (!Number.isFinite(value)) throw new EngineInputError(`remote engine sound: ${car.id} position.${name} is ${value}`);
+      }
+    }
+    if (!this.started || !this.sound) return;
+    if (!this.remotes) {
+      this.remotes = new RemoteEngines(
+        this.context, this.master, this.loadLoop, (message) => this.reportError(message),
+        (carId, name) => this.layerEntry(carId, name), (carId, entry) => this.recordedRpm(carId, entry),
+      );
+    }
+    this.remotes.update(cars, dt);
+  }
+
+  /** Remote engines are heard from the camera. */
+  setListener(camera: Camera): void {
+    camera.getWorldPosition(this.listenerPosition);
+    camera.getWorldDirection(this.listenerForward);
+    camera.getWorldQuaternion(this.listenerRotation);
+    this.listenerUp.set(0, 1, 0).applyQuaternion(this.listenerRotation);
+    const listener = this.context.listener;
+    const now = this.context.currentTime;
+    listener.positionX.setTargetAtTime(this.listenerPosition.x, now, 0.02);
+    listener.positionY.setTargetAtTime(this.listenerPosition.y, now, 0.02);
+    listener.positionZ.setTargetAtTime(this.listenerPosition.z, now, 0.02);
+    listener.forwardX.setTargetAtTime(this.listenerForward.x, now, 0.02);
+    listener.forwardY.setTargetAtTime(this.listenerForward.y, now, 0.02);
+    listener.forwardZ.setTargetAtTime(this.listenerForward.z, now, 0.02);
+    listener.upX.setTargetAtTime(this.listenerUp.x, now, 0.02);
+    listener.upY.setTargetAtTime(this.listenerUp.y, now, 0.02);
+    listener.upZ.setTargetAtTime(this.listenerUp.z, now, 0.02);
+  }
+
+  snapshot(): AudioSnapshot {
+    return {
+      state: this.context.state,
+      started: this.started,
+      loaded: this.sound !== null,
+      errors: [...this.errors],
+      volume: this.master.gain.value,
+      local: this.local?.snapshot() ?? null,
+      remotes: this.remotes?.snapshot() ?? [],
+      pickerOpen: this.picker?.isOpen() ?? false,
+      pickerCar: this.picker?.shownCar() ?? null,
+      previewing: this.preview?.entryId ?? null,
+    };
   }
 
   /** Short synthesised impact: a noise whoosh + a low thump. */
   knock(): void {
-    if (this.ctx.state !== 'running') return;
-    const c = this.ctx;
-    const t = c.currentTime;
+    if (this.context.state !== 'running') return;
+    const context = this.context;
+    const now = context.currentTime;
 
-    const n = this.noiseSource(false);
-    const bp = c.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = 320;
-    bp.Q.value = 0.8;
-    const ng = c.createGain();
-    ng.gain.setValueAtTime(0.6, t);
-    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-    n.connect(bp); bp.connect(ng); ng.connect(this.master);
-    n.start(t); n.stop(t + 0.3);
+    const whoosh = this.noiseSource(false);
+    const band = context.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = 320;
+    band.Q.value = 0.8;
+    const whooshGain = context.createGain();
+    whooshGain.gain.setValueAtTime(0.6, now);
+    whooshGain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    whoosh.connect(band).connect(whooshGain).connect(this.master);
+    whoosh.start(now);
+    whoosh.stop(now + 0.3);
 
-    const thump = c.createOscillator();
+    const thump = context.createOscillator();
     thump.type = 'sine';
-    thump.frequency.setValueAtTime(95, t);
-    thump.frequency.exponentialRampToValueAtTime(45, t + 0.18);
-    const tg = c.createGain();
-    tg.gain.setValueAtTime(0.5, t);
-    tg.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-    thump.connect(tg); tg.connect(this.master);
-    thump.start(t); thump.stop(t + 0.22);
+    thump.frequency.setValueAtTime(95, now);
+    thump.frequency.exponentialRampToValueAtTime(45, now + 0.18);
+    const thumpGain = context.createGain();
+    thumpGain.gain.setValueAtTime(0.5, now);
+    thumpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    thump.connect(thumpGain).connect(this.master);
+    thump.start(now);
+    thump.stop(now + 0.22);
   }
 
   /** Short UI blip. */
   ui(): void {
-    if (this.ctx.state !== 'running') return;
-    const c = this.ctx;
-    const t = c.currentTime;
-    const o = c.createOscillator();
-    o.type = 'triangle';
-    o.frequency.setValueAtTime(620, t);
-    o.frequency.exponentialRampToValueAtTime(880, t + 0.1);
-    const g = c.createGain();
-    g.gain.setValueAtTime(0.25, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
-    o.connect(g); g.connect(this.master);
-    o.start(t); o.stop(t + 0.16);
+    if (this.context.state !== 'running') return;
+    const context = this.context;
+    const now = context.currentTime;
+    const blip = context.createOscillator();
+    blip.type = 'triangle';
+    blip.frequency.setValueAtTime(620, now);
+    blip.frequency.exponentialRampToValueAtTime(880, now + 0.1);
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    blip.connect(gain).connect(this.master);
+    blip.start(now);
+    blip.stop(now + 0.16);
   }
 
   /** Kept for API compatibility; routes to the synthesised impact. */

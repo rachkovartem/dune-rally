@@ -53,14 +53,16 @@ export function createBiome(seed: number): Biome {
       return 'mud';
     }
 
-    // Cliff ring + steep faces.
-    if (h > W.BORDER_HEIGHT * 0.5) return 'rock';
+    // Border slope + steep faces.
+    if (W.borderDepth(x, z) > 0) return 'rock';
     if (slope > 0.55) return 'rock';
     if (slope > 0.3) return 'gravel';
 
-    // Mesa plateau / heights.
-    if (h > 12) return 'gravel';
-    if (h > 7) return 'dryGrass';
+    // Mesa plateau and its upper skirt. Measured on the mesa's own rise: the rolling basin floor
+    // sits above 0, so an absolute height would paint dune crests as high ground.
+    const mesaRise = W.mesaHeight(x, z);
+    if (mesaRise > 12) return 'gravel';
+    if (mesaRise > 7) return 'dryGrass';
 
     // Themed flats.
     if (W.inSaltFlat(x, z)) return 'beach';     // pale salt straight

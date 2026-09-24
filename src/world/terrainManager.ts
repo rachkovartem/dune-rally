@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { worldToChunk, chunkKey, chunkOrigin, type ChunkCoord } from './chunk';
 import { diffChunks } from './terrainSelection';
 import { buildTerrainMesh } from '../render/terrainMesh';
-import { createChunkScatter } from '../render/scatter';
+import { createChunkScatter, releaseChunkScatter, type ChunkScatter } from '../render/scatter';
+import type { SolidProp } from '../render/polyProps';
 import type { Knockables } from '../render/knockables';
 import type { Biome } from './biome';
 import type { Height2D } from './noise';
@@ -11,14 +12,14 @@ import type { Height2D } from './noise';
 interface Resp { cx: number; cz: number; heights: Float32Array }
 
 export interface TerrainPhysicsHooks {
-  onLoad(key: string, heights: Float32Array, originX: number, originZ: number): void;
+  onLoad(key: string, heights: Float32Array, originX: number, originZ: number, solidProps: readonly SolidProp[]): void;
   onUnload(key: string): void;
 }
 
 export class TerrainManager {
   private worker: Worker;
   private meshes = new Map<string, THREE.Mesh>();
-  private scatter = new Map<string, THREE.Group>();
+  private scatter = new Map<string, ChunkScatter>();
   private scatterKnock = new Map<string, THREE.Object3D[]>();
   private heights = new Map<string, Float32Array>();
   private pending = new Set<string>();
@@ -45,15 +46,13 @@ export class TerrainManager {
     this.meshes.set(key, mesh);
     this.heights.set(key, heights);
 
-    const { group: props, knockables: knockTrees } = createChunkScatter(
-      cx, cz, this.seed, this.heightField, this.biome,
-    );
-    this.scene.add(props);
-    this.scatter.set(key, props);
-    this.scatterKnock.set(key, knockTrees);
-    for (const t of knockTrees) this.knockables.add(t);
+    const scatter = createChunkScatter(cx, cz, this.seed, this.heightField, this.biome);
+    this.scene.add(scatter.group);
+    this.scatter.set(key, scatter);
+    this.scatterKnock.set(key, scatter.knockables);
+    for (const t of scatter.knockables) this.knockables.add(t);
 
-    this.physics?.onLoad(key, heights, origin.x, origin.z);
+    this.physics?.onLoad(key, heights, origin.x, origin.z, scatter.solids);
   }
 
   private wantedRadius = 0;
@@ -81,9 +80,10 @@ export class TerrainManager {
         mesh.geometry.dispose();
         this.meshes.delete(key);
       }
-      const props = this.scatter.get(key);
-      if (props) {
-        this.scene.remove(props); // shared geometries/materials — don't dispose them
+      const scatter = this.scatter.get(key);
+      if (scatter) {
+        this.scene.remove(scatter.group); // shared geometries/materials — don't dispose them
+        releaseChunkScatter(scatter);
         this.scatter.delete(key);
       }
       const knockTrees = this.scatterKnock.get(key);

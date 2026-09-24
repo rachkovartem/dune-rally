@@ -6,13 +6,12 @@ import * as W from './worldDef';
 export type Height2D = (x: number, z: number) => number;
 
 /**
- * The authored unique world's height field. The macro shape (basin, cliff ring, mesa, dune sea) is
- * hand-defined in worldDef; a fixed-seed micro-noise adds subtle surface texture; roads and the town
- * plaza flatten the ground toward their authored target heights. The seed argument is ignored for
- * shape — the world is the SAME unique place for everyone — but the signature is kept so the whole
- * terrain → trimesh → physics → multiplayer pipeline is unchanged. Heights stay bounded to roughly
- * [-1, BORDER_HEIGHT]; the only point above the basin floor that the car cannot climb is the cliff
- * ring, which is the world boundary.
+ * The authored unique world's height field. The macro shape (rolling basin, border slope, mesa,
+ * dune sea, spawn knoll) is hand-defined in worldDef; a fixed-seed micro-noise adds subtle surface
+ * texture; roads and the town plaza are graded to the local average ground level, so a flat never
+ * sits below its surroundings as a hole. The seed argument is ignored for shape — the world is the
+ * SAME unique place for everyone — but the signature is kept so the whole terrain → trimesh →
+ * physics → multiplayer pipeline is unchanged. Only the lake carve goes below the water level.
  */
 export function createHeightField(_seed: number): Height2D {
   // Fixed seed → identical micro-detail on every client and the server.
@@ -20,6 +19,7 @@ export function createHeightField(_seed: number): Height2D {
 
   const base = (x: number, z: number): number => {
     let h = micro(x * 0.025, z * 0.025) * 0.6;
+    h += W.rollingGroundHeight(x, z);
     h += W.mesaHeight(x, z);
     h += W.duneHeight(x, z);
     const cliff = W.cliffHeight(x, z);
@@ -28,21 +28,23 @@ export function createHeightField(_seed: number): Height2D {
 
   const ROAD_INFL = W.ROAD_HALF + W.ROAD_SHOULDER + W.ROAD_RAMP;
   const PAD_INFL = W.TOWN.plaza + W.TOWN.skirt;
+  const plazaLevel = W.groundLevel(W.TOWN.x, W.TOWN.z);
 
   return (x: number, z: number): number => {
     let h = base(x, z);
 
-    // Town plaza: flatten to the plaza height (0) with a smooth skirt.
+    // Town plaza: flatten to the ground level at the town centre with a smooth skirt.
     const td = W.townDist(x, z);
     if (td < PAD_INFL) {
-      h = W.lerp(h, 0, 1 - W.smoothstep(W.TOWN.plaza, PAD_INFL, td));
+      h = W.lerp(h, plazaLevel, 1 - W.smoothstep(W.TOWN.plaza, PAD_INFL, td));
     }
 
-    // Roads: grade toward the line between the nearest segment's authored endpoint heights, with a
-    // ramped shoulder so the corridor is a flat drivable strip with gentle edges (no vertical cut).
+    // Roads: grade toward the authored height above the ground level at the closest centre-line
+    // point (so the cross-section stays level), with a ramped shoulder so the corridor is a flat
+    // drivable strip with gentle edges (no vertical cut).
     const rd = W.nearestRoad(x, z);
     if (rd && rd.dist < ROAD_INFL) {
-      const roadH = W.lerp(rd.ya, rd.yb, rd.t);
+      const roadH = W.groundLevel(rd.x, rd.z) + W.lerp(rd.ya, rd.yb, rd.t);
       h = W.lerp(h, roadH, 1 - W.smoothstep(W.ROAD_HALF, ROAD_INFL, rd.dist));
     }
 

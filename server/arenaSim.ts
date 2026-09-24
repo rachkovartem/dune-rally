@@ -57,7 +57,7 @@ export class ArenaSim {
   }
 
   addPlayer(id: string, carId: CarId): void {
-    // Deterministic spread of spawn points across the hub-town plaza (golden-angle spiral).
+    // Deterministic spread of spawn points across the flat top of the spawn knoll (golden-angle spiral).
     const n = this.spawnIndex++;
     const ang = n * 2.39996;
     const r = 4 + (n % 4) * 4;

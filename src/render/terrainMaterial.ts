@@ -45,9 +45,46 @@ export function buildArrayTexture(images: readonly HTMLImageElement[], colorSpac
   return arrayTexture;
 }
 
-/** Shared terrain material; the mesh supplies a planar `uv` and a per-vertex `color` tint. */
-export function createTerrainMaterial(sand: TerrainTextureSet): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
+// Two sizes of the same rock image, multiplied, so its tile edges do not line up into a grid.
+const ROCK_TILE_METRES = 13;
+const ROCK_DETAIL_TILE_METRES = 47;
+// The image is a scan atlas; a blurrier mip hides the outlines of its islands, which otherwise
+// tile into a honeycomb across a big face.
+const ROCK_MIP_BIAS = 1.5;
+
+/** Projects the rock image along all three axes, so a steep cliff face is not smeared the way the
+ * planar sand UV is, and mixes it over the sand by the mesh's `rockWeight`. */
+function addRockLayer(material: THREE.MeshStandardMaterial, rock: THREE.Texture): void {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.rockMap = { value: rock };
+    shader.vertexShader = 'attribute float rockWeight;\nvarying float vRockWeight;\nvarying vec3 vRockWorld;\nvarying vec3 vRockNormal;\n'
+      + shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        vRockWeight = rockWeight;
+        vRockWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        vRockNormal = normalize(mat3(modelMatrix) * objectNormal);`);
+    shader.fragmentShader = `#define ROCK_MIP_BIAS ${ROCK_MIP_BIAS.toFixed(1)}\n` + 'uniform sampler2D rockMap;\nvarying float vRockWeight;\nvarying vec3 vRockWorld;\nvarying vec3 vRockNormal;\n'
+      + `vec3 rockSample(vec3 world, vec3 blend, float tile) {
+          vec3 p = world / tile;
+          return texture(rockMap, p.zy, ROCK_MIP_BIAS).rgb * blend.x + texture(rockMap, p.xz, ROCK_MIP_BIAS).rgb * blend.y + texture(rockMap, p.xy, ROCK_MIP_BIAS).rgb * blend.z;
+        }\n`
+      + shader.fragmentShader
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          if (vRockWeight > 0.001) {
+            vec3 rockBlend = pow(abs(normalize(vRockNormal)), vec3(4.0));
+            rockBlend /= dot(rockBlend, vec3(1.0));
+            vec3 rock = rockSample(vRockWorld, rockBlend, ${ROCK_TILE_METRES.toFixed(1)}) * (0.55 + 0.9 * rockSample(vRockWorld.zyx, rockBlend.zyx, ${ROCK_DETAIL_TILE_METRES.toFixed(1)}));
+            diffuseColor.rgb = mix(diffuseColor.rgb, rock, vRockWeight);
+          }`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          normal = normalize(mix(normal, nonPerturbedNormal, vRockWeight * 0.8));`);
+  };
+  material.customProgramCacheKey = () => 'terrain-rock-layer';
+}
+
+/** Shared terrain material; the mesh supplies a planar `uv`, a per-vertex `color` tint and a
+ * `rockWeight` for the rock layer. */
+export function createTerrainMaterial(sand: TerrainTextureSet, rock: THREE.Texture): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({
     map: sand.color,
     normalMap: sand.normal,
     normalScale: new THREE.Vector2(0.8, 0.8),
@@ -58,4 +95,6 @@ export function createTerrainMaterial(sand: TerrainTextureSet): THREE.MeshStanda
     metalness: 0,
     vertexColors: true,
   });
+  addRockLayer(material, rock);
+  return material;
 }

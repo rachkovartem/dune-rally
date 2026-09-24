@@ -4,13 +4,12 @@ import { buildSkyEnvironment } from './sky';
 import { createSunShadows } from './sunShadows';
 import { createPostPipeline } from './postPipeline';
 import { createDevOverlay } from './devOverlay';
+import { DEFAULT_QUALITY, QUALITY_TIERS, type QualityName, type QualityTier } from './qualityTiers';
 
-export const PIXEL_RATIO_CAP = 1.5;
-
-// Linear fog must be fully opaque before the edge of the streamed terrain (chunk radius 5 ≈ 320 m),
-// or the edge of the world shows against the sky.
-const FOG_NEAR = 140;
-const FOG_FAR = 300;
+// The drive prototype's fog colour, camera lens and clip plane.
+const FOG_COLOR = 0xd9cfbc;
+const CAMERA_FOV = 62;
+const CAMERA_NEAR = 0.3;
 
 export interface SkyTextures {
   /** The goegap HDR, decoded as FloatType: lighting, sun direction and fog colour. */
@@ -30,13 +29,16 @@ export interface RenderContext {
   environment: THREE.Texture;
   /** Unit vector toward the sun disc in the HDR. */
   sunDirection: THREE.Vector3;
+  quality: () => QualityName;
+  setQuality: (name: QualityName) => void;
+  /** Called at once with the current tier, then on every change. */
+  onQualityChange: (listener: (tier: QualityTier, name: QualityName) => void) => void;
 }
 
 export function createRenderer(canvas: HTMLCanvasElement, sky: SkyTextures): RenderContext {
   const renderer = new THREE.WebGLRenderer({
     canvas, antialias: false, powerPreference: 'high-performance', stencil: false, depth: true,
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // The post pipeline tone-maps (AgX); a second tone map here would flatten the image.
   renderer.toneMapping = THREE.NoToneMapping;
@@ -45,22 +47,40 @@ export function createRenderer(canvas: HTMLCanvasElement, sky: SkyTextures): Ren
   renderer.shadowMap.type = THREE.VSMShadowMap;
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 5000);
+  const camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, CAMERA_NEAR, QUALITY_TIERS[DEFAULT_QUALITY].cameraFar);
   camera.position.set(0, 30, 40);
   camera.lookAt(0, 0, 0);
 
-  const { environment, sunDirection, horizonColor } = buildSkyEnvironment(renderer, sky.hdr);
+  const { environment, sunDirection } = buildSkyEnvironment(renderer, sky.hdr);
   scene.environment = environment;
   scene.environmentIntensity = 1.0;
   sky.background.mapping = THREE.EquirectangularReflectionMapping;
   sky.background.colorSpace = THREE.SRGBColorSpace;
   scene.background = sky.background;
   scene.backgroundIntensity = 1.0;
-  scene.fog = new THREE.Fog(horizonColor, FOG_NEAR, FOG_FAR);
+  const fog = new THREE.FogExp2(FOG_COLOR, QUALITY_TIERS[DEFAULT_QUALITY].fogDensity);
+  scene.fog = fog;
 
-  const { focusSun } = createSunShadows(scene, sunDirection);
+  const sun = createSunShadows(scene, sunDirection);
   const post = createPostPipeline(renderer, scene, camera);
-  const overlay = createDevOverlay('renderer: webgl2');
+  const overlay = createDevOverlay('');
+
+  let qualityName: QualityName = DEFAULT_QUALITY;
+  const qualityListeners: ((tier: QualityTier, name: QualityName) => void)[] = [];
+
+  function setQuality(name: QualityName): void {
+    qualityName = name;
+    const tier = QUALITY_TIERS[name];
+    renderer.setPixelRatio(tier.pixelRatio);
+    resize();
+    sun.setQuality(tier.shadowMapSize, tier.shadowHalfExtent);
+    fog.density = tier.fogDensity;
+    camera.far = tier.cameraFar;
+    camera.updateProjectionMatrix();
+    post.setAmbientOcclusion(tier.ambientOcclusion);
+    overlay?.setLabel(`renderer: webgl2 · quality ${name} (Q)`);
+    for (const listener of qualityListeners) listener(tier, name);
+  }
 
   function resize(): void {
     const width = canvas.clientWidth || window.innerWidth;
@@ -69,7 +89,7 @@ export function createRenderer(canvas: HTMLCanvasElement, sky: SkyTextures): Ren
     camera.updateProjectionMatrix();
     post.resize(width, height);
   }
-  resize();
+  setQuality(DEFAULT_QUALITY);
 
   return {
     scene,
@@ -79,8 +99,14 @@ export function createRenderer(canvas: HTMLCanvasElement, sky: SkyTextures): Ren
       overlay?.update();
     },
     resize,
-    focusSun,
+    focusSun: sun.focusSun,
     environment,
     sunDirection,
+    quality: () => qualityName,
+    setQuality,
+    onQualityChange: (listener) => {
+      qualityListeners.push(listener);
+      listener(QUALITY_TIERS[qualityName], qualityName);
+    },
   };
 }

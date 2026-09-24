@@ -1,147 +1,228 @@
 // src/render/groundDecals.ts
+// The drive prototype's tyre tracks: one ribbon per wheel, a ring buffer of quads, the rut shaded
+// in the fragment shader (groove, berms, tread, sun-facing walls), faded out by distance driven.
 import * as THREE from 'three';
 import type { Height2D } from '../world/noise';
+import type { Biome } from '../world/biome';
 import { terrainSurfaceHeight } from '../world/chunkGeometry';
+import { surfaceSampleAt } from '../world/surfaceSample';
+import { coverTint, TERRAIN_UV_REPEATS_PER_METRE } from './terrainMesh';
+import type { TerrainTextureSet } from './terrainMaterial';
 
-const CAP = 900;       // ribs per ribbon (ring buffer) → trail length ≈ CAP * STEP
-const STEP = 0.3;      // min distance between ribs (denser → conforms to bumps)
-const HALF_W = 0.24;   // half tyre width (ribbon half-width)
-const WHEEL_X = 1.0;   // half rear-track (left/right wheel offset)
-const REAR = 1.4;      // distance behind centre to the rear axle
-// A small POSITIVE offset, not the sunken negative one the plan first suggested: a few cm below
-// the surface reliably loses the z-test against the terrain at this camera distance even with
-// polygon offset (verified on screen — the ribbon vanished behind the ground). The pressed-in
-// groove read comes from the darker, grain-modulated material instead of true depth.
-const SURFACE_OFFSET = 0.008;
+const TRACK_SEGMENTS = 1600;
+const TRACK_STEP = 0.3;
+const TRACK_LIFT = 0.015;
+const TRACK_FADE_START = 150;
+const TRACK_FADE_END = 210;
+const RIBBON_WIDTH_PER_TYRE_WIDTH = 1.5;
+/** A wheel touching something higher than the ground (a ramp, a rock) leaves no rut in the sand. */
+const GROUND_CONTACT_TOLERANCE = 0.35;
+const NORMAL_SAMPLE = 0.3;
 
-/** Rut material shared by both ribbons: darker, disturbed sand. The polygon offset keeps the
- * ribbon on top of the terrain it lies on. */
-function createRutMaterial(): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
-    color: 0x8a7455,
-    roughness: 0.95,
-    metalness: 0,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
+/** Where a wheel touches, in world space; null for a wheel in the air. */
+export interface WheelContact {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface TrackPoint {
+  x: number;
+  z: number;
+  leftX: number;
+  leftY: number;
+  leftZ: number;
+  rightX: number;
+  rightY: number;
+  rightZ: number;
+  sideX: number;
+  sideZ: number;
+  odometer: number;
+  along: number;
+  tint: number;
+}
+
+interface RibbonAttributes {
+  position: THREE.BufferAttribute;
+  normal: THREE.BufferAttribute;
+  uv: THREE.BufferAttribute;
+  color: THREE.BufferAttribute;
+  aSide: THREE.BufferAttribute;
+  aAcross: THREE.BufferAttribute;
+  aDist: THREE.BufferAttribute;
+  aAlong: THREE.BufferAttribute;
+}
+
+interface Ribbon {
+  attributes: RibbonAttributes;
+  slot: number;
+  last: TrackPoint | null;
+}
+
+function createTrackMaterial(sand: TerrainTextureSet, odometer: { value: number }): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({
+    map: sand.color, normalMap: sand.normal, roughnessMap: sand.arm, normalScale: new THREE.Vector2(0.8, 0.8),
+    metalness: 0, roughness: 1, transparent: true, depthWrite: false, vertexColors: true,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
   });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uOdometer = odometer;
+    shader.uniforms.uFadeStart = { value: TRACK_FADE_START };
+    shader.uniforms.uFadeEnd = { value: TRACK_FADE_END };
+    shader.vertexShader = 'attribute float aAcross; attribute float aDist; attribute float aAlong; attribute vec3 aSide;\nvarying float vAcross; varying float vDist; varying float vAlong; varying vec3 vSideView;\n'
+      + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvAcross = aAcross; vDist = aDist; vAlong = aAlong; vSideView = normalize((viewMatrix * vec4(aSide, 0.0)).xyz);');
+    shader.fragmentShader = 'uniform float uOdometer; uniform float uFadeStart; uniform float uFadeEnd;\nvarying float vAcross; varying float vDist; varying float vAlong; varying vec3 vSideView;\n'
+      + shader.fragmentShader
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          float trackAcross = vAcross;
+          float trackGroove = smoothstep(0.1, 0.2, trackAcross) * (1.0 - smoothstep(0.8, 0.9, trackAcross));
+          float trackBerm = smoothstep(0.0, 0.1, trackAcross) * (1.0 - smoothstep(0.1, 0.2, trackAcross)) + smoothstep(0.8, 0.9, trackAcross) * (1.0 - smoothstep(0.9, 1.0, trackAcross));
+          float trackTread = smoothstep(0.2, 0.8, 0.5 + 0.5 * sin(vAlong * 6.2832 / 0.14 + 1.5 * abs(trackAcross - 0.5)));
+          diffuseColor.rgb *= mix(1.0, 0.52 + 0.12 * trackTread, trackGroove) * (1.0 + 0.12 * trackBerm);
+          float trackEdgeAlpha = smoothstep(0.0, 0.14, trackAcross) * (1.0 - smoothstep(0.86, 1.0, trackAcross)) * 0.92;
+          diffuseColor.a *= trackEdgeAlpha * (1.0 - smoothstep(uFadeStart, uFadeEnd, uOdometer - vDist));`)
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor *= mix(1.0, 0.8, trackGroove);')
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          // aSide points to the ribbon's left edge (across = 0): groove walls face the centre and berm outsides face away, so the sun shades a rut.
+          float trackWall = smoothstep(0.08, 0.13, trackAcross) * (1.0 - smoothstep(0.18, 0.24, trackAcross)) - smoothstep(0.76, 0.82, trackAcross) * (1.0 - smoothstep(0.87, 0.92, trackAcross));
+          float trackOuter = -(1.0 - smoothstep(0.0, 0.1, trackAcross)) + smoothstep(0.9, 1.0, trackAcross);
+          normal = normalize(normal - vSideView * (trackWall * 0.55 + trackOuter * 0.2));`);
+  };
+  material.customProgramCacheKey = () => 'tyre-track-rut';
+  return material;
 }
 
-/**
- * One continuous ribbon ("trail") following a wheel. Each rib is a 2-vertex cross-segment
- * placed on the terrain surface; consecutive ribs are joined into quads so the strip is gapless
- * and hugs the ground. Ring buffer: the oldest rib is overwritten once CAP is reached.
- */
-class Ribbon {
-  private geom = new THREE.BufferGeometry();
-  private pos = new Float32Array(CAP * 2 * 3);
-  // One pre-allocated index buffer, written in place and revealed with setDrawRange, so adding
-  // a rib never allocates a new GPU buffer.
-  private indexArray = new Uint32Array((CAP - 1) * 6);
-  private indexAttribute: THREE.BufferAttribute;
-  private count = 0;
-
-  constructor(scene: THREE.Scene, mat: THREE.Material, private surfaceAt: (x: number, z: number) => number) {
-    const attr = new THREE.BufferAttribute(this.pos, 3);
-    attr.setUsage(THREE.DynamicDrawUsage);
-    this.geom.setAttribute('position', attr);
-    // A ground-hugging ribbon is flat enough that a constant up-normal reads fine, and it avoids
-    // recomputing normals from a geometry that changes every frame.
-    const normals = new Float32Array(CAP * 2 * 3);
-    for (let i = 1; i < normals.length; i += 3) normals[i] = 1;
-    this.geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    // Across-the-ribbon UV only; no current material reads it. The Step B rut normal map will
-    // also need the along-track coordinate.
-    const uvs = new Float32Array(CAP * 2 * 2);
-    for (let i = 1; i < uvs.length; i += 2) uvs[i] = 1;
-    this.geom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-    this.indexAttribute = new THREE.BufferAttribute(this.indexArray, 1);
-    this.indexAttribute.setUsage(THREE.DynamicDrawUsage);
-    this.geom.setIndex(this.indexAttribute);
-    this.geom.setDrawRange(0, 0);
-    const mesh = new THREE.Mesh(this.geom, mat);
-    mesh.frustumCulled = false; // vertices move every frame; don't cull on a stale bound
-    mesh.renderOrder = 1;
-    mesh.receiveShadow = true;
-    scene.add(mesh);
-  }
-
-  addRib(cx: number, cz: number, rx: number, rz: number): void {
-    const slot = this.count % CAP;
-    const vL = slot * 2;
-    const vR = slot * 2 + 1;
-    const lx = cx - rx * HALF_W;
-    const lz = cz - rz * HALF_W;
-    const px = cx + rx * HALF_W;
-    const pz = cz + rz * HALF_W;
-    this.pos[vL * 3] = lx;
-    this.pos[vL * 3 + 1] = this.surfaceAt(lx, lz) + SURFACE_OFFSET;
-    this.pos[vL * 3 + 2] = lz;
-    this.pos[vR * 3] = px;
-    this.pos[vR * 3 + 1] = this.surfaceAt(px, pz) + SURFACE_OFFSET;
-    this.pos[vR * 3 + 2] = pz;
-    this.count++;
-    this.rebuildIndex();
-    this.geom.attributes.position.needsUpdate = true;
-  }
-
-  private rebuildIndex(): void {
-    const n = Math.min(this.count, CAP);
-    if (n < 2) { this.geom.setDrawRange(0, 0); return; }
-    const start = this.count <= CAP ? 0 : this.count % CAP; // oldest rib slot
-    let o = 0;
-    for (let k = 0; k < n - 1; k++) {
-      const a = (start + k) % CAP;
-      const b = (start + k + 1) % CAP;
-      const aL = a * 2;
-      const aR = a * 2 + 1;
-      const bL = b * 2;
-      const bR = b * 2 + 1;
-      this.indexArray[o++] = aL; this.indexArray[o++] = bL; this.indexArray[o++] = aR;
-      this.indexArray[o++] = aR; this.indexArray[o++] = bL; this.indexArray[o++] = bR;
-    }
-    this.indexAttribute.needsUpdate = true;
-    this.geom.setDrawRange(0, o);
-  }
-}
-
-/** Two ground-hugging ribbons laid behind the rear wheels as the car drives. */
+/** Four rut ribbons, one per wheel, laid only where a wheel touches the ground. */
 export class TireTracks {
-  private left: Ribbon;
-  private right: Ribbon;
-  private lastX = 0;
-  private lastZ = 0;
-  private started = false;
+  private readonly ribbons: Ribbon[];
+  private readonly material: THREE.MeshStandardMaterial;
+  private readonly odometer = { value: 0 };
+  private lastCarX: number | null = null;
+  private lastCarZ = 0;
 
-  constructor(scene: THREE.Scene, height: Height2D) {
-    const mat = createRutMaterial();
-    const surfaceAt = (x: number, z: number) => terrainSurfaceHeight(height, x, z);
-    this.left = new Ribbon(scene, mat, surfaceAt);
-    this.right = new Ribbon(scene, mat, surfaceAt);
+  constructor(
+    private readonly scene: THREE.Scene,
+    private readonly heightField: Height2D,
+    private readonly biome: Biome,
+    sand: TerrainTextureSet,
+    wheelCount: number,
+  ) {
+    this.material = createTrackMaterial(sand, this.odometer);
+    this.ribbons = Array.from({ length: wheelCount }, () => this.createRibbon());
   }
 
-  update(car: THREE.Object3D, speed: number): void {
-    const p = car.position;
-    if (!this.started) {
-      this.lastX = p.x;
-      this.lastZ = p.z;
-      this.started = true;
-      return;
+  private createRibbon(): Ribbon {
+    const vertexCount = TRACK_SEGMENTS * 4;
+    const geometry = new THREE.BufferGeometry();
+    const attribute = (itemSize: number): THREE.BufferAttribute =>
+      new THREE.BufferAttribute(new Float32Array(vertexCount * itemSize), itemSize).setUsage(THREE.DynamicDrawUsage);
+    const attributes: RibbonAttributes = {
+      position: attribute(3), normal: attribute(3), uv: attribute(2), color: attribute(3),
+      aSide: attribute(3), aAcross: attribute(1), aDist: attribute(1), aAlong: attribute(1),
+    };
+    for (const [name, value] of Object.entries(attributes)) geometry.setAttribute(name, value);
+    const index = new Uint32Array(TRACK_SEGMENTS * 6);
+    for (let segment = 0; segment < TRACK_SEGMENTS; segment++) {
+      const base = segment * 4;
+      index.set([base, base + 1, base + 2, base + 1, base + 3, base + 2], segment * 6);
     }
-    const dx = p.x - this.lastX;
-    const dz = p.z - this.lastZ;
-    if (speed < 1.2 || dx * dx + dz * dz < STEP * STEP) return;
-    this.lastX = p.x;
-    this.lastZ = p.z;
+    geometry.setIndex(new THREE.BufferAttribute(index, 1));
+    // Unused slots stay at the origin as zero-area triangles; the fade hides old ones.
+    attributes.aDist.array.fill(-1e6);
+    const mesh = new THREE.Mesh(geometry, this.material);
+    mesh.frustumCulled = false;
+    mesh.receiveShadow = true;
+    mesh.renderOrder = 1;
+    this.scene.add(mesh);
+    return { attributes, slot: 0, last: null };
+  }
 
-    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(car.quaternion);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(car.quaternion);
-    const rl = Math.hypot(right.x, right.z) || 1;
-    const rx = right.x / rl;
-    const rz = right.z / rl;
-    const rearX = p.x - fwd.x * REAR;
-    const rearZ = p.z - fwd.z * REAR;
-    this.left.addRib(rearX - rx * WHEEL_X, rearZ - rz * WHEEL_X, rx, rz);
-    this.right.addRib(rearX + rx * WHEEL_X, rearZ + rz * WHEEL_X, rx, rz);
+  /** After a teleport or a reset, so no rut joins the old spot to the new one. */
+  breakChains(): void {
+    for (const ribbon of this.ribbons) ribbon.last = null;
+    this.lastCarX = null;
+  }
+
+  private point(x: number, z: number, sideX: number, sideZ: number, along: number, ribbonWidth: number): TrackPoint {
+    const halfWidth = ribbonWidth / 2;
+    const leftX = x + sideX * halfWidth;
+    const leftZ = z + sideZ * halfWidth;
+    const rightX = x - sideX * halfWidth;
+    const rightZ = z - sideZ * halfWidth;
+    const surface = surfaceSampleAt(this.heightField, x, z);
+    return {
+      x, z, leftX, leftZ, rightX, rightZ, sideX, sideZ, along,
+      leftY: terrainSurfaceHeight(this.heightField, leftX, leftZ) + TRACK_LIFT,
+      rightY: terrainSurfaceHeight(this.heightField, rightX, rightZ) + TRACK_LIFT,
+      odometer: this.odometer.value,
+      tint: coverTint(this.biome.coverAt(x, z, surface.height, surface.slope)),
+    };
+  }
+
+  private writeVertex(attributes: RibbonAttributes, vertex: number, x: number, y: number, z: number, across: number, point: TrackPoint): void {
+    const height = (sampleX: number, sampleZ: number): number => terrainSurfaceHeight(this.heightField, sampleX, sampleZ);
+    const normalX = height(x - NORMAL_SAMPLE, z) - height(x + NORMAL_SAMPLE, z);
+    const normalZ = height(x, z - NORMAL_SAMPLE) - height(x, z + NORMAL_SAMPLE);
+    const length = Math.hypot(normalX, 2 * NORMAL_SAMPLE, normalZ);
+    attributes.position.setXYZ(vertex, x, y, z);
+    attributes.normal.setXYZ(vertex, normalX / length, (2 * NORMAL_SAMPLE) / length, normalZ / length);
+    // The terrain's own planar UV at this spot, so the sand inside the rut lines up with the sand around it.
+    attributes.uv.setXY(vertex, x * TERRAIN_UV_REPEATS_PER_METRE, z * TERRAIN_UV_REPEATS_PER_METRE);
+    attributes.color.setXYZ(vertex, point.tint, point.tint, point.tint);
+    attributes.aSide.setXYZ(vertex, point.sideX, 0, point.sideZ);
+    attributes.aAcross.setX(vertex, across);
+    attributes.aDist.setX(vertex, point.odometer);
+    attributes.aAlong.setX(vertex, point.along);
+  }
+
+  /**
+   * `contacts` holds one entry per wheel, in ribbon order; `heading` is the car's yaw, used only
+   * for the first point of a new rut before it has a direction of travel.
+   */
+  update(contacts: readonly (WheelContact | null)[], carX: number, carZ: number, heading: number, tyreWidth: number): void {
+    if (contacts.length !== this.ribbons.length) {
+      throw new Error(`TireTracks.update: expected ${this.ribbons.length} wheel contacts, got ${contacts.length}`);
+    }
+    if (this.lastCarX !== null) this.odometer.value += Math.hypot(carX - this.lastCarX, carZ - this.lastCarZ);
+    this.lastCarX = carX;
+    this.lastCarZ = carZ;
+    const ribbonWidth = tyreWidth * RIBBON_WIDTH_PER_TYRE_WIDTH;
+
+    contacts.forEach((contact, wheelIndex) => {
+      const ribbon = this.ribbons[wheelIndex];
+      const onGround = contact !== null
+        && Math.abs(contact.y - terrainSurfaceHeight(this.heightField, contact.x, contact.z)) < GROUND_CONTACT_TOLERANCE;
+      if (!contact || !onGround) {
+        ribbon.last = null;
+        return;
+      }
+      if (!ribbon.last) {
+        ribbon.last = this.point(contact.x, contact.z, Math.cos(heading), -Math.sin(heading), 0, ribbonWidth);
+        return;
+      }
+      const deltaX = contact.x - ribbon.last.x;
+      const deltaZ = contact.z - ribbon.last.z;
+      const step = Math.hypot(deltaX, deltaZ);
+      if (step < TRACK_STEP) return;
+      if (step > TRACK_STEP * 8) {
+        ribbon.last = null;
+        return;
+      }
+      // +X of the car is its left, so the left edge is the travel direction turned a quarter to the left.
+      const next = this.point(contact.x, contact.z, deltaZ / step, -deltaX / step, ribbon.last.along + step, ribbonWidth);
+      const previous = ribbon.last;
+      const base = ribbon.slot * 4;
+      const attributes = ribbon.attributes;
+      this.writeVertex(attributes, base, previous.leftX, previous.leftY, previous.leftZ, 0, previous);
+      this.writeVertex(attributes, base + 1, previous.rightX, previous.rightY, previous.rightZ, 1, previous);
+      this.writeVertex(attributes, base + 2, next.leftX, next.leftY, next.leftZ, 0, next);
+      this.writeVertex(attributes, base + 3, next.rightX, next.rightY, next.rightZ, 1, next);
+      for (const attribute of Object.values(attributes)) {
+        attribute.addUpdateRange(base * attribute.itemSize, 4 * attribute.itemSize);
+        attribute.needsUpdate = true;
+      }
+      ribbon.slot = (ribbon.slot + 1) % TRACK_SEGMENTS;
+      ribbon.last = next;
+    });
   }
 }

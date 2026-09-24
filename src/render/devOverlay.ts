@@ -3,6 +3,7 @@ import Stats from 'three/addons/libs/stats.module.js';
 
 export interface DevOverlay {
   update: () => void;
+  setLabel: (label: string) => void;
 }
 
 function labelElement(label: string): HTMLDivElement {
@@ -23,13 +24,17 @@ export function debugModeEnabled(): boolean {
   return new URLSearchParams(location.search).get('debug') === '1';
 }
 
-/** `?debug=1` → an fps readout plus one fixed label line. Off by default. */
+/** `?debug=1` → an fps readout plus one label line. Off by default. */
 export function createDevOverlay(label: string): DevOverlay | null {
   if (!debugModeEnabled()) return null;
 
   const stats = new Stats();
   document.body.appendChild(stats.dom);
-  document.body.appendChild(labelElement(label));
+  const element = labelElement(label);
+  document.body.appendChild(element);
 
-  return { update: () => stats.update() };
+  return {
+    update: () => stats.update(),
+    setLabel: (text) => { element.textContent = text; },
+  };
 }

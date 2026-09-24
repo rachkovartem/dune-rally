@@ -111,9 +111,36 @@ export class Buggy {
     return { v: { x: v.x, y: v.y, z: v.z }, w: { x: w.x, y: w.y, z: w.z }, grounded };
   }
 
+  /** Where each wheel touches the ground, in wheel order (FL, FR, RL, RR); null for a wheel in the air. */
+  wheelContacts(): ({ x: number; y: number; z: number } | null)[] {
+    const controller = this.vehicle.controller;
+    return this.config.wheel.positions.map((_position, wheelIndex) => {
+      if (!controller.wheelIsInContact(wheelIndex)) return null;
+      const contact = controller.wheelContactPoint(wheelIndex);
+      return contact ? { x: contact.x, y: contact.y, z: contact.z } : null;
+    });
+  }
+
+  tyreWidth(): number {
+    return this.config.wheel.width;
+  }
+
   /** Horizontal speed in world units per second. */
   speed(): number {
     return this.vehicle.speed();
+  }
+
+  /** Speed along the nose, m/s; negative when rolling backwards. */
+  forwardSpeed(): number {
+    return this.vehicle.forwardSpeed();
+  }
+
+  wheelsInContact(): number {
+    return this.vehicle.wheelsInContact();
+  }
+
+  wheelCount(): number {
+    return this.config.wheel.positions.length;
   }
 
   /** Engine rpm and gear, for engine sound and the HUD. */

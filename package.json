@@ -19,6 +19,7 @@
     "@dimforge/rapier3d-compat": "^0.13.1",
     "colyseus": "^0.15.0",
     "colyseus.js": "^0.15.0",
+    "n8ao": "^2.0.1",
     "postprocessing": "^6.39.5",
     "simplex-noise": "^4.0.3",
     "three": "^0.186.0"

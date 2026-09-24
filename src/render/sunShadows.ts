@@ -9,13 +9,12 @@ export interface SunShadowSettings {
   halfExtent: number;
 }
 
-// The drive prototype's values. 4096 px with 12 samples looked the same at chase-cam distance and
-// cost about half the frame-rate headroom at pixel ratio 1.5.
+// The drive prototype's high tier; setQuality switches the map size and the box per tier.
 export const SUN_SHADOW_SETTINGS: SunShadowSettings = {
-  mapSize: 2048,
+  mapSize: 4096,
   blurSamples: 8,
   radius: 5,
-  halfExtent: 45,
+  halfExtent: 90,
 };
 
 const SUN_COLOR = 0xfff2e0;
@@ -26,6 +25,7 @@ export interface SunShadows {
   light: THREE.DirectionalLight;
   /** Keeps the shadow box centred on a world point (the player). */
   focusSun: (x: number, y: number, z: number) => void;
+  setQuality: (mapSize: number, halfExtent: number) => void;
 }
 
 /** Rounds a value to the nearest multiple of one shadow-map texel. */
@@ -46,11 +46,6 @@ export function createSunShadows(
   const shadowCamera = light.shadow.camera;
   shadowCamera.near = 50;
   shadowCamera.far = 400;
-  shadowCamera.left = -settings.halfExtent;
-  shadowCamera.right = settings.halfExtent;
-  shadowCamera.top = settings.halfExtent;
-  shadowCamera.bottom = -settings.halfExtent;
-  shadowCamera.updateProjectionMatrix();
   light.shadow.bias = -0.0003;
   light.shadow.normalBias = 0.03;
   light.shadow.radius = settings.radius;
@@ -63,8 +58,24 @@ export function createSunShadows(
   const towardSun = sunDirection.clone().normalize();
   const shadowRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), towardSun).normalize();
   const shadowUp = new THREE.Vector3().crossVectors(towardSun, shadowRight).normalize();
-  const texelSize = (settings.halfExtent * 2) / settings.mapSize;
+  let texelSize = 1;
   const focus = new THREE.Vector3();
+
+  function setQuality(mapSize: number, halfExtent: number): void {
+    light.shadow.mapSize.set(mapSize, mapSize);
+    // A new map size only takes effect once the old render targets are dropped.
+    light.shadow.map?.dispose();
+    light.shadow.map = null;
+    light.shadow.mapPass?.dispose();
+    light.shadow.mapPass = null;
+    shadowCamera.left = -halfExtent;
+    shadowCamera.right = halfExtent;
+    shadowCamera.top = halfExtent;
+    shadowCamera.bottom = -halfExtent;
+    shadowCamera.updateProjectionMatrix();
+    texelSize = (halfExtent * 2) / mapSize;
+  }
+  setQuality(settings.mapSize, settings.halfExtent);
 
   function focusSun(x: number, y: number, z: number): void {
     focus.set(x, y, z);
@@ -79,5 +90,5 @@ export function createSunShadows(
     light.position.copy(light.target.position).addScaledVector(towardSun, SUN_DISTANCE);
   }
 
-  return { light, focusSun };
+  return { light, focusSun, setQuality };
 }

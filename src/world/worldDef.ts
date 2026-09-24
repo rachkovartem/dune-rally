@@ -1,5 +1,6 @@
 // src/world/worldDef.ts
-// THE hand-authored unique world: a bounded 512×512 desert basin ringed by cliffs, with a hub
+// THE hand-authored unique world: a bounded 512×512 rolling desert basin ringed by a low, steep
+// rocky border slope, with a spawn knoll looking south over open sand, a hub
 // town, a ring road + spokes, a stunt park (ramps), a dune sea, a mesa lookout, and a salt flat.
 // This is PURE data + pure queries (no RNG, no time): identical on the client and the authoritative
 // server. The macro height functions feed createHeightField (so terrain mesh + both physics
@@ -9,13 +10,31 @@
 import { CHUNK_SIZE } from './chunk';
 
 export const WORLD_SIZE = 512;
-export const WORLD_BORDER = 40;        // cliff-wall margin around the playable rectangle
-export const BORDER_HEIGHT = 46;       // cliff-wall height (un-climbable → world boundary)
+export const WORLD_BORDER = 28;        // rocky-slope margin around the playable rectangle
+/** Level of the open basin floor; flattened places (roads, plaza) sit at the terrain's local average. */
+export const BASIN_LEVEL = 3;
+/** Absolute height of the top of the border's steep face (15 m above the basin floor). */
+export const BORDER_HEIGHT = 18;
+// The face is steepest at its foot, so a car driving at it hits a near-wall and never gets a
+// launch ramp; past the face the ground keeps rising a little, so there is no flat shelf to land on.
+const BORDER_FACE = 10;
+const BORDER_CREST_SLOPE = 0.1;
 export const PLAYABLE_MIN = WORLD_BORDER;
 export const PLAYABLE_MAX = WORLD_SIZE - WORLD_BORDER;
 
-/** Where players spawn (the hub-town plaza). */
-export const SPAWN = { x: 256, z: 262 };
+/**
+ * Where players spawn: a low open knoll NE of the mesa, away from the town. Cars face +Z, so the
+ * first view runs ~400 m south over open sand and the dune sea to the low border.
+ */
+export const SPAWN = { x: 352, z: 84 };
+/** The raised flat the spawn sits on; `top` also keeps natural props off the spawn spiral. */
+export const SPAWN_KNOLL = { x: SPAWN.x, z: SPAWN.z, rise: 3.5, top: 22, skirt: 45 } as const;
+export function spawnDist(x: number, z: number): number {
+  return Math.hypot(x - SPAWN_KNOLL.x, z - SPAWN_KNOLL.z);
+}
+export function knollHeight(x: number, z: number): number {
+  return SPAWN_KNOLL.rise * (1 - smoothstep(SPAWN_KNOLL.top, SPAWN_KNOLL.top + SPAWN_KNOLL.skirt, spawnDist(x, z)));
+}
 
 // ── math helpers ──────────────────────────────────────────────────────
 export function smoothstep(e0: number, e1: number, x: number): number {
@@ -49,18 +68,27 @@ export function mesaHeight(x: number, z: number): number {
 }
 
 // ── DUNE SEA (SE — big rolling crests to jump) ─────────────────────────
-const DUNE = { minX: 330, maxX: 472, minZ: 316, maxZ: 466, amp: 9, feather: 28 };
+// Ends ~14 m before the border so no crest sits next to the border face as a step up it.
+const DUNE = { minX: 330, maxX: 446, minZ: 316, maxZ: 442, amp: 9, feather: 28 };
 export function inDuneSea(x: number, z: number): boolean {
   return x >= DUNE.minX && x <= DUNE.maxX && z >= DUNE.minZ && z <= DUNE.maxZ;
 }
-export function duneHeight(x: number, z: number): number {
+function duneMask(x: number, z: number): number {
   if (x < DUNE.minX - DUNE.feather || x > DUNE.maxX + DUNE.feather ||
       z < DUNE.minZ - DUNE.feather || z > DUNE.maxZ + DUNE.feather) return 0;
-  const mask =
-    smoothstep(DUNE.minX - DUNE.feather, DUNE.minX, x) * (1 - smoothstep(DUNE.maxX, DUNE.maxX + DUNE.feather, x)) *
+  return smoothstep(DUNE.minX - DUNE.feather, DUNE.minX, x) * (1 - smoothstep(DUNE.maxX, DUNE.maxX + DUNE.feather, x)) *
     smoothstep(DUNE.minZ - DUNE.feather, DUNE.minZ, z) * (1 - smoothstep(DUNE.maxZ, DUNE.maxZ + DUNE.feather, z));
+}
+export function duneHeight(x: number, z: number): number {
+  const mask = duneMask(x, z);
+  if (mask === 0) return 0;
   const crests = (0.5 + 0.5 * Math.sin(x * 0.10)) * (0.5 + 0.5 * Math.sin(z * 0.085 + 1.3));
   return DUNE.amp * crests * mask;
+}
+
+/** The average of duneHeight over its crests (the crest product averages 1/4), without the crests. */
+export function duneMeanHeight(x: number, z: number): number {
+  return DUNE.amp * 0.25 * duneMask(x, z);
 }
 
 // ── SALT FLAT (S/SW — pale speed straight) ─────────────────────────────
@@ -70,7 +98,8 @@ export function inSaltFlat(x: number, z: number): boolean {
 }
 
 // ── LAKE (NW of town, off the town→mesa road) ──────────────────────────
-export const LAKE = { x: 200, z: 190, radius: 20, feather: 14, floor: -4, rim: -1, waterLevel: -1.2 } as const;
+// The feather is wider than the carve's depth needs because the basin floor around it is at BASIN_LEVEL.
+export const LAKE = { x: 200, z: 190, radius: 20, feather: 20, floor: -4, rim: -1, waterLevel: -1.2 } as const;
 
 /** Flat-plane distance from (x, z) to the lake's centre. */
 export function lakeDist(x: number, z: number): number {
@@ -87,13 +116,57 @@ export function lakeInfluence(x: number, z: number): number {
   return 1 - smoothstep(LAKE.radius, LAKE.radius + LAKE.feather, lakeDist(x, z));
 }
 
-// ── CLIFF RING (world boundary) ────────────────────────────────────────
-export function cliffHeight(x: number, z: number): number {
+// ── BORDER SLOPE (world boundary) ──────────────────────────────────────
+/** How far (x, z) lies outside the playable rectangle; 0 inside it. */
+export function borderDepth(x: number, z: number): number {
   const dx = Math.max(0, PLAYABLE_MIN - x, x - PLAYABLE_MAX);
   const dz = Math.max(0, PLAYABLE_MIN - z, z - PLAYABLE_MAX);
-  const d = Math.max(dx, dz);
+  return Math.max(dx, dz);
+}
+
+/** Absolute height of the border slope at (x, z), 0 inside the playable rectangle. */
+export function cliffHeight(x: number, z: number): number {
+  const d = borderDepth(x, z);
   if (d <= 0) return 0;
-  return BORDER_HEIGHT * smoothstep(2, WORLD_BORDER * 0.8, d);
+  if (d >= BORDER_FACE) return BORDER_HEIGHT + BORDER_CREST_SLOPE * (d - BORDER_FACE);
+  const t = 1 - d / BORDER_FACE;
+  return lerp(BASIN_LEVEL, BORDER_HEIGHT, 1 - t * t);
+}
+
+// ── OPEN GROUND (prototype-style rolling sand, calm around the authored flats) ─────────
+const ROLLING_SCALE = 0.47;
+
+/** The long, smooth part of the rolling sand, which roads follow. */
+function rollingSwell(x: number, z: number): number {
+  return ROLLING_SCALE * (3.0 * Math.sin(x * 0.021) * Math.cos(z * 0.017 + 1.3) + 1.6 * Math.sin(x * 0.047 + z * 0.031));
+}
+
+/** The short ripple on top of the swell, which roads cut through. */
+function rollingRipple(x: number, z: number): number {
+  return ROLLING_SCALE * 0.5 * Math.sin(x * 0.13 - z * 0.11);
+}
+
+/** 0 on the town, the salt flat, the spawn knoll top and the stunt park; 1 on open ground. */
+export function openGround(x: number, z: number): number {
+  const town = smoothstep(TOWN.plaza + TOWN.skirt, TOWN.plaza + TOWN.skirt + 40, townDist(x, z));
+  const saltGap = Math.max(SALT.minX - x, x - SALT.maxX, SALT.minZ - z, z - SALT.maxZ);
+  const salt = smoothstep(0, 30, saltGap);
+  const knoll = smoothstep(SPAWN_KNOLL.top, SPAWN_KNOLL.top + SPAWN_KNOLL.skirt, spawnDist(x, z));
+  let park = 1;
+  for (const ramp of RAMPS) {
+    park = Math.min(park, smoothstep(ramp.len + 8, ramp.len + 30, Math.hypot(x - ramp.x, z - ramp.z)));
+  }
+  return town * salt * knoll * park;
+}
+
+/** The local average ground level: what flattened places (roads, the plaza) are graded to. */
+export function groundLevel(x: number, z: number): number {
+  return BASIN_LEVEL + openGround(x, z) * rollingSwell(x, z) + duneMeanHeight(x, z);
+}
+
+/** The natural ground before the micro texture, the mesa, the dune crests and the border. */
+export function rollingGroundHeight(x: number, z: number): number {
+  return BASIN_LEVEL + openGround(x, z) * (rollingSwell(x, z) + rollingRipple(x, z)) + knollHeight(x, z);
 }
 
 // ── ROADS (polylines; each waypoint carries its target height) ─────────
@@ -118,7 +191,8 @@ export const ROADS: Wp[][] = [
    { x: 256, z: 140, y: 0 }],
 ];
 
-export interface RoadHit { dist: number; ya: number; yb: number; t: number; }
+/** `x`, `z` is the closest point on the road's centre line. */
+export interface RoadHit { dist: number; ya: number; yb: number; t: number; x: number; z: number; }
 export function nearestRoad(x: number, z: number): RoadHit | null {
   let best: RoadHit | null = null;
   for (const road of ROADS) {
@@ -126,7 +200,9 @@ export function nearestRoad(x: number, z: number): RoadHit | null {
       const a = road[i];
       const b = road[i + 1];
       const s = segDist(x, z, a.x, a.z, b.x, b.z);
-      if (!best || s.dist < best.dist) best = { dist: s.dist, ya: a.y, yb: b.y, t: s.t };
+      if (!best || s.dist < best.dist) {
+        best = { dist: s.dist, ya: a.y, yb: b.y, t: s.t, x: a.x + (b.x - a.x) * s.t, z: a.z + (b.z - a.z) * s.t };
+      }
     }
   }
   return best;

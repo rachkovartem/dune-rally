@@ -92,6 +92,22 @@ export function addFeatureColliders(
   return out;
 }
 
+/** Static box colliders for the solid scattered props (boulders, logs) of one chunk. */
+export function addSolidPropColliders(
+  world: RAPIER.World,
+  props: readonly { x: number; y: number; z: number; yaw: number; halfX: number; halfY: number; halfZ: number }[],
+): RAPIER.Collider[] {
+  return props.map((prop) => {
+    const half = prop.yaw / 2;
+    const body = world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(prop.x, prop.y, prop.z)
+        .setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }),
+    );
+    return world.createCollider(RAPIER.ColliderDesc.cuboid(prop.halfX, prop.halfY, prop.halfZ), body);
+  });
+}
+
 export function removeCollider(world: RAPIER.World, collider: RAPIER.Collider) {
   const body = collider.parent();
   if (body) world.removeRigidBody(body);
