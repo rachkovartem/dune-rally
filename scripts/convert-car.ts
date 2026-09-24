@@ -3,14 +3,12 @@
 // public/models/SOURCE.md for the pipeline summary and the licence reason the FBX itself is not
 // committed). Run: npx tsx scripts/convert-car.ts <path-to-fbx>
 
-import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from 'three';
-import { Accessor, Document, NodeIO, getBounds, type Node as GltfNode, type Primitive, type Root } from '@gltf-transform/core';
-import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
+import { Accessor, Document, getBounds, type Node as GltfNode, type Primitive, type Root } from '@gltf-transform/core';
 import { dedup, prune, simplify, weld, meshopt } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import {
@@ -23,36 +21,10 @@ import {
   materialSlotFor,
   wheelSlotFor,
 } from '../src/assets/carPartRules';
+import { convertFbxToRawGlb, createNodeIo, triangleCountOf, worldMatrixOf, writeGlbWithReport } from './lib/gltfPipeline';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
-
-function fbx2gltfBinary(): string {
-  const platformDir = process.platform === 'darwin' ? 'Darwin' : process.platform === 'linux' ? 'Linux' : 'Windows';
-  const ext = process.platform === 'win32' ? '.exe' : '';
-  return path.join(repoRoot, 'node_modules', 'fbx2gltf', 'bin', platformDir, `FBX2glTF${ext}`);
-}
-
-function convertFbxToRawGlb(fbxPath: string, outputGlbPath: string): void {
-  const binary = fbx2gltfBinary();
-  const result = spawnSync(binary, ['--binary', '--input', fbxPath, '--output', outputGlbPath.replace(/\.glb$/, '')], {
-    stdio: 'inherit',
-  });
-  if (result.error) {
-    const rosettaHint = process.platform === 'darwin' && process.arch === 'arm64'
-      ? ' FBX2glTF is an x86_64 binary — on Apple Silicon it needs Rosetta 2 (`softwareupdate --install-rosetta`).'
-      : '';
-    throw new Error(`convert-car: could not start FBX2glTF at ${binary}: ${result.error.message}.${rosettaHint}`);
-  }
-  if (result.status !== 0) {
-    throw new Error(`convert-car: FBX2glTF exited with code ${result.status}`);
-  }
-}
-
-/** Local -> "world" matrix for a node. The raw export is a flat, single-level hierarchy (every mesh node is a direct child of the scene), so a node's own matrix already is its world matrix. */
-function worldMatrixOf(node: GltfNode): THREE.Matrix4 {
-  return new THREE.Matrix4().fromArray(node.getMatrix());
-}
 
 function trianglePositions(primitive: Primitive): { get(triangle: number): [THREE.Vector3, THREE.Vector3, THREE.Vector3] } {
   const position = primitive.getAttribute('POSITION');
@@ -70,13 +42,6 @@ function trianglePositions(primitive: Primitive): { get(triangle: number): [THRE
       return scratch;
     },
   };
-}
-
-function triangleCountOf(primitive: Primitive): number {
-  const indices = primitive.getIndices();
-  const position = primitive.getAttribute('POSITION');
-  if (!position) return 0;
-  return indices ? indices.getCount() / 3 : position.getCount() / 3;
 }
 
 /** Splits one primitive's triangles into two groups by a per-triangle world-space test. */
@@ -234,10 +199,7 @@ async function main(): Promise<void> {
   console.log('Converting FBX with FBX2glTF...');
   convertFbxToRawGlb(fbxPath, rawGlbPath);
 
-  const io = new NodeIO()
-    .registerExtensions(ALL_EXTENSIONS)
-    .registerDependencies({ 'meshopt.decoder': MeshoptDecoder, 'meshopt.encoder': MeshoptEncoder });
-  const doc = await io.read(rawGlbPath);
+  const doc = await createNodeIo().read(rawGlbPath);
   const root = doc.getRoot();
 
   // 1. Drop the camera rig and the manufacturer badge (spec: unbranded).
@@ -374,9 +336,7 @@ async function main(): Promise<void> {
   await doc.transform(meshopt({ encoder: MeshoptEncoder, level: 'medium' }));
 
   const outputPath = path.join(repoRoot, 'public', 'models', 'pajero-sport.glb');
-  await io.write(outputPath, doc);
-  const outputSize = statSync(outputPath).size;
-  console.log(`Wrote ${outputPath} (${(outputSize / 1024).toFixed(1)} KB)`);
+  await writeGlbWithReport(doc, outputPath);
 
   rmSync(workDir, { recursive: true, force: true });
 }
