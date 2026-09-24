@@ -34,7 +34,13 @@ export function buildTerrainMesh(
   indexed.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   indexed.setIndex(Array.from(indices));
   indexed.computeVertexNormals();
-  const inorm = indexed.attributes.normal.array as Float32Array;
+  const normalAttribute = indexed.attributes.normal;
+  const inorm = new Float32Array(normalAttribute.count * 3);
+  for (let vertex = 0; vertex < normalAttribute.count; vertex++) {
+    inorm[vertex * 3] = normalAttribute.getX(vertex);
+    inorm[vertex * 3 + 1] = normalAttribute.getY(vertex);
+    inorm[vertex * 3 + 2] = normalAttribute.getZ(vertex);
+  }
 
   const triCount = indices.length / 3;
   const pos = new Float32Array(triCount * 9);

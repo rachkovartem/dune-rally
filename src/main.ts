@@ -20,7 +20,10 @@ import { AudioManager } from './audio/audio';
 import { sanitizeInput, SERVER_PORT } from '../shared/protocol';
 import type RAPIER from '@dimforge/rapier3d-compat';
 
-const canvas = document.getElementById('app') as HTMLCanvasElement;
+const canvas = document.getElementById('app');
+if (!(canvas instanceof HTMLCanvasElement)) {
+  throw new Error('Expected a <canvas id="app"> element in the page.');
+}
 const ctx = createRenderer(canvas);
 window.addEventListener('resize', ctx.resize);
 const audio = new AudioManager();
@@ -65,7 +68,7 @@ const buggy = new Buggy(world, ctx.scene, spawn);
 const views = new PlayerViews(ctx.scene); // remote players only
 const keyboard = new Keyboard();
 // TEMP debug hook
-(window as unknown as { __dbg: () => unknown }).__dbg = () => {
+window.__dbg = () => {
   const p = buggy.position();
   return {
     pos: { x: +p.x.toFixed(1), y: +p.y.toFixed(2), z: +p.z.toFixed(1) },
@@ -74,8 +77,7 @@ const keyboard = new Keyboard();
     keys: [...keyboard.keys],
   };
 };
-(window as unknown as { __tp: (x: number, z: number) => void }).__tp = (x, z) =>
-  buggy.teleport(x, heightField(x, z) + 3, z);
+window.__tp = (x, z) => buggy.teleport(x, heightField(x, z) + 3, z);
 const chase = new ChaseCamera(ctx.camera, heightField);
 const tracks = new TireTracks(ctx.scene, heightField);
 const water = new Water(ctx.scene, biome.waterLevel);

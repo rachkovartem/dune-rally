@@ -39,7 +39,7 @@ export function createRenderer(canvas: HTMLCanvasElement): RenderContext {
   sun.position.copy(SUN_OFFSET);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  const cam = sun.shadow.camera as THREE.OrthographicCamera;
+  const cam = sun.shadow.camera;
   cam.left = -26;
   cam.right = 26;
   cam.top = 26;
