@@ -3,6 +3,9 @@
 // numbers drive the local car, the server copy and the bench, and the rpm/gear can feed engine sound.
 
 export const STANDARD_GRAVITY = 9.81;
+// Downward pull of every Rapier world in the game (client, server, bench), m/s². It is arcade
+// strength, about twice the real value, and it sets how far the suspension sags at rest.
+export const WORLD_GRAVITY = 20;
 export const AIR_DENSITY = 1.225;
 
 const RAD_PER_SEC_TO_RPM = 60 / (2 * Math.PI);

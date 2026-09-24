@@ -24,6 +24,10 @@ export function sanitizeInput(raw: Partial<InputMsg> | undefined): InputMsg {
   };
 }
 
+// R on the client: stand the player's own car back on its wheels. It carries no payload, and the
+// server ignores anything sent with it.
+export const RESET_CAR_MESSAGE = 'resetCar';
+
 export interface SelectCarMsg {
   carId: string;
 }

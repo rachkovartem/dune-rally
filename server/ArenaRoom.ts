@@ -3,7 +3,7 @@ import { Room, Client } from '@colyseus/core';
 import { ArenaState, PlayerState } from './state';
 import { ArenaSim, SIM_STEP_SECONDS } from './arenaSim';
 import { dailySeed } from '../src/world/seed';
-import { sanitizeCarId, sanitizeInput, TICK_HZ, PATCH_HZ, type JoinOptions } from '../shared/protocol';
+import { RESET_CAR_MESSAGE, sanitizeCarId, sanitizeInput, TICK_HZ, PATCH_HZ, type JoinOptions } from '../shared/protocol';
 
 // The world steps at a fixed 1/60 s, so each 1/30 s tick runs two steps to keep real time.
 const STEPS_PER_TICK = Math.max(1, Math.round(1 / TICK_HZ / SIM_STEP_SECONDS));
@@ -22,6 +22,11 @@ export class ArenaRoom extends Room<ArenaState> {
 
     this.onMessage('input', (client, msg) => {
       this.sim.setInput(client.sessionId, sanitizeInput(msg));
+    });
+
+    // The payload is never read: a player can only reset its own car.
+    this.onMessage(RESET_CAR_MESSAGE, (client) => {
+      this.sim.resetPlayer(client.sessionId);
     });
 
     this.onMessage('selectCar', (client, msg: unknown) => {

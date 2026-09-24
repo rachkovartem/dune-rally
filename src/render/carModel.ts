@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { CarMaterialSlot, WheelSlot } from '../assets/carPartRules';
+import { restingSuspensionLength } from '../vehicle/vehicleConfig';
 
 export interface MeasuredCarLike {
   wheelbase: number;
@@ -16,6 +17,7 @@ export interface MeasuredCarLike {
 export interface WheelFitConfig {
   radius: number;
   suspensionRestLength: number;
+  suspensionStiffness: number;
   positions: readonly { x: number; y: number; z: number }[];
 }
 
@@ -39,10 +41,6 @@ export const ARCH_CLEARANCE = 0.06;
 const FRONT_WHEEL_INDEX = 0;
 const REAR_WHEEL_INDEX = 2;
 
-// A loaded suspension sags part way from its rest length before the tyre reaches the ground;
-// this fraction is an authored approximation, not a physics simulation, just for the visual fit.
-const SUSPENSION_SAG_FRACTION = 0.8;
-
 /**
  * Pure fit of the measured car onto the physics wheel geometry: how much to scale the body (so
  * the wheelbase matches), how much to scale the wheels (so their radius matches the physics
@@ -61,7 +59,7 @@ export function fitCarToChassis(measured: MeasuredCarLike, cfg: ChassisFitConfig
   const bodyScale = physicsWheelbase / measured.wheelbase;
   const wheelScale = cfg.wheel.radius / measured.tyreRadius;
 
-  const tyreTop = frontWheel.y - cfg.wheel.suspensionRestLength * SUSPENSION_SAG_FRACTION + cfg.wheel.radius;
+  const tyreTop = frontWheel.y - restingSuspensionLength(cfg.wheel) + cfg.wheel.radius;
   const bodyOffsetY = tyreTop + ARCH_CLEARANCE - measured.archTopY * bodyScale;
 
   const physicsHalfTrack = Math.abs(frontWheel.x);

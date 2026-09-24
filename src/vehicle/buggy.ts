@@ -2,11 +2,17 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { buildBuggyMesh } from '../render/buggyMesh';
-import { createVehiclePhysics, type VehiclePhysics } from '../../shared/vehiclePhysics';
-import { vehicleConfigFor, type VehicleConfig } from './vehicleConfig';
+import { createVehiclePhysics, RESET_LIFT, type VehiclePhysics } from '../../shared/vehiclePhysics';
+import { restingSuspensionLength, vehicleConfigFor, type VehicleConfig } from './vehicleConfig';
 import type { CarId } from './cars';
 import type { InputMsg } from '../../shared/protocol';
 import type { DrivetrainState } from '../../shared/drivetrain';
+
+// Rapier leaves a wheel with no ground under it at the full rest length, well below its resting
+// pose, so a car on its roof looks like its wheels came off. The drawn wheel hangs only this far
+// below the resting pose instead, and eases there at DROOP_SPEED (m/s).
+const IN_AIR_DROOP = 0.04;
+const DROOP_SPEED = 0.8;
 
 export class Buggy {
   readonly mesh: THREE.Group;
@@ -14,6 +20,8 @@ export class Buggy {
   private readonly config: VehicleConfig;
   private wheelPivots: THREE.Group[] = [];
   private rollAngle = 0;
+  private readonly restingLength: number;
+  private readonly shownSuspension: number[];
 
   constructor(
     private readonly world: RAPIER.World,
@@ -23,6 +31,8 @@ export class Buggy {
   ) {
     this.config = vehicleConfigFor(carId);
     this.vehicle = createVehiclePhysics(world, spawn, this.config);
+    this.restingLength = restingSuspensionLength(this.config.wheel);
+    this.shownSuspension = this.config.wheel.positions.map(() => this.restingLength);
 
     this.mesh = buildBuggyMesh(carId);
     this.wheelPivots = this.mesh.children.slice(1).map((child) => {
@@ -55,13 +65,30 @@ export class Buggy {
     const steerAngle = this.vehicle.steerAngle();
     for (let i = 0; i < this.wheelPivots.length; i++) {
       const pivot = this.wheelPivots[i];
-      const conn = this.vehicle.controller.wheelChassisConnectionPointCs(i);
-      const susp = this.vehicle.controller.wheelSuspensionLength(i) ?? this.config.wheel.suspensionRestLength;
-      if (conn) pivot.position.set(conn.x, conn.y - susp, conn.z);
+      const connection = this.vehicle.controller.wheelChassisConnectionPointCs(i);
+      const suspension = this.suspensionToShow(i);
+      if (connection) pivot.position.set(connection.x, connection.y - suspension, connection.z);
       pivot.rotation.y = this.config.steeredWheels.includes(i) ? steerAngle : 0;
       const spinner = pivot.children[0];
       spinner.rotation.x = this.rollAngle;
     }
+  }
+
+  /** On the ground the drawn wheel follows the physics one exactly, so it never floats or sinks. */
+  private suspensionToShow(wheelIndex: number): number {
+    const controller = this.vehicle.controller;
+    const length = controller.wheelSuspensionLength(wheelIndex);
+    if (length === null) throw new Error(`Buggy: the physics car has no wheel ${wheelIndex}`);
+    const shown = controller.wheelIsInContact(wheelIndex)
+      ? length
+      : this.easedDroop(this.shownSuspension[wheelIndex], Math.min(length, this.restingLength + IN_AIR_DROOP));
+    this.shownSuspension[wheelIndex] = shown;
+    return shown;
+  }
+
+  private easedDroop(shown: number, target: number): number {
+    const maxStep = DROOP_SPEED * this.world.timestep;
+    return shown + Math.max(-maxStep, Math.min(maxStep, target - shown));
   }
 
   position(): RAPIER.Vector {
@@ -96,6 +123,6 @@ export class Buggy {
 
   /** Flip the car back upright a little above its current spot, facing where its nose pointed. */
   reset() {
-    this.vehicle.resetUpright(3);
+    this.vehicle.resetUpright(RESET_LIFT);
   }
 }

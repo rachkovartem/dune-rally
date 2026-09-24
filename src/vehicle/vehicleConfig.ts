@@ -1,7 +1,7 @@
 // src/vehicle/vehicleConfig.ts
 import type { Cover } from '../world/biome';
 import type { CarId } from './cars';
-import type { DrivetrainSpec } from '../../shared/drivetrain';
+import { WORLD_GRAVITY, type DrivetrainSpec } from '../../shared/drivetrain';
 
 export interface VehicleConfig {
   chassis: { hx: number; hy: number; hz: number; mass: number };
@@ -133,7 +133,6 @@ export const FORESTER_CONFIG: VehicleConfig = {
   wheel: {
     radius: 0.36,
     width: 0.25,
-    // Rest length and stiffness give a static sag of ~0.2 × rest, the fraction the visual fit assumes.
     suspensionRestLength: 0.6,
     suspensionStiffness: 42,
     suspensionCompression: 1.0,
@@ -197,6 +196,16 @@ export const FORESTER_CONFIG: VehicleConfig = {
 
   gripOverrides: { sand: 0.55, mud: 0.45, rock: 0.8, gravel: 0.85, road: 1.0 },
 };
+
+/**
+ * Suspension length of a car standing still on flat ground. Rapier's spring pushes with
+ * stiffness × compression × chassis mass per wheel, so the mass cancels and only gravity is left.
+ */
+export function restingSuspensionLength(
+  wheel: Pick<VehicleConfig['wheel'], 'suspensionRestLength' | 'suspensionStiffness' | 'positions'>,
+): number {
+  return wheel.suspensionRestLength - WORLD_GRAVITY / (wheel.positions.length * wheel.suspensionStiffness);
+}
 
 const CONFIG_BY_CAR: Record<CarId, VehicleConfig> = {
   forester: FORESTER_CONFIG,

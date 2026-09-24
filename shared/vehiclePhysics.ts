@@ -16,6 +16,9 @@ import {
 } from './drivetrain';
 import { rollingResistanceFor } from './terrainGrip';
 
+/** How far (m) R lifts a car before it stands it on its wheels; the client and the server use the same. */
+export const RESET_LIFT = 3;
+
 export interface Quaternion {
   x: number;
   y: number;

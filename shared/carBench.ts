@@ -5,10 +5,10 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { VehicleConfig } from '../src/vehicle/vehicleConfig';
 import type { InputMsg } from './protocol';
-import { createVehiclePhysics, forwardAxisOf, type Quaternion, type VehiclePhysics } from './vehiclePhysics';
+import { createVehiclePhysics, forwardAxisOf, RESET_LIFT, type Quaternion, type VehiclePhysics } from './vehiclePhysics';
+import { WORLD_GRAVITY } from './drivetrain';
 
-// Same gravity and step as the game's client and server worlds.
-const BENCH_GRAVITY = -20;
+// Same step as the game's client and server worlds.
 const BENCH_STEP = 1 / 60;
 const SETTLE_SECONDS = 1.5;
 const GROUND_HALF_SIZE = 5000;
@@ -23,7 +23,7 @@ export interface BenchCar {
 
 /** A settled car standing on a flat, endless ground, heading +Z. */
 export function createBenchCar(config: VehicleConfig): BenchCar {
-  const world = new RAPIER.World({ x: 0, y: BENCH_GRAVITY, z: 0 });
+  const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY, z: 0 });
   world.timestep = BENCH_STEP;
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   world.createCollider(
@@ -209,7 +209,7 @@ export function runRollover(config: VehicleConfig, heading: number, slideSpeed: 
   const speedAfterThreeSeconds = flatSpeed();
   const headingBeforeReset = yawOf(body.rotation());
 
-  car.vehicle.resetUpright(3);
+  car.vehicle.resetUpright(RESET_LIFT);
   const headingAfterReset = yawOf(body.rotation());
   for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, 1);
   const before = body.translation();

@@ -5,7 +5,8 @@ import { generateChunkHeights } from '../src/world/heightfieldData';
 import { chunkOrigin } from '../src/world/chunk';
 import { featuresInChunk, SPAWN } from '../src/world/worldDef';
 import { addChunkCollider, addFeatureColliders } from '../src/physics/physicsWorld';
-import { createVehiclePhysics, type VehiclePhysics } from '../shared/vehiclePhysics';
+import { createVehiclePhysics, RESET_LIFT, type VehiclePhysics } from '../shared/vehiclePhysics';
+import { WORLD_GRAVITY } from '../shared/drivetrain';
 import { ARENA_CHUNKS, type InputMsg } from '../shared/protocol';
 import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
 import type { CarId } from '../src/vehicle/cars';
@@ -39,7 +40,7 @@ export class ArenaSim {
 
   static async create(seed: number): Promise<ArenaSim> {
     await RAPIER.init();
-    const world = new RAPIER.World({ x: 0, y: -20, z: 0 });
+    const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY, z: 0 });
     world.timestep = SIM_STEP_SECONDS;
     const height = createHeightField(seed);
 
@@ -85,6 +86,11 @@ export class ArenaSim {
   setInput(id: string, input: InputMsg): void {
     const p = this.players.get(id);
     if (p) p.input = input;
+  }
+
+  /** The server copy of the client's R: the same upright rule, so other players see the car recover. */
+  resetPlayer(id: string): void {
+    this.players.get(id)?.vehicle.resetUpright(RESET_LIFT);
   }
 
   removePlayer(id: string): void {
