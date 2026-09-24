@@ -2,7 +2,7 @@
 import * as THREE from 'three/webgpu';
 import { backendKindOf, type BackendFlag, type BackendKind } from './backend';
 import { selectQuality, type QualityTier } from './quality';
-import { createSky, buildEnvironment } from './sky';
+import { createSky, buildSkyTextures, SUN_DIRECTION } from './sky';
 import { createSunShadows } from './sunShadows';
 import { createPostPipeline } from './postPipeline';
 import { createDevOverlay } from './devOverlay';
@@ -16,6 +16,11 @@ export interface RenderContext {
   focusSun: (x: number, y: number, z: number) => void;
   backendKind: BackendKind;
   quality: QualityTier;
+  /** Baked sky IBL — the same texture `scene.environment` uses, for materials built outside
+   * `createRenderer` (water, terrain, props) that need it at construction time. */
+  environment: THREE.Texture;
+  /** Fixed sun direction (no day/night cycle), shared by the water and terrain sparkle/glint. */
+  sunDirection: THREE.Vector3;
 }
 
 // Tuned by eye against the desert screenshots rather than sampled from the sky shader at
@@ -38,7 +43,7 @@ export async function createRenderer(
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.22;
+  renderer.toneMappingExposure = 0.7;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
@@ -49,9 +54,10 @@ export async function createRenderer(
   camera.lookAt(0, 0, 0);
 
   const sky = createSky();
-  scene.environment = buildEnvironment(renderer, sky);
-  scene.environmentIntensity = 0.2;
-  scene.add(sky);
+  const { environment, background } = buildSkyTextures(renderer, sky);
+  scene.environment = environment;
+  scene.environmentIntensity = 0.1;
+  scene.background = background;
 
   const { focusSun } = createSunShadows(scene, quality);
 
@@ -79,5 +85,7 @@ export async function createRenderer(
     focusSun,
     backendKind,
     quality,
+    environment,
+    sunDirection: SUN_DIRECTION,
   };
 }

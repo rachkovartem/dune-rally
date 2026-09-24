@@ -1,22 +1,53 @@
 // src/render/terrainMesh.ts
 import * as THREE from 'three';
 import { buildChunkGeometry } from '../world/chunkGeometry';
-import type { Biome } from '../world/biome';
+import type { Biome, Cover } from '../world/biome';
+import { COVER } from '../world/biome';
+import { textureSetForCover } from '../assets/textureManifest';
+import { layerIndexFor } from './terrainTextures';
 
-// White base so per-vertex colours show through under normal PBR shading (real terrain textures
-// replace the flat per-triangle colour in a later task).
-const terrainMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
-terrainMaterial.vertexColors = true;
+// Fallback while the PBR material's textures are still loading (setTerrainMaterial swaps this
+// out once buildArrayTexture finishes) — plain white so vertex-driven shading doesn't clash once
+// the swap happens, matching the look of an unlit chunk for the first frame or two only.
+let terrainMaterial: THREE.Material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
 
-const e1 = new THREE.Vector3();
-const e2 = new THREE.Vector3();
-const fn = new THREE.Vector3();
+/** Swaps the shared terrain material once its textures are ready. One instance for every chunk
+ * (rule: no per-chunk material) — chunks built after the swap pick it up immediately; chunks
+ * already in the scene keep it too, since they share the very same material object. */
+export function setTerrainMaterial(material: THREE.Material): void {
+  terrainMaterial = material;
+}
+
+const TINT_BY_COVER: Record<Cover, THREE.Color> = Object.fromEntries(
+  (Object.keys(COVER) as Cover[]).map((cover) => [cover, new THREE.Color(COVER[cover])]),
+) as Record<Cover, THREE.Color>;
+
+export interface CoverPair {
+  a: Cover;
+  b: Cover;
+  weight: number; // 0 = fully `a`, 1 = fully `b`
+}
+
+/** Reduces the covers seen at a triangle's vertices to the two dominant ones and a blend weight —
+ * uniform input gives weight 0 (no blend), an even split between two covers gives weight ≈ 0.5. */
+export function chooseCoverPair(covers: readonly Cover[]): CoverPair {
+  if (covers.length === 0) throw new Error('chooseCoverPair: at least one cover is required.');
+  const counts = new Map<Cover, number>();
+  for (const cover of covers) counts.set(cover, (counts.get(cover) ?? 0) + 1);
+  const ranked = [...counts.entries()].sort((first, second) => second[1] - first[1]);
+  const [a, countA] = ranked[0];
+  const second = ranked[1];
+  if (!second) return { a, b: a, weight: 0 };
+  const [b, countB] = second;
+  return { a, b, weight: countB / (countA + countB) };
+}
 
 /**
- * Build a chunk render mesh from its row-major height grid. Each triangle gets a single FLAT
- * coverage colour (from the biome, classified at the triangle centroid + its face slope) so
- * coverage boundaries are crisp instead of a smeared vertex gradient — while vertex normals stay
- * smooth, so the dunes are still smoothly lit. Vertices match the physics collider geometry.
+ * Build a chunk render mesh from its row-major height grid. Cover is classified per VERTEX (from
+ * the smooth vertex normal's slope, not the flat face normal) so a triangle can blend between up
+ * to two covers instead of showing one hard-edged colour — soft transitions across cover
+ * boundaries (dune sand into gravel, road shoulder into open desert). Vertices match the physics
+ * collider geometry.
  */
 export function buildTerrainMesh(
   heights: Float32Array,
@@ -32,31 +63,44 @@ export function buildTerrainMesh(
   indexed.setIndex(Array.from(indices));
   indexed.computeVertexNormals();
   const normalAttribute = indexed.attributes.normal;
-  const inorm = new Float32Array(normalAttribute.count * 3);
-  for (let vertex = 0; vertex < normalAttribute.count; vertex++) {
+  const vertexCount = normalAttribute.count;
+  const inorm = new Float32Array(vertexCount * 3);
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
     inorm[vertex * 3] = normalAttribute.getX(vertex);
     inorm[vertex * 3 + 1] = normalAttribute.getY(vertex);
     inorm[vertex * 3 + 2] = normalAttribute.getZ(vertex);
   }
 
+  // Classify every vertex once (position + smooth-normal slope), reused by every triangle sharing it.
+  const vertexCover: Cover[] = new Array(vertexCount);
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
+    const x = positions[vertex * 3];
+    const y = positions[vertex * 3 + 1];
+    const z = positions[vertex * 3 + 2];
+    const nx = inorm[vertex * 3];
+    const ny = inorm[vertex * 3 + 1];
+    const nz = inorm[vertex * 3 + 2];
+    const slope = Math.hypot(nx, nz) / Math.max(Math.abs(ny), 1e-4);
+    vertexCover[vertex] = biome.coverAt(x, z, y, slope);
+  }
+
   const triCount = indices.length / 3;
   const pos = new Float32Array(triCount * 9);
   const nor = new Float32Array(triCount * 9);
-  const col = new Float32Array(triCount * 9);
-  const c = new THREE.Color();
+  const coverAAttr = new Float32Array(triCount * 3);
+  const coverBAttr = new Float32Array(triCount * 3);
+  const coverWeightAttr = new Float32Array(triCount * 3);
+  const tintAAttr = new Float32Array(triCount * 9);
+  const tintBAttr = new Float32Array(triCount * 9);
 
   for (let t = 0; t < triCount; t++) {
     const a = indices[t * 3];
     const b = indices[t * 3 + 1];
     const d = indices[t * 3 + 2];
-    const ai = a * 3;
-    const bi = b * 3;
-    const di = d * 3;
+    const tv = [a, b, d];
 
-    // copy the 3 vertex positions + smooth normals (de-indexed)
-    const tv = [ai, bi, di];
     for (let k = 0; k < 3; k++) {
-      const s = tv[k];
+      const s = tv[k] * 3;
       const o = t * 9 + k * 3;
       pos[o] = positions[s];
       pos[o + 1] = positions[s + 1];
@@ -66,21 +110,19 @@ export function buildTerrainMesh(
       nor[o + 2] = inorm[s + 2];
     }
 
-    // centroid + face slope for biome classification
-    const cx = (positions[ai] + positions[bi] + positions[di]) / 3;
-    const cy = (positions[ai + 1] + positions[bi + 1] + positions[di + 1]) / 3;
-    const cz = (positions[ai + 2] + positions[bi + 2] + positions[di + 2]) / 3;
-    e1.set(positions[bi] - positions[ai], positions[bi + 1] - positions[ai + 1], positions[bi + 2] - positions[ai + 2]);
-    e2.set(positions[di] - positions[ai], positions[di + 1] - positions[ai + 1], positions[di + 2] - positions[ai + 2]);
-    fn.crossVectors(e1, e2).normalize();
-    const slope = Math.hypot(fn.x, fn.z) / Math.max(Math.abs(fn.y), 1e-4);
+    const pair = chooseCoverPair([vertexCover[a], vertexCover[b], vertexCover[d]]);
+    const layerA = layerIndexFor(textureSetForCover(pair.a));
+    const layerB = layerIndexFor(textureSetForCover(pair.b));
+    const tintA = TINT_BY_COVER[pair.a];
+    const tintB = TINT_BY_COVER[pair.b];
 
-    c.set(biome.colorAt(cx, cy, cz, slope));
     for (let k = 0; k < 3; k++) {
-      const o = t * 9 + k * 3;
-      col[o] = c.r;
-      col[o + 1] = c.g;
-      col[o + 2] = c.b;
+      coverAAttr[t * 3 + k] = layerA;
+      coverBAttr[t * 3 + k] = layerB;
+      coverWeightAttr[t * 3 + k] = pair.weight;
+      const to = t * 9 + k * 3;
+      tintAAttr[to] = tintA.r; tintAAttr[to + 1] = tintA.g; tintAAttr[to + 2] = tintA.b;
+      tintBAttr[to] = tintB.r; tintBAttr[to + 1] = tintB.g; tintBAttr[to + 2] = tintB.b;
     }
   }
   indexed.dispose();
@@ -88,7 +130,11 @@ export function buildTerrainMesh(
   const geom = new THREE.BufferGeometry();
   geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geom.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-  geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geom.setAttribute('coverA', new THREE.BufferAttribute(coverAAttr, 1));
+  geom.setAttribute('coverB', new THREE.BufferAttribute(coverBAttr, 1));
+  geom.setAttribute('coverWeight', new THREE.BufferAttribute(coverWeightAttr, 1));
+  geom.setAttribute('tintA', new THREE.BufferAttribute(tintAAttr, 3));
+  geom.setAttribute('tintB', new THREE.BufferAttribute(tintBAttr, 3));
 
   const mesh = new THREE.Mesh(geom, terrainMaterial);
   mesh.receiveShadow = true;

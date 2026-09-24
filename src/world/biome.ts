@@ -29,10 +29,13 @@ export interface Biome {
   colorAt(x: number, z: number, h: number, slope: number): number;
 }
 
+// Wet band around the lake's waterline: covers both the visible shoreline and the submerged bed.
+const SHORE_BAND_ABOVE_WATERLEVEL = 0.9;
+
 export function createBiome(seed: number): Biome {
   // A little fixed-feel variation for the open desert ground (kept seed-deterministic).
   const vary = createNoise2D(mulberry32((seed ^ 0x85ebca6b) >>> 0));
-  const waterLevel = -22;
+  const waterLevel = W.LAKE.waterLevel;
 
   const coverAt = (x: number, z: number, h: number, slope: number): Cover => {
     // Road network: flat corridor + gravel shoulder, on the carved geometry.
@@ -43,6 +46,12 @@ export function createBiome(seed: number): Biome {
     }
     // Hub-town plaza: packed earth between the buildings.
     if (W.townDist(x, z) < W.TOWN.plaza) return 'dirt';
+
+    // Lake shoreline + bed: a wet band from the waterline outward, inside the carve's own
+    // footprint only — a low point far from the lake is never mistaken for its shore.
+    if (W.lakeDist(x, z) < W.LAKE.radius + W.LAKE.feather && h < waterLevel + SHORE_BAND_ABOVE_WATERLEVEL) {
+      return 'mud';
+    }
 
     // Cliff ring + steep faces.
     if (h > W.BORDER_HEIGHT * 0.5) return 'rock';

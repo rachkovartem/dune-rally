@@ -1,187 +1,117 @@
-import * as THREE from 'three';
+// src/render/buggyMesh.ts
+import * as THREE from 'three/webgpu';
 import { vehicleConfig as cfg } from '../vehicle/vehicleConfig';
+import type { WheelSlot } from '../assets/carPartRules';
+import type { CarAssembly } from './carModel';
+import { createCarMaterials, type CarMaterialSet } from './carMaterials';
 
-// ── Pajero Sport palette ──────────────────────────────────────────────
-const BODY = 0x787c84; // charcoal grey (lightened so toon shading still reads grey, not black)
-const GLASS = 0x1d2530; // tinted glass
-const BLACK = 0x141414; // trim / cladding / bumpers / tyres
-const CHROME = 0xb9bcc2; // chrome / alloy / rails
-const HEAD = 0xfff2cf; // pale headlights
-const TAIL = 0x7a1410; // red tail lights
+const WHEEL_ORDER: readonly WheelSlot[] = ['wheelFL', 'wheelFR', 'wheelRL', 'wheelRR'];
 
-// ── tiny primitive helpers ────────────────────────────────────────────
-function standardMaterial(color: number): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.1 });
+let carAssembly: CarAssembly | null = null;
+let carEnvironment: THREE.Texture | null = null;
+
+/**
+ * Set once in main.ts, before the first car (local Buggy or a remote PlayerViews entry) is
+ * built, so buildBuggyMesh() can keep its existing zero-arg signature — buggy.ts and
+ * playerViews.ts both call it with no argument, and neither is touched by this change.
+ */
+export function setCarAsset(assembly: CarAssembly, environment: THREE.Texture): void {
+  carAssembly = assembly;
+  carEnvironment = environment;
 }
 
-function box(w: number, h: number, d: number, color: number): THREE.Mesh {
-  return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), standardMaterial(color));
-}
-
-function cyl(radius: number, len: number, color: number, segments = 16): THREE.Mesh {
-  return new THREE.Mesh(
-    new THREE.CylinderGeometry(radius, radius, len, segments),
-    standardMaterial(color),
+function isCarMaterialSet(value: unknown): value is CarMaterialSet {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'paint' in value &&
+    'glass' in value &&
+    'chrome' in value &&
+    'rubber' in value &&
+    'rim' in value &&
+    'headlight' in value &&
+    'taillight' in value &&
+    'interior' in value &&
+    'blackTrim' in value
   );
 }
 
-function put(mesh: THREE.Object3D, x: number, y: number, z: number): THREE.Object3D {
-  mesh.position.set(x, y, z);
-  return mesh;
+/** Reads the material set buildBuggyMesh() stashed on the group's userData, for setBrakeLights
+ * — each car keeps its own set (see carMaterials.ts), so this always reads the right one. */
+export function getCarMaterials(mesh: THREE.Group): CarMaterialSet {
+  const materials: unknown = mesh.userData.carMaterials;
+  if (!isCarMaterialSet(materials)) {
+    throw new Error('getCarMaterials: this group was not built by buildBuggyMesh()');
+  }
+  return materials;
 }
 
-// ── BODY: chassis, glasshouse, trim, lights, mirrors, steps ───────────
-function buildBody(): THREE.Group {
-  const g = new THREE.Group();
-  const add = (m: THREE.Object3D): void => {
-    g.add(m);
-  };
-
-  // Main hull / belt line (charcoal). Front faces +Z.
-  add(put(box(1.9, 0.6, 3.9, BODY), 0, 0.05, 0));
-
-  // Two-tone lower black cladding wrapping the sills / lower doors.
-  add(put(box(1.96, 0.3, 3.95, BLACK), 0, -0.18, 0));
-
-  // Long hood, sloping gently up toward the windshield base.
-  const hood = box(1.74, 0.16, 1.55, BODY);
-  hood.rotation.x = -0.04;
-  add(put(hood, 0, 0.42, 1.15));
-
-  // Greenhouse core block that the glass & pillars dress.
-  add(put(box(1.5, 0.72, 1.95, BODY), 0, 0.86, -0.5));
-
-  // Raked windshield (wedge box leaning back toward the roof).
-  const wind = box(1.58, 0.95, 0.1, GLASS);
-  wind.rotation.x = -0.52;
-  add(put(wind, 0, 0.82, 0.32));
-
-  // Roof, descending slightly toward the rear.
-  const roof = box(1.5, 0.14, 1.85, BODY);
-  roof.rotation.x = 0.04;
-  add(put(roof, 0, 1.2, -0.55));
-
-  // Raked rear backlight glass.
-  const rear = box(1.42, 0.58, 0.1, GLASS);
-  rear.rotation.x = 0.36;
-  add(put(rear, 0, 0.96, -1.5));
-
-  // Rear hatch / lower tailgate face.
-  add(put(box(1.72, 0.62, 0.22, BODY), 0, 0.5, -1.95));
-
-  // Symmetric side detail (left = -1, right = +1).
-  for (const s of [-1, 1]) {
-    const x = 0.78 * s;
-
-    // Front & rear side windows (tinted), split by a body-colour B-pillar.
-    add(put(box(0.06, 0.42, 0.74, GLASS), x, 0.86, 0.05));
-    add(put(box(0.06, 0.42, 0.66, GLASS), x, 0.86, -0.78));
-    add(put(box(0.08, 0.64, 0.12, BODY), x + 0.005 * s, 0.86, -0.36)); // B-pillar
-    add(put(box(0.08, 0.64, 0.14, BODY), x + 0.005 * s, 0.9, -1.18)); // C-pillar
-
-    // Distinctive kicked-up rear quarter window.
-    const quarter = box(0.06, 0.3, 0.34, GLASS);
-    quarter.rotation.x = 0.5;
-    add(put(quarter, x, 0.96, -1.42));
-
-    // Silver roof rail along the top edge.
-    add(put(box(0.08, 0.07, 1.7, CHROME), 0.66 * s, 1.29, -0.55));
-
-    // Blacked-out wheel-arch flares around each axle.
-    add(put(box(0.5, 0.52, 1.02, BLACK), 0.95 * s, -0.1, 1.4));
-    add(put(box(0.5, 0.52, 1.02, BLACK), 0.95 * s, -0.1, -1.4));
-
-    // Running board / side step along the sill.
-    add(put(box(0.2, 0.1, 2.1, BLACK), 0.93 * s, -0.34, 0));
-
-    // Side mirror on a stalk.
-    add(put(box(0.14, 0.05, 0.06, BODY), 0.96 * s, 0.72, 0.42)); // stalk
-    add(put(box(0.07, 0.18, 0.22, BLACK), 1.06 * s, 0.74, 0.42)); // housing
-
-    // Headlights (front, +Z) and tail lights (rear, -Z).
-    add(put(box(0.42, 0.22, 0.1, HEAD), 0.66 * s, 0.34, 2.0));
-    add(put(box(0.32, 0.34, 0.1, TAIL), 0.72 * s, 0.52, -1.99));
+function buildBody(assembly: CarAssembly, materials: CarMaterialSet): THREE.Group {
+  const body = new THREE.Group();
+  body.scale.setScalar(assembly.fit.bodyScale);
+  body.position.set(assembly.fit.bodyOffset.x, assembly.fit.bodyOffset.y, assembly.fit.bodyOffset.z);
+  for (const part of assembly.bodyParts) {
+    const mesh = new THREE.Mesh(part.geometry, materials[part.slot]);
+    mesh.name = part.name;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    body.add(mesh);
   }
-
-  // ── Front face: grille, bumper, skid plate, chrome bull bar ─────────
-  add(put(box(1.22, 0.36, 0.12, BLACK), 0, 0.26, 2.0)); // grille recess
-  add(put(box(1.0, 0.05, 0.14, CHROME), 0, 0.34, 2.02)); // grille bar
-  add(put(box(1.0, 0.05, 0.14, CHROME), 0, 0.2, 2.02)); // grille bar
-  add(put(box(1.84, 0.4, 0.3, BLACK), 0, -0.06, 2.02)); // front bumper
-  add(put(box(1.24, 0.18, 0.26, CHROME), 0, -0.24, 2.06)); // skid plate
-  add(put(box(1.7, 0.5, 0.26, BLACK), 0, 0.5, -2.0)); // rear bumper
-
-  // Chrome tubular bull bar standing proud of the grille.
-  const barLo = cyl(0.045, 1.4, CHROME);
-  barLo.rotation.z = Math.PI / 2;
-  add(put(barLo, 0, 0.16, 2.2)); // lower cross tube
-  const barHi = cyl(0.045, 1.2, CHROME);
-  barHi.rotation.z = Math.PI / 2;
-  add(put(barHi, 0, 0.42, 2.2)); // upper cross tube
-  for (const s of [-1, 1]) {
-    add(put(cyl(0.045, 0.5, CHROME), 0.6 * s, 0.29, 2.2)); // vertical uprights
-  }
-
-  g.position.y = -0.02; // settle the body onto the wheels
-  return g;
+  return body;
 }
 
-// ── WHEEL: tyre + silver alloy rim/spokes on a pivot→spinner rig ───────
-function buildWheel(p: { x: number; y: number; z: number }): THREE.Group {
+function buildWheel(
+  slot: WheelSlot,
+  position: { x: number; y: number; z: number },
+  assembly: CarAssembly,
+  materials: CarMaterialSet,
+): THREE.Group {
   const pivot = new THREE.Group();
-  pivot.position.set(p.x, p.y, p.z);
+  pivot.position.set(position.x, position.y, position.z);
 
   const spinner = new THREE.Group();
   pivot.add(spinner);
 
-  // Tyre — axle along X.
-  const tyre = new THREE.Mesh(
-    new THREE.CylinderGeometry(cfg.wheel.radius, cfg.wheel.radius, cfg.wheel.width, 20),
-    standardMaterial(BLACK),
-  );
-  tyre.rotation.z = Math.PI / 2;
-  spinner.add(tyre);
+  // The pivot must stay at the physics position exactly (the rig contract); the wheel meshes are
+  // nudged, inside the spinner only, to land under the scaled body's own fender opening.
+  const insetX = position.x < 0 ? assembly.fit.wheelInsetX : -assembly.fit.wheelInsetX;
+  const { tyre, rim } = assembly.wheelParts[slot];
 
-  // Alloy rim face.
-  const rim = cyl(cfg.wheel.radius * 0.62, cfg.wheel.width * 1.02, CHROME, 20);
-  rim.rotation.z = Math.PI / 2;
-  spinner.add(rim);
+  const tyreMesh = new THREE.Mesh(tyre.geometry, materials[tyre.slot]);
+  tyreMesh.name = tyre.name;
+  tyreMesh.scale.setScalar(assembly.fit.wheelScale);
+  tyreMesh.position.x = insetX;
+  tyreMesh.castShadow = true;
+  spinner.add(tyreMesh);
 
-  // Central hub cap.
-  const hub = cyl(cfg.wheel.radius * 0.2, cfg.wheel.width * 1.06, CHROME, 12);
-  hub.rotation.z = Math.PI / 2;
-  spinner.add(hub);
-
-  // A few crossing silver spokes (rotate around the X axle).
-  for (let i = 0; i < 3; i++) {
-    const spoke = box(cfg.wheel.width * 0.9, 0.08, cfg.wheel.radius * 1.1, CHROME);
-    spoke.rotation.x = (i * Math.PI) / 3;
-    spinner.add(spoke);
-  }
+  const rimMesh = new THREE.Mesh(rim.geometry, materials[rim.slot]);
+  rimMesh.name = rim.name;
+  rimMesh.scale.setScalar(assembly.fit.wheelScale);
+  rimMesh.position.x = insetX;
+  rimMesh.castShadow = true;
+  spinner.add(rimMesh);
 
   return pivot;
 }
 
 /**
- * Low-poly PBR-shaded Mitsubishi Pajero Sport (2020, charcoal grey).
- * Front is +Z. Layout is [bodyGroup, wheelPivot0..3] so the physics Buggy reads
- * children[0] as the body and children.slice(1) as the four wheel pivots; each
- * pivot steers via yaw and holds a spinner (rolls around local X) holding the tyre.
+ * Builds one car's Group from the asset set by setCarAsset(). Contract Buggy.ts and
+ * PlayerViews depend on exactly: children[0] = body, children[1..4] = wheel pivots in
+ * cfg.wheel.positions order (FL, FR, RL, RR), each pivot's children[0] = a spinner holding the
+ * wheel meshes that visually roll and steer.
  */
 export function buildBuggyMesh(): THREE.Group {
-  const group = new THREE.Group();
-
-  // children[0] = chassis / body.
-  group.add(buildBody());
-
-  // children[1..4] = wheel pivots in cfg order.
-  for (const p of cfg.wheel.positions) {
-    group.add(buildWheel(p));
+  if (!carAssembly || !carEnvironment) {
+    throw new Error('buildBuggyMesh: setCarAsset() must be called before building a car mesh');
   }
+  const assembly = carAssembly;
+  const materials = createCarMaterials(carEnvironment);
 
-  group.traverse((o) => {
-    if (o instanceof THREE.Mesh) o.castShadow = true;
-  });
-
+  const group = new THREE.Group();
+  group.add(buildBody(assembly, materials));
+  for (let wheelIndex = 0; wheelIndex < WHEEL_ORDER.length; wheelIndex++) {
+    group.add(buildWheel(WHEEL_ORDER[wheelIndex], cfg.wheel.positions[wheelIndex], assembly, materials));
+  }
+  group.userData.carMaterials = materials;
   return group;
 }

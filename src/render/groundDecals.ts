@@ -1,5 +1,6 @@
 // src/render/groundDecals.ts
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import { texture, vec3, positionWorld, float } from 'three/tsl';
 import type { Height2D } from '../world/noise';
 import { terrainSurfaceHeight } from '../world/chunkGeometry';
 
@@ -8,6 +9,27 @@ const STEP = 0.3;      // min distance between ribs (denser → conforms to bump
 const HALF_W = 0.24;   // half tyre width (ribbon half-width)
 const WHEEL_X = 1.0;   // half rear-track (left/right wheel offset)
 const REAR = 1.4;      // distance behind centre to the rear axle
+// A small POSITIVE offset, not the sunken negative one the plan first suggested: a few cm below
+// the surface reliably loses the z-test against the terrain at this camera distance even with
+// polygon offset (verified on screen — the ribbon vanished behind the ground). The pressed-in
+// groove read comes from the darker, grain-modulated material instead of true depth.
+const SURFACE_OFFSET = 0.008;
+
+/** Dark, disturbed-sand rut material shared by both ribbons: a flat dark tint, shaded by the
+ * ribbon's own (constant up) normal, with the sand set's normal map read as an albedo grain —
+ * see terrainMaterial.ts's note on why a triplanar/world-sampled normal map is not fed into
+ * `normalNode` directly (it is tangent-space and would need a per-axis TBN rotation this pass
+ * does not implement). */
+function createRutMaterial(sandNormal: THREE.Texture): THREE.MeshStandardNodeMaterial {
+  const material = new THREE.MeshStandardNodeMaterial({ roughness: 0.95, metalness: 0 });
+  material.polygonOffset = true;
+  material.polygonOffsetFactor = -2;
+  material.polygonOffsetUnits = -2;
+  const grain = texture(sandNormal, positionWorld.xz.mul(0.4)).r;
+  material.colorNode = vec3(0x3a / 255, 0x2a / 255, 0x18 / 255).mul(grain.mul(0.5).add(0.75));
+  material.roughnessNode = float(0.95);
+  return material;
+}
 
 /**
  * One continuous ribbon ("trail") following a wheel. Each rib is a 2-vertex cross-segment
@@ -17,15 +39,35 @@ const REAR = 1.4;      // distance behind centre to the rear axle
 class Ribbon {
   private geom = new THREE.BufferGeometry();
   private pos = new Float32Array(CAP * 2 * 3);
+  // One pre-allocated index buffer, written in place and revealed with setDrawRange — replacing
+  // the whole index attribute every rib (the previous approach) left the WebGPU backend drawing
+  // a stale/empty range, so the ribbon never showed more than its newest one or two ribs.
+  private indexArray = new Uint32Array((CAP - 1) * 6);
+  private indexAttribute: THREE.BufferAttribute;
   private count = 0;
 
   constructor(scene: THREE.Scene, mat: THREE.Material, private surfaceAt: (x: number, z: number) => number) {
     const attr = new THREE.BufferAttribute(this.pos, 3);
     attr.setUsage(THREE.DynamicDrawUsage);
     this.geom.setAttribute('position', attr);
+    // A ground-hugging ribbon is flat enough that a constant up-normal reads fine, and it avoids
+    // recomputing normals from a geometry that changes every frame.
+    const normals = new Float32Array(CAP * 2 * 3);
+    for (let i = 1; i < normals.length; i += 3) normals[i] = 1;
+    this.geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    // The rut material samples its normal by world position, not by UV — this attribute exists
+    // only so the node material's default UV reference has something to bind to.
+    const uvs = new Float32Array(CAP * 2 * 2);
+    for (let i = 1; i < uvs.length; i += 2) uvs[i] = 1;
+    this.geom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    this.indexAttribute = new THREE.BufferAttribute(this.indexArray, 1);
+    this.indexAttribute.setUsage(THREE.DynamicDrawUsage);
+    this.geom.setIndex(this.indexAttribute);
+    this.geom.setDrawRange(0, 0);
     const mesh = new THREE.Mesh(this.geom, mat);
     mesh.frustumCulled = false; // vertices move every frame; don't cull on a stale bound
     mesh.renderOrder = 1;
+    mesh.receiveShadow = true;
     scene.add(mesh);
   }
 
@@ -38,10 +80,10 @@ class Ribbon {
     const px = cx + rx * HALF_W;
     const pz = cz + rz * HALF_W;
     this.pos[vL * 3] = lx;
-    this.pos[vL * 3 + 1] = this.surfaceAt(lx, lz) + 0.015;
+    this.pos[vL * 3 + 1] = this.surfaceAt(lx, lz) + SURFACE_OFFSET;
     this.pos[vL * 3 + 2] = lz;
     this.pos[vR * 3] = px;
-    this.pos[vR * 3 + 1] = this.surfaceAt(px, pz) + 0.015;
+    this.pos[vR * 3 + 1] = this.surfaceAt(px, pz) + SURFACE_OFFSET;
     this.pos[vR * 3 + 2] = pz;
     this.count++;
     this.rebuildIndex();
@@ -50,9 +92,9 @@ class Ribbon {
 
   private rebuildIndex(): void {
     const n = Math.min(this.count, CAP);
-    if (n < 2) return;
+    if (n < 2) { this.geom.setDrawRange(0, 0); return; }
     const start = this.count <= CAP ? 0 : this.count % CAP; // oldest rib slot
-    const idx: number[] = [];
+    let o = 0;
     for (let k = 0; k < n - 1; k++) {
       const a = (start + k) % CAP;
       const b = (start + k + 1) % CAP;
@@ -60,9 +102,11 @@ class Ribbon {
       const aR = a * 2 + 1;
       const bL = b * 2;
       const bR = b * 2 + 1;
-      idx.push(aL, bL, aR, aR, bL, bR);
+      this.indexArray[o++] = aL; this.indexArray[o++] = bL; this.indexArray[o++] = aR;
+      this.indexArray[o++] = aR; this.indexArray[o++] = bL; this.indexArray[o++] = bR;
     }
-    this.geom.setIndex(idx);
+    this.indexAttribute.needsUpdate = true;
+    this.geom.setDrawRange(0, o);
   }
 }
 
@@ -74,13 +118,8 @@ export class TireTracks {
   private lastZ = 0;
   private started = false;
 
-  constructor(scene: THREE.Scene, height: Height2D) {
-    // Opaque + polygonOffset so the track sits on the surface without z-fighting or
-    // transparency-sort drop-outs.
-    const mat = new THREE.MeshBasicMaterial({ color: 0x5b4226 });
-    mat.polygonOffset = true;
-    mat.polygonOffsetFactor = -2;
-    mat.polygonOffsetUnits = -2;
+  constructor(scene: THREE.Scene, height: Height2D, sandNormal: THREE.Texture) {
+    const mat = createRutMaterial(sandNormal);
     const surfaceAt = (x: number, z: number) => terrainSurfaceHeight(height, x, z);
     this.left = new Ribbon(scene, mat, surfaceAt);
     this.right = new Ribbon(scene, mat, surfaceAt);

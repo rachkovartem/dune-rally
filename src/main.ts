@@ -10,6 +10,7 @@ import { featuresInChunk, SPAWN } from './world/worldDef';
 import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, addFeatureColliders, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
+import { vehicleConfig } from './vehicle/vehicleConfig';
 import { Keyboard } from './input/keyboard';
 import { controlsFromKeys } from './input/controls';
 import { ChaseCamera } from './render/chaseCamera';
@@ -21,6 +22,18 @@ import { Knockables } from './render/knockables';
 import { AudioManager } from './audio/audio';
 import { sanitizeInput, SERVER_PORT } from '../shared/protocol';
 import type RAPIER from '@dimforge/rapier3d-compat';
+import { measuredCar } from './assets/carPartRules';
+import { assembleCar, fitCarToChassis } from './render/carModel';
+import { setCarAsset, getCarMaterials } from './render/buggyMesh';
+import { setBrakeLights } from './render/carMaterials';
+import type { AssetManifestEntry } from './assets/loadAssets';
+import { PROP_TEXTURE_SETS, type PropKind } from './assets/textureManifest';
+import { terrainLayerOrder } from './render/terrainTextures';
+import { buildArrayTexture, createTerrainMaterial } from './render/terrainMaterial';
+import { setTerrainMaterial } from './render/terrainMesh';
+import { createPropMaterials } from './render/propMaterials';
+import { setPropMaterials } from './render/scatter';
+import { SRGBColorSpace, NoColorSpace, type Texture } from 'three/webgpu';
 
 const canvas = document.getElementById('app');
 if (!(canvas instanceof HTMLCanvasElement)) {
@@ -36,6 +49,62 @@ const conn = await connectToArena(`ws://${location.hostname}:${SERVER_PORT}`, 'r
 const heightField = createHeightField(conn.seed);
 const biome = createBiome(conn.seed);
 const knockables = new Knockables(() => audio.knock());
+
+// Ground + prop texture sets: loaded and wired into the shared terrain/prop materials before the
+// first chunk streams in, so nothing pops from the flat-colour fallback to the PBR look later.
+const terrainSetIds = terrainLayerOrder();
+const groundTextureEntries: AssetManifestEntry[] = [];
+const addedTextureUrls = new Set<string>();
+const addGroundTexture = (id: string, url: string): void => {
+  if (addedTextureUrls.has(url)) return;
+  addedTextureUrls.add(url);
+  groundTextureEntries.push({ id, kind: 'texture', url });
+};
+for (const setId of terrainSetIds) {
+  addGroundTexture(`${setId}-color`, `/textures/${setId}/color.webp`);
+  addGroundTexture(`${setId}-normal`, `/textures/${setId}/normal.webp`);
+  addGroundTexture(`${setId}-arm`, `/textures/${setId}/arm.webp`);
+}
+for (const setId of Object.values(PROP_TEXTURE_SETS)) {
+  addGroundTexture(`${setId}-color`, `/textures/${setId}/color.webp`);
+  addGroundTexture(`${setId}-normal`, `/textures/${setId}/normal.webp`);
+}
+const groundStartSubEl = document.querySelector<HTMLElement>('#start .start-sub');
+if (groundStartSubEl) groundStartSubEl.textContent = 'Загрузка… 0%';
+const groundAssets = await loadAssets(groundTextureEntries, (fraction) => {
+  if (groundStartSubEl) groundStartSubEl.textContent = `Загрузка… ${Math.round(fraction * 100)}%`;
+});
+
+function groundTexture(id: string): Texture {
+  const found = groundAssets.textures.get(id);
+  if (!found) throw new Error(`Expected the "${id}" texture to be present in the loaded assets.`);
+  return found;
+}
+function groundImage(id: string): HTMLImageElement {
+  const image = groundTexture(id).image;
+  if (!(image instanceof HTMLImageElement)) throw new Error(`Expected "${id}" to decode into an HTMLImageElement.`);
+  return image;
+}
+
+setTerrainMaterial(createTerrainMaterial({
+  color: buildArrayTexture(terrainSetIds.map((id) => groundImage(`${id}-color`)), SRGBColorSpace),
+  normal: buildArrayTexture(terrainSetIds.map((id) => groundImage(`${id}-normal`)), NoColorSpace),
+  arm: buildArrayTexture(terrainSetIds.map((id) => groundImage(`${id}-arm`)), NoColorSpace),
+}, ctx.sunDirection));
+
+const propTextureSetFor = (kind: PropKind) => ({
+  color: groundTexture(`${PROP_TEXTURE_SETS[kind]}-color`),
+  normal: groundTexture(`${PROP_TEXTURE_SETS[kind]}-normal`),
+});
+setPropMaterials(createPropMaterials({
+  rock: propTextureSetFor('rock'),
+  bark: propTextureSetFor('bark'),
+  stucco: propTextureSetFor('stucco'),
+  roof: propTextureSetFor('roof'),
+  metal: propTextureSetFor('metal'),
+  wood: propTextureSetFor('wood'),
+}));
+const sandNormalTexture = groundTexture('Ground054-normal');
 
 // The local player's buggy is simulated LOCALLY at 60fps for smooth, instant control; inputs are
 // also sent to the server so other players see us. The server stays authoritative for everyone
@@ -68,20 +137,32 @@ terrain.update(spawnX, spawnZ, 5); // request colliders around the spawn before 
 // on its wheels (a too-low spawn lands on the chassis belly → wheels never grip).
 const spawn = { x: spawnX, y: heightField(spawnX, spawnZ) + 8, z: spawnZ };
 
-// Loading gate: the car model and terrain textures are wired in later tasks, so this manifest is
-// empty for now — the mechanism still runs, showing progress in the start overlay once it doesn't.
+// Loading gate: the car model loads through this same manifest-driven progress mechanism;
+// terrain textures are wired in a separate task and are not part of this manifest yet.
 const startEl = document.getElementById('start');
 const startGoEl = startEl?.querySelector<HTMLElement>('.start-go') ?? null;
 const startSubEl = startEl?.querySelector<HTMLElement>('.start-sub') ?? null;
 const startSubDefaultText = startSubEl?.textContent ?? '';
 let assetsReady = false;
 if (startSubEl) startSubEl.textContent = 'Загрузка… 0%';
-await loadAssets([], (fraction) => {
-  if (startSubEl) startSubEl.textContent = `Загрузка… ${Math.round(fraction * 100)}%`;
-});
+const assets = await loadAssets(
+  [{ id: 'car', kind: 'model', url: '/models/pajero-sport.glb' }],
+  (fraction) => {
+    if (startSubEl) startSubEl.textContent = `Загрузка… ${Math.round(fraction * 100)}%`;
+  },
+);
 assetsReady = true;
 if (startSubEl) startSubEl.textContent = startSubDefaultText;
 if (startGoEl) startGoEl.style.display = '';
+
+// Fit the loaded model to the physics chassis and register it once, before any car mesh (local
+// or remote) is built — buildBuggyMesh() reads it back through setCarAsset's module state.
+const carScene = assets.models.get('car');
+if (!carScene) throw new Error('Expected the "car" model to be present in the loaded assets.');
+const environment = ctx.scene.environment;
+if (!environment) throw new Error('Expected the renderer to have built a scene environment.');
+const carFit = fitCarToChassis(measuredCar, vehicleConfig);
+setCarAsset(assembleCar(carScene, carFit), environment);
 
 const buggy = new Buggy(world, ctx.scene, spawn);
 
@@ -99,8 +180,8 @@ window.__dbg = () => {
 };
 window.__tp = (x, z) => buggy.teleport(x, heightField(x, z) + 3, z);
 const chase = new ChaseCamera(ctx.camera, heightField);
-const tracks = new TireTracks(ctx.scene, heightField);
-const water = new Water(ctx.scene, biome.waterLevel);
+const tracks = new TireTracks(ctx.scene, heightField, sandNormalTexture);
+const water = new Water(ctx.scene, biome.waterLevel, ctx.environment, ctx.sunDirection);
 const playerCountEl = document.getElementById('player-count');
 const speedEl = document.getElementById('speed');
 
@@ -135,6 +216,7 @@ function frame() {
 
   const controls = controlsFromKeys(keyboard.keys);
   conn.sendInput(sanitizeInput(controls)); // server (for other players)
+  setBrakeLights(getCarMaterials(buggy.mesh), controls.brake > 0.1); // this car's own tail lights only
 
   while (acc >= STEP) {
     buggy.applyControls(controls);

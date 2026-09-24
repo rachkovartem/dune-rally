@@ -6,17 +6,50 @@ import { terrainSurfaceHeight } from '../world/chunkGeometry';
 import * as W from '../world/worldDef';
 import type { Height2D } from '../world/noise';
 import type { Biome, Cover } from '../world/biome';
+import type { PropMaterials } from './propMaterials';
 
 function standardMaterial(color: number): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0 });
 }
 
-// Shared materials + geometries (reused across all instances to keep memory/draw cost down).
-const M_ROCK = standardMaterial(0x77756d);
-const M_TRUNK = standardMaterial(0x5a3d22);
-const M_LEAF = standardMaterial(0x3c6a2e);
-const M_BUSH = standardMaterial(0x4f7a32);
-const M_CACTUS = standardMaterial(0x4a7a40);
+// Fallback flat-colour materials, used until `setPropMaterials` swaps in the loaded PBR sets —
+// mutable bindings (not `const`) so every builder function below picks up the swap immediately,
+// the same pattern `terrainMesh.ts` uses for its own shared material.
+let M_ROCK: THREE.Material = standardMaterial(0x77756d);
+let M_TRUNK: THREE.Material = standardMaterial(0x5a3d22);
+let M_LEAF: THREE.Material = standardMaterial(0x3c6a2e);
+let M_BUSH: THREE.Material = standardMaterial(0x4f7a32);
+let M_CACTUS: THREE.Material = standardMaterial(0x4a7a40);
+let M_WALL: THREE.Material[] = [
+  standardMaterial(0xb89b72),
+  standardMaterial(0xa67c52),
+  standardMaterial(0xc9b489),
+  standardMaterial(0x9c8466),
+];
+let M_ROOF: THREE.Material = standardMaterial(0x6b4f3a);
+let M_RAMP: THREE.Material = (() => { const m = standardMaterial(0xb05a2e); m.side = THREE.DoubleSide; return m; })();
+let M_BEACON: THREE.Material = standardMaterial(0xb6bcc4);
+let M_WIND_TOWER: THREE.Material = standardMaterial(0xcdb9a0);
+let M_WIND_BLADE: THREE.Material = standardMaterial(0x3a3a3a);
+const M_BEACON_LIGHT: THREE.Material = standardMaterial(0xff5a3c); // emissive-ish warning light, no PBR set
+
+/** Swaps every shared prop/building material for its loaded PBR version. One instance per kind
+ * (rule: no per-instance material) — reassigning these bindings updates every mesh built after
+ * this call; meshes already streamed in keep sharing the same object they were given. */
+export function setPropMaterials(materials: PropMaterials): void {
+  M_ROCK = materials.rock;
+  M_TRUNK = materials.bark;
+  M_LEAF = materials.leaf;
+  M_BUSH = materials.bush;
+  M_CACTUS = materials.cactus;
+  M_WALL = materials.wall;
+  M_ROOF = materials.roof;
+  materials.ramp.side = THREE.DoubleSide;
+  M_RAMP = materials.ramp;
+  M_BEACON = materials.beaconMetal;
+  M_WIND_TOWER = materials.windmillTower;
+  M_WIND_BLADE = materials.blade;
+}
 
 const G_ROCK = new THREE.IcosahedronGeometry(0.6, 0);
 const G_TRUNK = new THREE.CylinderGeometry(0.16, 0.22, 1.4, 6);
@@ -27,13 +60,6 @@ const G_ARM = new THREE.BoxGeometry(0.22, 0.7, 0.22);
 
 // ── Town buildings (unit cube scaled per building → bounded memory) ────
 const G_UNIT = new THREE.BoxGeometry(1, 1, 1);
-const M_WALL = [
-  standardMaterial(0xb89b72),
-  standardMaterial(0xa67c52),
-  standardMaterial(0xc9b489),
-  standardMaterial(0x9c8466),
-];
-const M_ROOF = standardMaterial(0x6b4f3a);
 
 function building(b: W.BuildingBox, rng: () => number): THREE.Object3D {
   const g = new THREE.Group();
@@ -51,7 +77,6 @@ function building(b: W.BuildingBox, rng: () => number): THREE.Object3D {
 
 // ── Stunt ramps (one shared unit wedge, scaled per ramp) ───────────────
 const G_WEDGE = makeUnitWedge();
-const M_RAMP = (() => { const m = standardMaterial(0xb05a2e); m.side = THREE.DoubleSide; return m; })();
 
 function makeUnitWedge(): THREE.BufferGeometry {
   // Unit wedge: x,z ∈ [-0.5,0.5], base y=0, rising to y=1 at the front (z=+0.5).
@@ -65,8 +90,14 @@ function makeUnitWedge(): THREE.BufferGeometry {
     B, D, F,            // right end
   ];
   const pos = new Float32Array(tris.flat());
+  const uv = new Float32Array(tris.length * 2);
+  for (let vertex = 0; vertex < tris.length; vertex++) {
+    uv[vertex * 2] = tris[vertex][0] + 0.5;
+    uv[vertex * 2 + 1] = tris[vertex][2] + 0.5;
+  }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   geo.computeVertexNormals();
   return geo;
 }
@@ -78,11 +109,6 @@ function ramp(r: W.Ramp): THREE.Object3D {
 }
 
 // ── Landmarks ──────────────────────────────────────────────────────────
-const M_BEACON = standardMaterial(0xb6bcc4);
-const M_BEACON_LIGHT = standardMaterial(0xff5a3c);
-const M_WIND_TOWER = standardMaterial(0xcdb9a0);
-const M_WIND_BLADE = standardMaterial(0x3a3a3a);
-
 function beacon(): THREE.Object3D {
   const g = new THREE.Group();
   const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.7, 14, 6), M_BEACON);
@@ -183,6 +209,16 @@ function pick(cover: Cover, rng: () => number): THREE.Object3D | null {
   }
 }
 
+/** Margin added to the lake's own footprint (radius + feather) before a prop may be placed — the
+ * lake bed and its wet shore must stay loop-able, per the spec's "nothing placed inside the
+ * lake's footprint". */
+const LAKE_PROP_MARGIN = 2;
+
+/** Whether a natural prop may be placed at (x, z) — false inside the lake's footprint plus margin. */
+export function isPropAllowedAt(x: number, z: number): boolean {
+  return W.lakeDist(x, z) >= W.LAKE.radius + W.LAKE.feather + LAKE_PROP_MARGIN;
+}
+
 /** Deterministic low-poly props + authored features scattered across one chunk. */
 export interface ChunkScatter {
   group: THREE.Group;
@@ -208,11 +244,12 @@ export function createChunkScatter(
   for (let i = 0; i < COUNT; i++) {
     const x = ox + rng() * CHUNK_SIZE;
     const z = oz + rng() * CHUNK_SIZE;
-    // Keep roads, town plaza, salt flats and the stunt ramps clear of natural props.
+    // Keep roads, town plaza, salt flats, the stunt ramps and the lake clear of natural props.
     const rd = W.nearestRoad(x, z);
     if (rd && rd.dist < W.ROAD_HALF + W.ROAD_SHOULDER + 2) continue;
     if (W.townDist(x, z) < W.TOWN.plaza + 4) continue;
     if (W.inSaltFlat(x, z)) continue;
+    if (!isPropAllowedAt(x, z)) continue;
     if (feats.ramps.some((r) => Math.hypot(x - r.x, z - r.z) < r.len + 6)) continue;
     const h = terrainSurfaceHeight(height, x, z);
     const slope =

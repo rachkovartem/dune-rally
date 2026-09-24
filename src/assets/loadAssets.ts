@@ -24,9 +24,9 @@ export interface LoadedAssets {
 }
 
 /**
- * Loads every entry in the manifest, reporting combined progress as it goes. The manifest is
- * empty for this stage (the car model and terrain textures are wired in later tasks) — an empty
- * list resolves immediately at 100%, it is not a special case bolted on to hide a missing file.
+ * Loads every entry in the manifest, reporting combined progress as it goes. An empty manifest
+ * resolves immediately at 100% — not a special case bolted on to hide a missing file, just the
+ * natural result of an empty Promise.all, used by callers that have nothing to load yet.
  */
 export async function loadAssets(
   manifest: readonly AssetManifestEntry[],
