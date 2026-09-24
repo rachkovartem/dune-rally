@@ -23,8 +23,11 @@ export class Buggy {
     this.config = vehicleConfigFor(carId);
     this.vehicle = createVehiclePhysics(world, spawn, this.config);
 
-    this.mesh = buildBuggyMesh();
-    this.wheelPivots = this.mesh.children.slice(1) as THREE.Group[];
+    this.mesh = buildBuggyMesh(carId);
+    this.wheelPivots = this.mesh.children.slice(1).map((child) => {
+      if (!(child instanceof THREE.Group)) throw new Error('Buggy: a wheel pivot of the car mesh is not a Group');
+      return child;
+    });
     scene.add(this.mesh);
   }
 
@@ -55,7 +58,7 @@ export class Buggy {
       const susp = this.vehicle.controller.wheelSuspensionLength(i) ?? this.config.wheel.suspensionRestLength;
       if (conn) pivot.position.set(conn.x, conn.y - susp, conn.z);
       pivot.rotation.y = this.config.steeredWheels.includes(i) ? steerAngle : 0;
-      const spinner = pivot.children[0] as THREE.Object3D;
+      const spinner = pivot.children[0];
       spinner.rotation.x = this.rollAngle;
     }
   }

@@ -1,21 +1,18 @@
 // src/render/buggyMesh.ts
 import * as THREE from 'three';
 import { vehicleConfigFor } from '../vehicle/vehicleConfig';
+import type { CarId } from '../vehicle/cars';
 import type { WheelSlot } from '../assets/carPartRules';
-import type { CarAssembly } from './carModel';
+import type { CarAssembly, CarPart } from './carModel';
 import { createCarMaterials, type CarMaterialSet } from './carMaterials';
 
 const WHEEL_ORDER: readonly WheelSlot[] = ['wheelFL', 'wheelFR', 'wheelRL', 'wheelRR'];
 
-let carAssembly: CarAssembly | null = null;
+const carAssemblies = new Map<CarId, CarAssembly>();
 
-/**
- * Set once in main.ts, before the first car (local Buggy or a remote PlayerViews entry) is
- * built, so buildBuggyMesh() can keep its existing zero-arg signature — buggy.ts and
- * playerViews.ts both call it with no argument, and neither is touched by this change.
- */
-export function setCarAsset(assembly: CarAssembly): void {
-  carAssembly = assembly;
+/** Registered once per car in main.ts, before the first car of that id is built. */
+export function registerCarAsset(carId: CarId, assembly: CarAssembly): void {
+  carAssemblies.set(carId, assembly);
 }
 
 function isCarMaterialSet(value: unknown): value is CarMaterialSet {
@@ -58,6 +55,15 @@ function buildBody(assembly: CarAssembly, materials: CarMaterialSet): THREE.Grou
   return body;
 }
 
+function wheelPartMesh(part: CarPart, insetX: number, assembly: CarAssembly, materials: CarMaterialSet): THREE.Mesh {
+  const mesh = new THREE.Mesh(part.geometry, materials[part.slot]);
+  mesh.name = part.name;
+  mesh.scale.setScalar(assembly.fit.wheelScale);
+  mesh.position.x = insetX;
+  mesh.castShadow = true;
+  return mesh;
+}
+
 function buildWheel(
   slot: WheelSlot,
   position: { x: number; y: number; z: number },
@@ -67,48 +73,43 @@ function buildWheel(
   const pivot = new THREE.Group();
   pivot.position.set(position.x, position.y, position.z);
 
+  // The pivot must stay at the physics position exactly (the rig contract); the wheel meshes are
+  // nudged, inside their groups only, to land under the scaled body's own fender opening.
+  const insetX = position.x < 0 ? assembly.fit.wheelInsetX : -assembly.fit.wheelInsetX;
+  const { spinning, hubFixed } = assembly.wheelParts[slot];
+
   const spinner = new THREE.Group();
+  for (const part of spinning) spinner.add(wheelPartMesh(part, insetX, assembly, materials));
   pivot.add(spinner);
 
-  // The pivot must stay at the physics position exactly (the rig contract); the wheel meshes are
-  // nudged, inside the spinner only, to land under the scaled body's own fender opening.
-  const insetX = position.x < 0 ? assembly.fit.wheelInsetX : -assembly.fit.wheelInsetX;
-  const { tyre, rim } = assembly.wheelParts[slot];
-
-  const tyreMesh = new THREE.Mesh(tyre.geometry, materials[tyre.slot]);
-  tyreMesh.name = tyre.name;
-  tyreMesh.scale.setScalar(assembly.fit.wheelScale);
-  tyreMesh.position.x = insetX;
-  tyreMesh.castShadow = true;
-  spinner.add(tyreMesh);
-
-  const rimMesh = new THREE.Mesh(rim.geometry, materials[rim.slot]);
-  rimMesh.name = rim.name;
-  rimMesh.scale.setScalar(assembly.fit.wheelScale);
-  rimMesh.position.x = insetX;
-  rimMesh.castShadow = true;
-  spinner.add(rimMesh);
+  if (hubFixed.length > 0) {
+    const hubGroup = new THREE.Group();
+    for (const part of hubFixed) hubGroup.add(wheelPartMesh(part, insetX, assembly, materials));
+    pivot.add(hubGroup);
+  }
 
   return pivot;
 }
 
 /**
- * Builds one car's Group from the asset set by setCarAsset(). Contract Buggy.ts and
+ * Builds one car's Group from the asset registered for `carId`. Contract Buggy.ts and
  * PlayerViews depend on exactly: children[0] = body, children[1..4] = wheel pivots in
  * cfg.wheel.positions order (FL, FR, RL, RR), each pivot's children[0] = a spinner holding the
- * wheel meshes that visually roll and steer.
+ * wheel meshes that visually roll and steer, and children[1] (only when the car has any) = the
+ * hub-fixed parts that steer but do not roll.
  */
-export function buildBuggyMesh(): THREE.Group {
-  if (!carAssembly) {
-    throw new Error('buildBuggyMesh: setCarAsset() must be called before building a car mesh');
+export function buildBuggyMesh(carId: CarId): THREE.Group {
+  const assembly = carAssemblies.get(carId);
+  if (!assembly) {
+    throw new Error(`buildBuggyMesh: no asset registered for ${carId}`);
   }
-  const assembly = carAssembly;
   const materials = createCarMaterials();
+  const wheelPositions = vehicleConfigFor(carId).wheel.positions;
 
   const group = new THREE.Group();
   group.add(buildBody(assembly, materials));
   for (let wheelIndex = 0; wheelIndex < WHEEL_ORDER.length; wheelIndex++) {
-    group.add(buildWheel(WHEEL_ORDER[wheelIndex], vehicleConfigFor('pajero').wheel.positions[wheelIndex], assembly, materials));
+    group.add(buildWheel(WHEEL_ORDER[wheelIndex], wheelPositions[wheelIndex], assembly, materials));
   }
   group.userData.carMaterials = materials;
   return group;

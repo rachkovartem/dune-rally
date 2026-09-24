@@ -2,6 +2,7 @@
 // Pure rules for converting the raw Pajero Sport FBX into the game's car rig: glass vs. paint,
 // wheel corner, node id -> material slot, rim vs. tyre. Used by scripts/convert-car.ts (Node)
 // and by the renderer at load time; no three.js import, no DOM.
+import type { CarAssemblyRules } from '../render/carModel';
 
 export type CarMaterialSlot =
   | 'paint'
@@ -12,7 +13,13 @@ export type CarMaterialSlot =
   | 'headlight'
   | 'taillight'
   | 'interior'
-  | 'blackTrim';
+  | 'blackTrim'
+  | 'clearGlass'
+  | 'indicator'
+  | 'silver'
+  | 'rimDark'
+  | 'brake'
+  | 'plate';
 
 export type WheelSlot = 'wheelFL' | 'wheelFR' | 'wheelRL' | 'wheelRR';
 
@@ -153,6 +160,33 @@ export function materialSlotFor(nodeId: string): CarMaterialSlot {
   if (!slot) throw new Error(`materialSlotFor: no material slot documented for node id "${nodeId}"`);
   return slot;
 }
+
+function isWheelSlot(nodeId: string): nodeId is WheelSlot {
+  return nodeId === 'wheelFL' || nodeId === 'wheelFR' || nodeId === 'wheelRL' || nodeId === 'wheelRR';
+}
+
+function wheelSlotForRimName(nodeId: string): WheelSlot | null {
+  if (nodeId === 'wheelFLRim') return 'wheelFL';
+  if (nodeId === 'wheelFRRim') return 'wheelFR';
+  if (nodeId === 'wheelRLRim') return 'wheelRL';
+  if (nodeId === 'wheelRRRim') return 'wheelRR';
+  return null;
+}
+
+function pajeroWheelCornerOf(nodeId: string): WheelSlot | null {
+  if (isWheelSlot(nodeId)) return nodeId;
+  return wheelSlotForRimName(nodeId);
+}
+
+/** The Pajero's tyre and rim both roll; it has no hub-fixed parts. Its untextured tyre gets the
+ * generated tread, which needs a cylindrical UV. */
+export const PAJERO_ASSEMBLY_RULES: CarAssemblyRules = {
+  wheelCornerOf: pajeroWheelCornerOf,
+  spinsWithWheel: (nodeId) => pajeroWheelCornerOf(nodeId) !== null,
+  slotFor: materialSlotFor,
+  tyreNodeIdOf: (slot) => slot,
+  needsCylindricalUv: isWheelSlot,
+};
 
 /** Measured on the actual converted GLB, not copied from the feasibility probe: wheel node
  * translations and bodyShell/wheel vertex bounds, printed by convert-car.ts's own

@@ -3,18 +3,19 @@ import * as THREE from 'three';
 import { buildBuggyMesh } from '../render/buggyMesh';
 import { TransformBuffer } from './interpolation';
 import type { NetPlayer } from './connection';
+import type { CarId } from '../vehicle/cars';
 
-interface View { group: THREE.Group; buffer: TransformBuffer }
+interface View { group: THREE.Group; buffer: TransformBuffer; carId: CarId }
 
 export class PlayerViews {
   private views = new Map<string, View>();
   constructor(private scene: THREE.Scene) {}
 
-  add(id: string): void {
+  add(id: string, carId: CarId): void {
     if (this.views.has(id)) return;
-    const group = buildBuggyMesh();
+    const group = buildBuggyMesh(carId);
     this.scene.add(group);
-    this.views.set(id, { group, buffer: new TransformBuffer() });
+    this.views.set(id, { group, buffer: new TransformBuffer(), carId });
   }
 
   remove(id: string): void {

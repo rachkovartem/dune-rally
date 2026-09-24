@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { mulberry32 } from '../world/rng';
 import { CHUNK_SIZE } from '../world/chunk';
 import { terrainSurfaceHeight } from '../world/chunkGeometry';
+import { surfaceSampleAt } from '../world/surfaceSample';
 import * as W from '../world/worldDef';
 import type { Height2D } from '../world/noise';
 import type { Biome, Cover } from '../world/biome';
@@ -238,7 +239,6 @@ export function createChunkScatter(
   const ox = cx * CHUNK_SIZE;
   const oz = cz * CHUNK_SIZE;
   const COUNT = 14;
-  const d = 1.5;
   const feats = W.featuresInChunk(cx, cz);
 
   for (let i = 0; i < COUNT; i++) {
@@ -251,12 +251,7 @@ export function createChunkScatter(
     if (W.inSaltFlat(x, z)) continue;
     if (!isPropAllowedAt(x, z)) continue;
     if (feats.ramps.some((r) => Math.hypot(x - r.x, z - r.z) < r.len + 6)) continue;
-    const h = terrainSurfaceHeight(height, x, z);
-    const slope =
-      Math.hypot(
-        terrainSurfaceHeight(height, x + d, z) - terrainSurfaceHeight(height, x - d, z),
-        terrainSurfaceHeight(height, x, z + d) - terrainSurfaceHeight(height, x, z - d),
-      ) / (2 * d);
+    const { height: h, slope } = surfaceSampleAt(height, x, z);
     const obj = pick(biome.coverAt(x, z, h, slope), rng);
     if (!obj) continue;
     obj.position.set(x, h, z);

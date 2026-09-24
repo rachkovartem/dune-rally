@@ -41,3 +41,40 @@ message) if the binary cannot start.
 Every node this pipeline produces has a documented material slot in
 `src/assets/carPartRules.ts`'s `materialSlotFor()` — see that file for the full table (paint,
 glass, chrome, rubber, rim, headlight, taillight, interior, blackTrim).
+
+---
+
+# public/models/forester-2019.glb — source
+
+- **Title:** Subaru Forester 2019
+- **Source:** Forester model provided by the project owner (archive "Subaru Forester 2019 3D
+  Model.zip"); converted with `scripts/convert-forester.ts`.
+- **Not committed:** `public/models/forester-2019.glb` is in `.gitignore`. On a fresh clone the
+  game shows "Forester model missing — run npx tsx scripts/convert-forester.ts <fbx>" until the
+  file is built locally.
+
+## Building this file
+
+```sh
+npx tsx scripts/convert-forester.ts "<dir>/subaru-forester-2019.fbx"
+```
+
+The script reads the FBX and four textures from `<dir>/textures/` (`Tire_04_DM.jpg`,
+`Tire_04_NM.jpg`, `Brakes_01_DM.jpg`, `Brakes_01_NM.jpg`). It needs `FBX2glTF` (the `fbx2gltf`
+devDependency; on Apple Silicon it runs under Rosetta 2, see the Pajero section above).
+
+## What the pipeline does
+
+- Raw node names are `desirefx.me_NNN`. Every node is classified by
+  `classifyForesterNode()` in `src/assets/foresterPartRules.ts` into one clean id per material
+  slot or wheel-corner part.
+- **Removed:** 8 manufacturer badges, 8 wheel-cap badges, and every node with the `blue`
+  material (brand oval) — the spec requires an unbranded vehicle.
+- **Plate:** `plate.jpg` and `plate0.jpg` are never read; the plate stays a neutral, untextured
+  surface.
+- Normals are stripped (creased at load time); UVs are kept only on the tyre and the brake disc,
+  whose textures ship inside the GLB as WebP (tyre 1024 px, brake 512 px).
+- Each clean id is simplified to its triangle budget (`FORESTER_TRIANGLE_TARGETS`) and joined
+  into one primitive; wheel parts are centred on their hub.
+- Result (2026-09-24): 31 nodes, 128,575 drawn triangles (raw 1,294,622 after deletion),
+  749.2 KB (meshopt-compressed). `measuredCarForester` is copied from the script's printout.

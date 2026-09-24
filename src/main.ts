@@ -3,13 +3,14 @@ import { createRenderer } from './render/renderer';
 import { loadAssets } from './assets/loadAssets';
 import { createHeightField } from './world/noise';
 import { createBiome } from './world/biome';
-import { terrainSurfaceHeight } from './world/chunkGeometry';
+import { surfaceSampleAt } from './world/surfaceSample';
 import { CHUNK_SIZE } from './world/chunk';
 import { featuresInChunk, SPAWN } from './world/worldDef';
 import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, addFeatureColliders, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
 import { vehicleConfigFor } from './vehicle/vehicleConfig';
+import type { CarId } from './vehicle/cars';
 import { Keyboard } from './input/keyboard';
 import { controlsFromKeys } from './input/controls';
 import { ChaseCamera } from './render/chaseCamera';
@@ -21,9 +22,9 @@ import { Knockables } from './render/knockables';
 import { AudioManager } from './audio/audio';
 import { sanitizeInput, SERVER_PORT } from '../shared/protocol';
 import type RAPIER from '@dimforge/rapier3d-compat';
-import { measuredCar } from './assets/carPartRules';
+import { carDefinitionFor } from './assets/carCatalog';
 import { assembleCar, fitCarToChassis } from './render/carModel';
-import { setCarAsset, getCarMaterials } from './render/buggyMesh';
+import { registerCarAsset, getCarMaterials } from './render/buggyMesh';
 import { setBrakeLights } from './render/carMaterials';
 import type { AssetManifestEntry, LoadedAssets } from './assets/loadAssets';
 import { PROP_TEXTURE_SETS, type PropKind } from './assets/textureManifest';
@@ -44,6 +45,11 @@ const heightField = createHeightField(conn.seed);
 const biome = createBiome(conn.seed);
 const knockables = new Knockables(() => audio.knock());
 
+// The car picker replaces this fixed choice in C2.
+const localCarId: CarId = 'pajero';
+const localCar = carDefinitionFor(localCarId);
+const localCarConfig = vehicleConfigFor(localCarId);
+
 // One manifest and one progress readout for the sky, the ground and prop textures, and the car.
 // Any failed file stops the game with its message in the start overlay: there is no fallback
 // sky or car, so a missing file cannot hide behind a look that almost works.
@@ -53,7 +59,7 @@ const SAND_SET_ID = 'Ground054';
 const manifest: AssetManifestEntry[] = [
   { id: 'sky-hdr', kind: 'hdr', url: SKY_HDR_URL },
   { id: 'sky-background', kind: 'texture', url: SKY_BACKGROUND_URL },
-  { id: 'car', kind: 'model', url: '/models/pajero-sport.glb' },
+  { id: 'car:pajero', kind: 'model', url: localCar.modelUrl },
 ];
 const addedTextureUrls = new Set<string>();
 const addTexture = (id: string, url: string): void => {
@@ -174,12 +180,11 @@ if (startSubEl) startSubEl.textContent = startSubDefaultText;
 if (startGoEl) startGoEl.style.display = '';
 
 // Fit the loaded model to the physics chassis and register it once, before any car mesh (local
-// or remote) is built — buildBuggyMesh() reads it back through setCarAsset's module state.
-const carScene = loadedModel('car');
-const carFit = fitCarToChassis(measuredCar, vehicleConfigFor('pajero'));
-setCarAsset(assembleCar(carScene, carFit));
+// or remote) is built.
+const carFit = fitCarToChassis(localCar.measured, localCarConfig);
+registerCarAsset(localCarId, assembleCar(loadedModel('car:pajero'), carFit, localCar.rules));
 
-const buggy = new Buggy(world, ctx.scene, spawn, 'pajero');
+const buggy = new Buggy(world, ctx.scene, spawn, localCarId);
 
 const views = new PlayerViews(ctx.scene); // remote players only
 const keyboard = new Keyboard();
@@ -200,7 +205,7 @@ const water = new Water(ctx.scene, biome.waterLevel);
 const playerCountEl = document.getElementById('player-count');
 const speedEl = document.getElementById('speed');
 
-const addRemote = (id: string) => { if (id !== conn.sessionId) views.add(id); };
+const addRemote = (id: string) => { if (id !== conn.sessionId) views.add(id, 'pajero'); };
 for (const [id] of conn.players()) addRemote(id);
 conn.onAdd(addRemote);
 conn.onRemove((id) => views.remove(id));
@@ -261,14 +266,9 @@ function frame() {
   knockables.update(p.x, p.z, fwdX, fwdZ, buggy.speed(), dt);
 
   // tyre sound matched to the surface under the car
-  const sh = terrainSurfaceHeight(heightField, p.x, p.z);
-  const sd = 1.5;
-  const slope = Math.hypot(
-    terrainSurfaceHeight(heightField, p.x + sd, p.z) - terrainSurfaceHeight(heightField, p.x - sd, p.z),
-    terrainSurfaceHeight(heightField, p.x, p.z + sd) - terrainSurfaceHeight(heightField, p.x, p.z - sd),
-  ) / (2 * sd);
-  audio.setSurface(biome.coverAt(p.x, p.z, sh, slope));
-  audio.setDrive(buggy.speed(), controls.throttle);
+  const surface = surfaceSampleAt(heightField, p.x, p.z);
+  audio.setSurface(biome.coverAt(p.x, p.z, surface.height, surface.slope));
+  audio.setDrive(buggy.speed(), controls.throttle, localCarConfig.maxSpeed);
 
   if (playerCountEl) playerCountEl.textContent = String(conn.players().size);
   if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));

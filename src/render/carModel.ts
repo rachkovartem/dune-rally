@@ -1,10 +1,10 @@
 // src/render/carModel.ts
-// Fits the loaded Pajero Sport GLB to the physics chassis, and turns the raw scene into the
+// Fits a loaded car GLB to the physics chassis, and turns the raw scene into the
 // reusable geometry the car rig is built from. fitCarToChassis and cylindricalUv are pure (no
 // three.js state, no DOM) so they stay unit-testable; assembleCar does the one-time three.js work.
 import * as THREE from 'three';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
-import { materialSlotFor, type CarMaterialSlot, type WheelSlot } from '../assets/carPartRules';
+import type { CarMaterialSlot, WheelSlot } from '../assets/carPartRules';
 
 export interface MeasuredCarLike {
   wheelbase: number;
@@ -110,31 +110,45 @@ export function cylindricalUv(positions: Float32Array, axis: 'x'): Float32Array 
   return uv;
 }
 
+/**
+ * Per-car rules that turn a loaded GLB's flat node list into the rig: which nodes belong to a
+ * wheel corner, which of those roll with the wheel, and which material slot each node gets.
+ */
+export interface CarAssemblyRules {
+  /** The wheel corner a node belongs to, or null for a body node. */
+  wheelCornerOf(nodeId: string): WheelSlot | null;
+  /** True when a wheel-corner node rolls with the wheel; false for hub-fixed parts (brakes). */
+  spinsWithWheel(nodeId: string): boolean;
+  slotFor(nodeId: string): CarMaterialSlot;
+  /** The tyre node of a corner; its position is the hub the corner's parts are centred on. */
+  tyreNodeIdOf(slot: WheelSlot): string;
+  needsCylindricalUv(nodeId: string): boolean;
+}
+
+export interface CarEmbeddedMaps {
+  map: THREE.Texture | null;
+  normalMap: THREE.Texture | null;
+}
+
 export interface CarPart {
   name: string;
   geometry: THREE.BufferGeometry;
   slot: CarMaterialSlot;
+  embeddedMaps: CarEmbeddedMaps;
+}
+
+export interface CarWheelParts {
+  spinning: CarPart[];
+  hubFixed: CarPart[];
 }
 
 export interface CarAssembly {
   bodyParts: CarPart[];
-  wheelParts: Record<WheelSlot, { tyre: CarPart; rim: CarPart }>;
+  wheelParts: Record<WheelSlot, CarWheelParts>;
   fit: CarFit;
 }
 
 const CREASE_ANGLE = THREE.MathUtils.degToRad(30);
-
-function isWheelSlot(name: string): name is WheelSlot {
-  return name === 'wheelFL' || name === 'wheelFR' || name === 'wheelRL' || name === 'wheelRR';
-}
-
-function wheelSlotForRimName(name: string): WheelSlot | null {
-  if (name === 'wheelFLRim') return 'wheelFL';
-  if (name === 'wheelFRRim') return 'wheelFR';
-  if (name === 'wheelRLRim') return 'wheelRL';
-  if (name === 'wheelRRRim') return 'wheelRR';
-  return null;
-}
 
 /** Decodes the position attribute into plain world-unit floats via getX/getY/getZ, since
  * KHR_mesh_quantization leaves it stored as a normalized int16 array — reading `.array` directly
@@ -177,14 +191,21 @@ function bakedPositions(mesh: THREE.Mesh, origin: { x: number; y: number; z: num
   return positions;
 }
 
+function embeddedMapsOf(mesh: THREE.Mesh): CarEmbeddedMaps {
+  const material = mesh.material;
+  if (material instanceof THREE.MeshStandardMaterial) {
+    return { map: material.map, normalMap: material.normalMap };
+  }
+  return { map: null, normalMap: null };
+}
+
 /** The pipeline ships no NORMAL attribute (GLTFLoader would otherwise flat-shade every panel),
  * so every mesh gets creased normals computed here, once, after its own node transform is baked
- * in (see bakedPositions). Wheel tyres also get a cylindrical UV for the tread normal map
- * (carMaterials.ts); rims and body panels stay untextured, no UV needed. */
+ * in (see bakedPositions). Only the parts the rules name get a cylindrical UV (a generated tread). */
 function toCarPart(
   mesh: THREE.Mesh,
   origin: { x: number; y: number; z: number } | null,
-  withCylindricalUv: boolean,
+  rules: CarAssemblyRules,
 ): CarPart {
   const baked = new THREE.BufferGeometry();
   baked.setAttribute('position', new THREE.BufferAttribute(bakedPositions(mesh, origin), 3));
@@ -192,74 +213,76 @@ function toCarPart(
   // toCreasedNormals would read consecutive position triplets as unrelated triangles.
   if (mesh.geometry.index) baked.setIndex(mesh.geometry.index.clone());
   const geometry = toCreasedNormals(baked, CREASE_ANGLE);
-  if (withCylindricalUv) {
+  if (rules.needsCylindricalUv(mesh.name)) {
     const uv = cylindricalUv(decodedPositionArray(geometry), 'x');
     geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   }
-  return { name: mesh.name, geometry, slot: materialSlotFor(mesh.name) };
+  return { name: mesh.name, geometry, slot: rules.slotFor(mesh.name), embeddedMaps: embeddedMapsOf(mesh) };
 }
 
-/** A wheel corner's tyre and rim, both recentred on the tyre's own hub so they share one centre
+/** Every part of one corner is recentred on the tyre's own hub, so they all share one centre
  * (their independently quantized translations differ by a fraction of a millimetre). */
 function wheelCornerParts(
-  tyreByCorner: Map<WheelSlot, THREE.Mesh>,
-  rimByCorner: Map<WheelSlot, THREE.Mesh>,
+  meshesByCorner: Map<WheelSlot, THREE.Mesh[]>,
+  hubByCorner: Map<WheelSlot, THREE.Vector3>,
   slot: WheelSlot,
-): { tyre: CarPart; rim: CarPart } {
-  const tyreMesh = tyreByCorner.get(slot);
-  const rimMesh = rimByCorner.get(slot);
-  if (!tyreMesh || !rimMesh) {
-    throw new Error(`assembleCar: the loaded car model is missing the "${slot}" wheel or rim mesh`);
+  rules: CarAssemblyRules,
+): CarWheelParts {
+  const hub = hubByCorner.get(slot);
+  if (!hub) {
+    throw new Error(`assembleCar: the loaded car model is missing the "${rules.tyreNodeIdOf(slot)}" tyre mesh`);
   }
-  const hub = { x: tyreMesh.position.x, y: tyreMesh.position.y, z: tyreMesh.position.z };
-  return {
-    tyre: toCarPart(tyreMesh, hub, true),
-    rim: toCarPart(rimMesh, hub, false),
-  };
+  const tyreNodeId = rules.tyreNodeIdOf(slot);
+  const spinning: CarPart[] = [];
+  const hubFixed: CarPart[] = [];
+  for (const mesh of meshesByCorner.get(slot) ?? []) {
+    const part = toCarPart(mesh, hub, rules);
+    if (!rules.spinsWithWheel(mesh.name)) hubFixed.push(part);
+    else if (mesh.name === tyreNodeId) spinning.unshift(part);
+    else spinning.push(part);
+  }
+  return { spinning, hubFixed };
 }
 
 /**
  * Processes the raw loaded GLB scene once: creased normals and tyre UVs (see toCarPart), and
- * splits the flat node list into body parts plus the four wheel corners (tyre + rim). Also
- * recentres the fit's Z offset from the actual loaded wheel positions, since the raw model's
- * wheelbase-centre Z isn't part of fitCarToChassis's pure measured/cfg inputs. The returned
- * geometries are shared by every car instance built afterward (buggyMesh.ts); only the
- * materials and the final Group are built per car.
+ * splits the flat node list into body parts plus the four wheel corners, routed by the car's
+ * own rules. Also recentres the fit's Z offset from the actual loaded tyre positions, since the
+ * raw model's wheelbase-centre Z isn't part of fitCarToChassis's pure measured/cfg inputs.
  */
-export function assembleCar(gltfScene: THREE.Object3D, fit: CarFit): CarAssembly {
+export function assembleCar(gltfScene: THREE.Object3D, fit: CarFit, rules: CarAssemblyRules): CarAssembly {
   const bodyParts: CarPart[] = [];
-  const tyreByCorner = new Map<WheelSlot, THREE.Mesh>();
-  const rimByCorner = new Map<WheelSlot, THREE.Mesh>();
+  const meshesByCorner = new Map<WheelSlot, THREE.Mesh[]>();
+  const hubByCorner = new Map<WheelSlot, THREE.Vector3>();
 
   gltfScene.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
-    if (isWheelSlot(child.name)) {
-      tyreByCorner.set(child.name, child);
+    const corner = rules.wheelCornerOf(child.name);
+    if (corner === null) {
+      // Body parts keep their car-space position (no recentring) — buildBody() in buggyMesh.ts
+      // applies one shared bodyScale/bodyOffset transform to all of them together.
+      bodyParts.push(toCarPart(child, null, rules));
       return;
     }
-    const rimCorner = wheelSlotForRimName(child.name);
-    if (rimCorner) {
-      rimByCorner.set(rimCorner, child);
-      return;
-    }
-    // Body parts keep their car-space position (no recentring) — buildBody() in buggyMesh.ts
-    // applies one shared bodyScale/bodyOffset transform to all of them together.
-    bodyParts.push(toCarPart(child, null, false));
+    if (child.name === rules.tyreNodeIdOf(corner)) hubByCorner.set(corner, child.position.clone());
+    const cornerMeshes = meshesByCorner.get(corner) ?? [];
+    cornerMeshes.push(child);
+    meshesByCorner.set(corner, cornerMeshes);
   });
 
-  const frontLeft = tyreByCorner.get('wheelFL');
-  const rearLeft = tyreByCorner.get('wheelRL');
-  if (!frontLeft || !rearLeft) {
-    throw new Error('assembleCar: the loaded car model is missing wheelFL or wheelRL');
-  }
-  const wheelbaseCenterZ = (frontLeft.position.z + rearLeft.position.z) / 2;
-
-  const wheelParts: Record<WheelSlot, { tyre: CarPart; rim: CarPart }> = {
-    wheelFL: wheelCornerParts(tyreByCorner, rimByCorner, 'wheelFL'),
-    wheelFR: wheelCornerParts(tyreByCorner, rimByCorner, 'wheelFR'),
-    wheelRL: wheelCornerParts(tyreByCorner, rimByCorner, 'wheelRL'),
-    wheelRR: wheelCornerParts(tyreByCorner, rimByCorner, 'wheelRR'),
+  const wheelParts: Record<WheelSlot, CarWheelParts> = {
+    wheelFL: wheelCornerParts(meshesByCorner, hubByCorner, 'wheelFL', rules),
+    wheelFR: wheelCornerParts(meshesByCorner, hubByCorner, 'wheelFR', rules),
+    wheelRL: wheelCornerParts(meshesByCorner, hubByCorner, 'wheelRL', rules),
+    wheelRR: wheelCornerParts(meshesByCorner, hubByCorner, 'wheelRR', rules),
   };
+
+  const frontLeftHub = hubByCorner.get('wheelFL');
+  const rearLeftHub = hubByCorner.get('wheelRL');
+  if (!frontLeftHub || !rearLeftHub) {
+    throw new Error('assembleCar: the loaded car model is missing the front-left or rear-left tyre');
+  }
+  const wheelbaseCenterZ = (frontLeftHub.z + rearLeftHub.z) / 2;
 
   const resolvedFit: CarFit = {
     ...fit,

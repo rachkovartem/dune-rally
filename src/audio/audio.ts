@@ -1,5 +1,4 @@
 // src/audio/audio.ts
-import { vehicleConfigFor } from '../vehicle/vehicleConfig';
 import type { Cover } from '../world/biome';
 
 // Per-surface tyre-rustle character: band centre (Hz), resonance, and a loudness multiplier.
@@ -167,9 +166,9 @@ export class AudioManager {
   }
 
   /** Drive the engine + wind from the car's speed and throttle. */
-  setDrive(speed: number, throttle: number): void {
+  setDrive(speed: number, throttle: number, maxSpeed: number): void {
     if (!this.started) return;
-    const f = Math.min(1, speed / vehicleConfigFor('pajero').maxSpeed);
+    const f = Math.min(1, speed / maxSpeed);
     const t = this.ctx.currentTime;
     const set = (p: AudioParam, v: number, tc = 0.08) => p.setTargetAtTime(v, t, tc);
 

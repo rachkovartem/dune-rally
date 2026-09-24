@@ -7,3 +7,6 @@ dist/
 
 # Internal design docs (specs/plans) — kept locally, not published
 docs/superpowers/
+
+# Forester model: provided by the project owner, built locally by scripts/convert-forester.ts
+public/models/forester-2019.glb
