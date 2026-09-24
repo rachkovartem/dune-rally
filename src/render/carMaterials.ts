@@ -1,19 +1,19 @@
 // src/render/carMaterials.ts
 // One material per car-part slot, built fresh for every car (see buggyMesh.ts) so a taillight's
 // brake state never leaks to another car sharing the same scene. treadNormalMapPixels stays free
-// of three.js imports so it is unit-testable without a DOM/WebGPU context.
-import * as THREE from 'three/webgpu';
+// of three.js imports so it is unit-testable without a DOM/WebGL context.
+import * as THREE from 'three';
 
 export interface CarMaterialSet {
-  paint: THREE.MeshPhysicalNodeMaterial;
-  glass: THREE.MeshPhysicalNodeMaterial;
-  chrome: THREE.MeshStandardNodeMaterial;
-  rubber: THREE.MeshStandardNodeMaterial;
-  rim: THREE.MeshStandardNodeMaterial;
-  headlight: THREE.MeshStandardNodeMaterial;
-  taillight: THREE.MeshStandardNodeMaterial;
-  interior: THREE.MeshStandardNodeMaterial;
-  blackTrim: THREE.MeshStandardNodeMaterial;
+  paint: THREE.MeshPhysicalMaterial;
+  glass: THREE.MeshPhysicalMaterial;
+  chrome: THREE.MeshStandardMaterial;
+  rubber: THREE.MeshStandardMaterial;
+  rim: THREE.MeshStandardMaterial;
+  headlight: THREE.MeshStandardMaterial;
+  taillight: THREE.MeshStandardMaterial;
+  interior: THREE.MeshStandardMaterial;
+  blackTrim: THREE.MeshStandardMaterial;
 }
 
 const HEADLIGHT_EMISSIVE_INTENSITY = 1.8;
@@ -82,17 +82,16 @@ function treadNormalTexture(): THREE.DataTexture {
  * interior, black trim. Called once per car (buggyMesh.ts), not module-shared: the taillight
  * must be independent per car so one player's braking never lights another player's tail lights.
  */
-export function createCarMaterials(environment: THREE.Texture): CarMaterialSet {
-  const paint = new THREE.MeshPhysicalNodeMaterial({
+export function createCarMaterials(): CarMaterialSet {
+  const paint = new THREE.MeshPhysicalMaterial({
     color: 0x3a3d43,
     metalness: 0.55,
     roughness: 0.35,
     clearcoat: 1,
     clearcoatRoughness: 0.08,
-    envMap: environment,
   });
 
-  const glass = new THREE.MeshPhysicalNodeMaterial({
+  const glass = new THREE.MeshPhysicalMaterial({
     color: 0x0b1218,
     roughness: 0.02,
     metalness: 0,
@@ -100,31 +99,28 @@ export function createCarMaterials(environment: THREE.Texture): CarMaterialSet {
     opacity: 0.75,
     depthWrite: false,
     side: THREE.DoubleSide,
-    envMap: environment,
   });
 
-  const chrome = new THREE.MeshStandardNodeMaterial({
+  const chrome = new THREE.MeshStandardMaterial({
     color: 0xc9cbd1,
     metalness: 1,
     roughness: 0.12,
-    envMap: environment,
   });
 
-  const rubber = new THREE.MeshStandardNodeMaterial({
+  const rubber = new THREE.MeshStandardMaterial({
     color: 0x0f1012,
     roughness: 0.9,
     metalness: 0,
     normalMap: treadNormalTexture(),
   });
 
-  const rim = new THREE.MeshStandardNodeMaterial({
+  const rim = new THREE.MeshStandardMaterial({
     color: 0xc7cacf,
     metalness: 0.9,
     roughness: 0.25,
-    envMap: environment,
   });
 
-  const headlight = new THREE.MeshStandardNodeMaterial({
+  const headlight = new THREE.MeshStandardMaterial({
     color: 0xfff2cf,
     roughness: 0.3,
     metalness: 0,
@@ -132,7 +128,7 @@ export function createCarMaterials(environment: THREE.Texture): CarMaterialSet {
     emissiveIntensity: HEADLIGHT_EMISSIVE_INTENSITY,
   });
 
-  const taillight = new THREE.MeshStandardNodeMaterial({
+  const taillight = new THREE.MeshStandardMaterial({
     color: 0x7a1410,
     roughness: 0.3,
     metalness: 0,
@@ -140,13 +136,13 @@ export function createCarMaterials(environment: THREE.Texture): CarMaterialSet {
     emissiveIntensity: TAILLIGHT_IDLE_EMISSIVE_INTENSITY,
   });
 
-  const interior = new THREE.MeshStandardNodeMaterial({
+  const interior = new THREE.MeshStandardMaterial({
     color: 0x15171a,
     roughness: 0.95,
     metalness: 0,
   });
 
-  const blackTrim = new THREE.MeshStandardNodeMaterial({
+  const blackTrim = new THREE.MeshStandardMaterial({
     color: 0x1a1b1d,
     roughness: 0.7,
     metalness: 0,

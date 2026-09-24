@@ -1,6 +1,6 @@
 // src/render/buggyMesh.ts
-import * as THREE from 'three/webgpu';
-import { vehicleConfig as cfg } from '../vehicle/vehicleConfig';
+import * as THREE from 'three';
+import { vehicleConfigFor } from '../vehicle/vehicleConfig';
 import type { WheelSlot } from '../assets/carPartRules';
 import type { CarAssembly } from './carModel';
 import { createCarMaterials, type CarMaterialSet } from './carMaterials';
@@ -8,16 +8,14 @@ import { createCarMaterials, type CarMaterialSet } from './carMaterials';
 const WHEEL_ORDER: readonly WheelSlot[] = ['wheelFL', 'wheelFR', 'wheelRL', 'wheelRR'];
 
 let carAssembly: CarAssembly | null = null;
-let carEnvironment: THREE.Texture | null = null;
 
 /**
  * Set once in main.ts, before the first car (local Buggy or a remote PlayerViews entry) is
  * built, so buildBuggyMesh() can keep its existing zero-arg signature — buggy.ts and
  * playerViews.ts both call it with no argument, and neither is touched by this change.
  */
-export function setCarAsset(assembly: CarAssembly, environment: THREE.Texture): void {
+export function setCarAsset(assembly: CarAssembly): void {
   carAssembly = assembly;
-  carEnvironment = environment;
 }
 
 function isCarMaterialSet(value: unknown): value is CarMaterialSet {
@@ -101,16 +99,16 @@ function buildWheel(
  * wheel meshes that visually roll and steer.
  */
 export function buildBuggyMesh(): THREE.Group {
-  if (!carAssembly || !carEnvironment) {
+  if (!carAssembly) {
     throw new Error('buildBuggyMesh: setCarAsset() must be called before building a car mesh');
   }
   const assembly = carAssembly;
-  const materials = createCarMaterials(carEnvironment);
+  const materials = createCarMaterials();
 
   const group = new THREE.Group();
   group.add(buildBody(assembly, materials));
   for (let wheelIndex = 0; wheelIndex < WHEEL_ORDER.length; wheelIndex++) {
-    group.add(buildWheel(WHEEL_ORDER[wheelIndex], cfg.wheel.positions[wheelIndex], assembly, materials));
+    group.add(buildWheel(WHEEL_ORDER[wheelIndex], vehicleConfigFor('pajero').wheel.positions[wheelIndex], assembly, materials));
   }
   group.userData.carMaterials = materials;
   return group;

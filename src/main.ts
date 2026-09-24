@@ -1,6 +1,5 @@
 // src/main.ts
 import { createRenderer } from './render/renderer';
-import { parseBackendFlag } from './render/backend';
 import { loadAssets } from './assets/loadAssets';
 import { createHeightField } from './world/noise';
 import { createBiome } from './world/biome';
@@ -10,7 +9,7 @@ import { featuresInChunk, SPAWN } from './world/worldDef';
 import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, addFeatureColliders, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
-import { vehicleConfig } from './vehicle/vehicleConfig';
+import { vehicleConfigFor } from './vehicle/vehicleConfig';
 import { Keyboard } from './input/keyboard';
 import { controlsFromKeys } from './input/controls';
 import { ChaseCamera } from './render/chaseCamera';
@@ -26,23 +25,18 @@ import { measuredCar } from './assets/carPartRules';
 import { assembleCar, fitCarToChassis } from './render/carModel';
 import { setCarAsset, getCarMaterials } from './render/buggyMesh';
 import { setBrakeLights } from './render/carMaterials';
-import type { AssetManifestEntry } from './assets/loadAssets';
+import type { AssetManifestEntry, LoadedAssets } from './assets/loadAssets';
 import { PROP_TEXTURE_SETS, type PropKind } from './assets/textureManifest';
-import { terrainLayerOrder } from './render/terrainTextures';
-import { buildArrayTexture, createTerrainMaterial } from './render/terrainMaterial';
+import { createTerrainMaterial } from './render/terrainMaterial';
 import { setTerrainMaterial } from './render/terrainMesh';
 import { createPropMaterials } from './render/propMaterials';
 import { setPropMaterials } from './render/scatter';
-import { SRGBColorSpace, NoColorSpace, type Texture } from 'three/webgpu';
+import { SRGBColorSpace, RepeatWrapping, type DataTexture, type Group, type Texture } from 'three';
 
 const canvas = document.getElementById('app');
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Expected a <canvas id="app"> element in the page.');
 }
-const backendFlag = parseBackendFlag(location.search);
-const ctx = await createRenderer(canvas, backendFlag);
-window.__render = { backend: ctx.backendKind };
-window.addEventListener('resize', ctx.resize);
 const audio = new AudioManager();
 
 const conn = await connectToArena(`ws://${location.hostname}:${SERVER_PORT}`, 'rider');
@@ -50,51 +44,90 @@ const heightField = createHeightField(conn.seed);
 const biome = createBiome(conn.seed);
 const knockables = new Knockables(() => audio.knock());
 
-// Ground + prop texture sets: loaded and wired into the shared terrain/prop materials before the
-// first chunk streams in, so nothing pops from the flat-colour fallback to the PBR look later.
-const terrainSetIds = terrainLayerOrder();
-const groundTextureEntries: AssetManifestEntry[] = [];
+// One manifest and one progress readout for the sky, the ground and prop textures, and the car.
+// Any failed file stops the game with its message in the start overlay: there is no fallback
+// sky or car, so a missing file cannot hide behind a look that almost works.
+const SKY_HDR_URL = '/sky/goegap_1k.hdr';
+const SKY_BACKGROUND_URL = '/sky/goegap_sky_4k.webp';
+const SAND_SET_ID = 'Ground054';
+const manifest: AssetManifestEntry[] = [
+  { id: 'sky-hdr', kind: 'hdr', url: SKY_HDR_URL },
+  { id: 'sky-background', kind: 'texture', url: SKY_BACKGROUND_URL },
+  { id: 'car', kind: 'model', url: '/models/pajero-sport.glb' },
+];
 const addedTextureUrls = new Set<string>();
-const addGroundTexture = (id: string, url: string): void => {
+const addTexture = (id: string, url: string): void => {
   if (addedTextureUrls.has(url)) return;
   addedTextureUrls.add(url);
-  groundTextureEntries.push({ id, kind: 'texture', url });
+  manifest.push({ id, kind: 'texture', url });
 };
-for (const setId of terrainSetIds) {
-  addGroundTexture(`${setId}-color`, `/textures/${setId}/color.webp`);
-  addGroundTexture(`${setId}-normal`, `/textures/${setId}/normal.webp`);
-  addGroundTexture(`${setId}-arm`, `/textures/${setId}/arm.webp`);
-}
+for (const map of ['color', 'normal', 'arm']) addTexture(`${SAND_SET_ID}-${map}`, `/textures/${SAND_SET_ID}/${map}.webp`);
 for (const setId of Object.values(PROP_TEXTURE_SETS)) {
-  addGroundTexture(`${setId}-color`, `/textures/${setId}/color.webp`);
-  addGroundTexture(`${setId}-normal`, `/textures/${setId}/normal.webp`);
+  addTexture(`${setId}-color`, `/textures/${setId}/color.webp`);
+  addTexture(`${setId}-normal`, `/textures/${setId}/normal.webp`);
 }
-const groundStartSubEl = document.querySelector<HTMLElement>('#start .start-sub');
-if (groundStartSubEl) groundStartSubEl.textContent = 'Загрузка… 0%';
-const groundAssets = await loadAssets(groundTextureEntries, (fraction) => {
-  if (groundStartSubEl) groundStartSubEl.textContent = `Загрузка… ${Math.round(fraction * 100)}%`;
-});
 
-function groundTexture(id: string): Texture {
-  const found = groundAssets.textures.get(id);
+const startEl = document.getElementById('start');
+const startGoEl = startEl?.querySelector<HTMLElement>('.start-go') ?? null;
+const startSubEl = startEl?.querySelector<HTMLElement>('.start-sub') ?? null;
+const startSubDefaultText = startSubEl?.textContent ?? '';
+let assetsReady = false;
+if (startSubEl) startSubEl.textContent = 'Загрузка… 0%';
+let assets: LoadedAssets;
+try {
+  assets = await loadAssets(manifest, (fraction) => {
+    if (startSubEl) startSubEl.textContent = `Загрузка… ${Math.round(fraction * 100)}%`;
+  });
+} catch (error) {
+  const reason = error instanceof Error ? error.message : String(error);
+  if (startSubEl) {
+    startSubEl.textContent = `Ошибка загрузки: ${reason}`;
+    startSubEl.style.color = '#ff6b5a';
+  }
+  throw error;
+}
+
+function loadedTexture(id: string): Texture {
+  const found = assets.textures.get(id);
   if (!found) throw new Error(`Expected the "${id}" texture to be present in the loaded assets.`);
   return found;
 }
-function groundImage(id: string): HTMLImageElement {
-  const image = groundTexture(id).image;
-  if (!(image instanceof HTMLImageElement)) throw new Error(`Expected "${id}" to decode into an HTMLImageElement.`);
-  return image;
+function loadedHdr(id: string): DataTexture {
+  const found = assets.hdrs.get(id);
+  if (!found) throw new Error(`Expected the "${id}" HDR to be present in the loaded assets.`);
+  return found;
+}
+function loadedModel(id: string): Group {
+  const found = assets.models.get(id);
+  if (!found) throw new Error(`Expected the "${id}" model to be present in the loaded assets.`);
+  return found;
+}
+/** Colour maps hold sRGB bytes; normal and ARM maps hold linear data (the loader's default). */
+function colorMap(id: string): Texture {
+  const texture = loadedTexture(id);
+  texture.colorSpace = SRGBColorSpace;
+  return texture;
 }
 
-setTerrainMaterial(createTerrainMaterial({
-  color: buildArrayTexture(terrainSetIds.map((id) => groundImage(`${id}-color`)), SRGBColorSpace),
-  normal: buildArrayTexture(terrainSetIds.map((id) => groundImage(`${id}-normal`)), NoColorSpace),
-  arm: buildArrayTexture(terrainSetIds.map((id) => groundImage(`${id}-arm`)), NoColorSpace),
-}, ctx.sunDirection));
+const ctx = createRenderer(canvas, { hdr: loadedHdr('sky-hdr'), background: loadedTexture('sky-background') });
+window.__render = { backend: 'webgl2' };
+window.addEventListener('resize', ctx.resize);
+
+const sandSet = {
+  color: colorMap(`${SAND_SET_ID}-color`),
+  normal: loadedTexture(`${SAND_SET_ID}-normal`),
+  arm: loadedTexture(`${SAND_SET_ID}-arm`),
+};
+for (const texture of [sandSet.color, sandSet.normal, sandSet.arm]) {
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.anisotropy = 8;
+}
+setTerrainMaterial(createTerrainMaterial(sandSet));
 
 const propTextureSetFor = (kind: PropKind) => ({
-  color: groundTexture(`${PROP_TEXTURE_SETS[kind]}-color`),
-  normal: groundTexture(`${PROP_TEXTURE_SETS[kind]}-normal`),
+  color: colorMap(`${PROP_TEXTURE_SETS[kind]}-color`),
+  normal: loadedTexture(`${PROP_TEXTURE_SETS[kind]}-normal`),
 });
 setPropMaterials(createPropMaterials({
   rock: propTextureSetFor('rock'),
@@ -104,7 +137,6 @@ setPropMaterials(createPropMaterials({
   metal: propTextureSetFor('metal'),
   wood: propTextureSetFor('wood'),
 }));
-const sandNormalTexture = groundTexture('Ground054-normal');
 
 // The local player's buggy is simulated LOCALLY at 60fps for smooth, instant control; inputs are
 // also sent to the server so other players see us. The server stays authoritative for everyone
@@ -137,34 +169,17 @@ terrain.update(spawnX, spawnZ, 5); // request colliders around the spawn before 
 // on its wheels (a too-low spawn lands on the chassis belly → wheels never grip).
 const spawn = { x: spawnX, y: heightField(spawnX, spawnZ) + 8, z: spawnZ };
 
-// Loading gate: the car model loads through this same manifest-driven progress mechanism;
-// terrain textures are wired in a separate task and are not part of this manifest yet.
-const startEl = document.getElementById('start');
-const startGoEl = startEl?.querySelector<HTMLElement>('.start-go') ?? null;
-const startSubEl = startEl?.querySelector<HTMLElement>('.start-sub') ?? null;
-const startSubDefaultText = startSubEl?.textContent ?? '';
-let assetsReady = false;
-if (startSubEl) startSubEl.textContent = 'Загрузка… 0%';
-const assets = await loadAssets(
-  [{ id: 'car', kind: 'model', url: '/models/pajero-sport.glb' }],
-  (fraction) => {
-    if (startSubEl) startSubEl.textContent = `Загрузка… ${Math.round(fraction * 100)}%`;
-  },
-);
 assetsReady = true;
 if (startSubEl) startSubEl.textContent = startSubDefaultText;
 if (startGoEl) startGoEl.style.display = '';
 
 // Fit the loaded model to the physics chassis and register it once, before any car mesh (local
 // or remote) is built — buildBuggyMesh() reads it back through setCarAsset's module state.
-const carScene = assets.models.get('car');
-if (!carScene) throw new Error('Expected the "car" model to be present in the loaded assets.');
-const environment = ctx.scene.environment;
-if (!environment) throw new Error('Expected the renderer to have built a scene environment.');
-const carFit = fitCarToChassis(measuredCar, vehicleConfig);
-setCarAsset(assembleCar(carScene, carFit), environment);
+const carScene = loadedModel('car');
+const carFit = fitCarToChassis(measuredCar, vehicleConfigFor('pajero'));
+setCarAsset(assembleCar(carScene, carFit));
 
-const buggy = new Buggy(world, ctx.scene, spawn);
+const buggy = new Buggy(world, ctx.scene, spawn, 'pajero');
 
 const views = new PlayerViews(ctx.scene); // remote players only
 const keyboard = new Keyboard();
@@ -180,8 +195,8 @@ window.__dbg = () => {
 };
 window.__tp = (x, z) => buggy.teleport(x, heightField(x, z) + 3, z);
 const chase = new ChaseCamera(ctx.camera, heightField);
-const tracks = new TireTracks(ctx.scene, heightField, sandNormalTexture);
-const water = new Water(ctx.scene, biome.waterLevel, ctx.environment, ctx.sunDirection);
+const tracks = new TireTracks(ctx.scene, heightField);
+const water = new Water(ctx.scene, biome.waterLevel);
 const playerCountEl = document.getElementById('player-count');
 const speedEl = document.getElementById('speed');
 

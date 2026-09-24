@@ -1,12 +1,7 @@
 // src/render/waterMaterial.ts
-// The lake's water: an IBL reflection of the sky (already baked for lighting — no extra scene
-// render), a scrolling generated ripple normal, and a Fresnel-driven opacity. No `WaterMesh`
-// planar mirror — the spec explicitly rules that cost out for "reflections of the sky".
-import * as THREE from 'three/webgpu';
-import {
-  texture, vec2, vec3, positionWorld, time, mix, dot, normalize, cameraPosition, pow, saturate,
-  float, reflect,
-} from 'three/tsl';
+// The lake's water: the sky reflection comes from `scene.environment` (no extra scene render, no
+// planar mirror) and a generated, scrolling ripple normal breaks it up.
+import * as THREE from 'three';
 import { mulberry32 } from '../world/rng';
 
 interface RippleWave {
@@ -84,35 +79,18 @@ export function rippleNormalTexture(size: number, seed: number): THREE.DataTextu
   return texture2d;
 }
 
-/** Shared single-instance lake water material: IBL sky reflection, scrolling ripple normal,
- * Fresnel opacity, and a subtle sun glint toward the reflection direction. */
-export function createWaterMaterial(environment: THREE.Texture, sunDirection: THREE.Vector3): THREE.MeshPhysicalNodeMaterial {
-  const material = new THREE.MeshPhysicalNodeMaterial({
+/** Ripple tiles per metre of water surface. */
+export const WATER_RIPPLE_REPEATS_PER_METRE = 0.12;
+
+/** Shared single-instance lake water material; the caller scrolls `normalMap.offset`. */
+export function createWaterMaterial(ripple: THREE.Texture): THREE.MeshPhysicalMaterial {
+  return new THREE.MeshPhysicalMaterial({
+    color: 0x1d4a55,
+    transparent: true,
+    opacity: 0.75,
+    depthWrite: false,
     roughness: 0.06,
     metalness: 0,
-    transparent: true,
-    depthWrite: false,
+    normalMap: ripple,
   });
-  material.envMap = environment;
-
-  const ripple = rippleNormalTexture(256, 7);
-  const baseUv = positionWorld.xz.mul(0.12);
-  const scrollA = baseUv.add(vec2(time.mul(0.012), time.mul(0.007)));
-  const scrollB = baseUv.mul(1.7).add(vec2(time.mul(-0.009), time.mul(0.014)));
-  const sampleA = texture(ripple, scrollA).rgb.mul(2).sub(1);
-  const sampleB = texture(ripple, scrollB).rgb.mul(2).sub(1);
-  const rippleNormal = sampleA.add(sampleB).normalize();
-
-  const viewDirection = normalize(cameraPosition.sub(positionWorld));
-  const fresnel = pow(saturate(float(1).sub(dot(viewDirection, rippleNormal))), 3);
-
-  material.normalNode = rippleNormal;
-  material.colorNode = vec3(0.03, 0.15, 0.17);
-  material.opacityNode = mix(0.55, 0.96, fresnel);
-
-  const sunDirectionNode = vec3(sunDirection.x, sunDirection.y, sunDirection.z);
-  const sunGlint = pow(saturate(dot(reflect(viewDirection.negate(), rippleNormal), sunDirectionNode)), 120);
-  material.emissiveNode = vec3(1, 0.95, 0.85).mul(sunGlint).mul(0.5);
-
-  return material;
 }

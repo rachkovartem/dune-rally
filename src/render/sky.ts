@@ -1,56 +1,147 @@
 // src/render/sky.ts
-import * as THREE from 'three/webgpu';
-import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
+// The Poly Haven goegap HDRI drives the image-based light, the sun direction and the fog colour.
+// The pure helpers work on raw pixel data (no three.js state, no DOM) so they stay unit-testable.
+import * as THREE from 'three';
 
-// Sun direction offset (light sits this far from its target, along the sun direction) — kept in
-// sync with sunShadows.ts, which uses the same offset for the shadow-casting DirectionalLight.
-export const SUN_OFFSET = new THREE.Vector3(60, 120, 40);
-export const SUN_DIRECTION = SUN_OFFSET.clone().normalize();
-
-/** A physical Preetham sky, tuned for a warm, hazy desert atmosphere. */
-export function createSky(): SkyMesh {
-  const sky = new SkyMesh();
-  sky.scale.setScalar(3000);
-  sky.turbidity.value = 2.5;
-  sky.rayleigh.value = 1.0;
-  sky.mieCoefficient.value = 0.004;
-  sky.mieDirectionalG.value = 0.8;
-  sky.sunPosition.value.copy(SUN_DIRECTION);
-  sky.showSunDisc.value = true;
-  return sky;
+/** Equirectangular float pixels as HDRLoader returns them: row 0 is the top of the image. */
+export interface HdrImage {
+  data: Float32Array;
+  width: number;
+  height: number;
+  channels: number;
 }
 
-export interface SkyTextures {
-  /** IBL irradiance/reflection source (`scene.environment`) — sun disc hidden so it doesn't blow
-   * out the ambient light the whole scene reads from it. */
+export interface Direction {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface LinearColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
+/** Brightest value the lighting copy of the HDR may keep. The sun disc above it would light the
+ * scene a second time on top of the DirectionalLight, and without a shadow. */
+export const ENVIRONMENT_CLAMP = 6;
+
+function luminanceAt(image: HdrImage, pixelIndex: number): number {
+  const offset = pixelIndex * image.channels;
+  return image.data[offset] * 0.2126 + image.data[offset + 1] * 0.7152 + image.data[offset + 2] * 0.0722;
+}
+
+/** Unit direction toward the brightest texel, in three's equirectangular mapping. */
+export function brightestTexelDirection(image: HdrImage): Direction {
+  let best = -Infinity;
+  let bestX = 0;
+  let bestY = 0;
+  for (let row = 0; row < image.height; row++) {
+    for (let column = 0; column < image.width; column++) {
+      const luminance = luminanceAt(image, row * image.width + column);
+      if (luminance > best) {
+        best = luminance;
+        bestX = column;
+        bestY = row;
+      }
+    }
+  }
+  const u = (bestX + 0.5) / image.width;
+  const v = 1 - (bestY + 0.5) / image.height;
+  const phi = (u - 0.5) * Math.PI * 2;
+  const theta = (v - 0.5) * Math.PI;
+  return {
+    x: Math.cos(theta) * Math.cos(phi),
+    y: Math.sin(theta),
+    z: Math.cos(theta) * Math.sin(phi),
+  };
+}
+
+/** A copy of the pixels with every colour value capped at `max`; alpha (4-channel data) is kept. */
+export function clampHdrPixels(data: Float32Array, channels: number, max: number): Float32Array {
+  const clamped = new Float32Array(data.length);
+  for (let index = 0; index < data.length; index++) {
+    const isAlpha = channels === 4 && index % 4 === 3;
+    clamped[index] = isAlpha ? data[index] : Math.min(data[index], max);
+  }
+  return clamped;
+}
+
+/** Mean linear colour of the image row at the horizon (v = 0.5). */
+export function horizonColorOf(image: HdrImage): LinearColor {
+  const row = Math.min(image.height - 1, Math.floor(image.height / 2));
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  for (let column = 0; column < image.width; column++) {
+    const offset = (row * image.width + column) * image.channels;
+    red += image.data[offset];
+    green += image.data[offset + 1];
+    blue += image.data[offset + 2];
+  }
+  return { r: red / image.width, g: green / image.width, b: blue / image.width };
+}
+
+function isFloatImage(image: unknown): image is { data: Float32Array; width: number; height: number } {
+  return (
+    typeof image === 'object' &&
+    image !== null &&
+    'data' in image &&
+    image.data instanceof Float32Array &&
+    'width' in image &&
+    typeof image.width === 'number' &&
+    'height' in image &&
+    typeof image.height === 'number'
+  );
+}
+
+/** Reads the float pixels out of a texture HDRLoader built with `FloatType`; throws on anything else. */
+export function hdrImageOf(texture: THREE.DataTexture): HdrImage {
+  const image: unknown = texture.image;
+  if (!isFloatImage(image) || image.width <= 0 || image.height <= 0) {
+    throw new Error('hdrImageOf: the sky HDR did not decode into Float32 pixels (expected HDRLoader with FloatType).');
+  }
+  const channels = image.data.length / (image.width * image.height);
+  if (channels !== 3 && channels !== 4) {
+    throw new Error(`hdrImageOf: unexpected channel count ${channels} in the sky HDR.`);
+  }
+  return { data: image.data, width: image.width, height: image.height, channels };
+}
+
+export interface SkyEnvironment {
   environment: THREE.Texture;
-  /** Visible backdrop (`scene.background`) — sun disc kept, so criterion 3's "visible sun" holds. */
-  background: THREE.Texture;
+  sunDirection: THREE.Vector3;
+  horizonColor: THREE.Color;
 }
 
-/**
- * Bakes the sky into two PMREM cubemaps once at startup, instead of adding the `SkyMesh` itself
- * as scene geometry: a `WebGPURenderer` scene pass on this three.js version does not depth-test a
- * mesh-based sky against opaque objects correctly (verified: removing the mesh from the scene and
- * keeping only these baked textures removes a blue sky bleed-through seen on building walls and
- * dune slopes). A static backdrop also matches the spec — no day/night cycle, sun direction fixed.
- */
-export function buildSkyTextures(renderer: THREE.Renderer, sky: SkyMesh): SkyTextures {
-  const pmremScene = new THREE.Scene();
-  pmremScene.add(sky);
+/** Prefilters the clamped HDR into the scene's environment map and reads the sun and horizon from it. */
+export function buildSkyEnvironment(renderer: THREE.WebGLRenderer, hdr: THREE.DataTexture): SkyEnvironment {
+  const image = hdrImageOf(hdr);
+  const sun = brightestTexelDirection(image);
+  const horizon = horizonColorOf(image);
+
+  const clamped = new THREE.DataTexture(
+    clampHdrPixels(image.data, image.channels, ENVIRONMENT_CLAMP),
+    image.width,
+    image.height,
+    image.channels === 4 ? THREE.RGBAFormat : THREE.RGBFormat,
+    THREE.FloatType,
+  );
+  clamped.flipY = hdr.flipY;
+  clamped.colorSpace = THREE.LinearSRGBColorSpace;
+  clamped.mapping = THREE.EquirectangularReflectionMapping;
+  clamped.needsUpdate = true;
+
   const pmrem = new THREE.PMREMGenerator(renderer);
-
-  const wasSunDiscVisible = sky.showSunDisc.value;
-
-  sky.showSunDisc.value = false;
-  const environment = pmrem.fromScene(pmremScene, 0, 0.1, 5000).texture;
-
-  sky.showSunDisc.value = true;
-  const background = pmrem.fromScene(pmremScene, 0, 0.1, 5000).texture;
-
-  sky.showSunDisc.value = wasSunDiscVisible;
+  pmrem.compileEquirectangularShader();
+  const environment = pmrem.fromEquirectangular(clamped).texture;
   pmrem.dispose();
-  pmremScene.remove(sky);
+  clamped.dispose();
 
-  return { environment, background };
+  return {
+    environment,
+    sunDirection: new THREE.Vector3(sun.x, sun.y, sun.z).normalize(),
+    horizonColor: new THREE.Color().setRGB(horizon.r, horizon.g, horizon.b, THREE.LinearSRGBColorSpace),
+  };
 }

@@ -1,6 +1,7 @@
 // src/assets/loadAssets.ts
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { progressFraction } from './loadProgress';
 
@@ -16,11 +17,19 @@ export interface TextureManifestEntry {
   url: string;
 }
 
-export type AssetManifestEntry = ModelManifestEntry | TextureManifestEntry;
+/** A Radiance `.hdr` image, decoded to Float32 pixels. */
+export interface HdrManifestEntry {
+  id: string;
+  kind: 'hdr';
+  url: string;
+}
+
+export type AssetManifestEntry = ModelManifestEntry | TextureManifestEntry | HdrManifestEntry;
 
 export interface LoadedAssets {
   models: Map<string, THREE.Group>;
   textures: Map<string, THREE.Texture>;
+  hdrs: Map<string, THREE.DataTexture>;
 }
 
 /**
@@ -34,19 +43,26 @@ export async function loadAssets(
 ): Promise<LoadedAssets> {
   const models = new Map<string, THREE.Group>();
   const textures = new Map<string, THREE.Texture>();
+  const hdrs = new Map<string, THREE.DataTexture>();
 
   if (manifest.length === 0) {
     onProgress?.(1);
-    return { models, textures };
+    return { models, textures, hdrs };
   }
 
   const gltfLoader = new GLTFLoader();
   gltfLoader.setMeshoptDecoder(MeshoptDecoder);
   const textureLoader = new THREE.TextureLoader();
+  const hdrLoader = new HDRLoader().setDataType(THREE.FloatType);
 
   const progress = new Map<string, { loaded: number; total: number }>();
   for (const entry of manifest) progress.set(entry.id, { loaded: 0, total: 0 });
-  const reportProgress = (): void => onProgress?.(progressFraction([...progress.values()]));
+  // Promise.all rejects on the first failure while the other files keep loading; their late
+  // progress must not overwrite the error the caller shows.
+  let failed = false;
+  const reportProgress = (): void => {
+    if (!failed) onProgress?.(progressFraction([...progress.values()]));
+  };
 
   await Promise.all(
     manifest.map(async (entry) => {
@@ -54,16 +70,25 @@ export async function loadAssets(
         progress.set(entry.id, { loaded: event.loaded, total: event.total });
         reportProgress();
       };
-      if (entry.kind === 'model') {
-        const gltf = await gltfLoader.loadAsync(entry.url, onEntryProgress);
-        models.set(entry.id, gltf.scene);
-      } else {
-        const texture = await textureLoader.loadAsync(entry.url, onEntryProgress);
-        textures.set(entry.id, texture);
+      try {
+        if (entry.kind === 'model') {
+          const gltf = await gltfLoader.loadAsync(entry.url, onEntryProgress);
+          models.set(entry.id, gltf.scene);
+        } else if (entry.kind === 'hdr') {
+          const hdr = await hdrLoader.loadAsync(entry.url, onEntryProgress);
+          hdrs.set(entry.id, hdr);
+        } else {
+          const texture = await textureLoader.loadAsync(entry.url, onEntryProgress);
+          textures.set(entry.id, texture);
+        }
+      } catch (error) {
+        failed = true;
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`${entry.url} (${reason})`, { cause: error });
       }
     }),
   );
 
   reportProgress();
-  return { models, textures };
+  return { models, textures, hdrs };
 }

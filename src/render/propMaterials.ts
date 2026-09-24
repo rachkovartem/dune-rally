@@ -1,7 +1,7 @@
 // src/render/propMaterials.ts
 // Shared PBR materials per prop/building kind — one instance per kind, reused by every chunk's
 // scatter group (rule: no per-instance material; chunks stream in/out all session long).
-import * as THREE from 'three/webgpu';
+import * as THREE from 'three';
 
 export interface PropTextureSet {
   color: THREE.Texture;

@@ -1,76 +1,73 @@
 // src/render/renderer.ts
-import * as THREE from 'three/webgpu';
-import { backendKindOf, type BackendFlag, type BackendKind } from './backend';
-import { selectQuality, type QualityTier } from './quality';
-import { createSky, buildSkyTextures, SUN_DIRECTION } from './sky';
+import * as THREE from 'three';
+import { buildSkyEnvironment } from './sky';
 import { createSunShadows } from './sunShadows';
 import { createPostPipeline } from './postPipeline';
 import { createDevOverlay } from './devOverlay';
+
+export const PIXEL_RATIO_CAP = 1.5;
+
+// Linear fog must be fully opaque before the edge of the streamed terrain (chunk radius 5 ≈ 320 m),
+// or the edge of the world shows against the sky.
+const FOG_NEAR = 140;
+const FOG_FAR = 300;
+
+export interface SkyTextures {
+  /** The goegap HDR, decoded as FloatType: lighting, sun direction and fog colour. */
+  hdr: THREE.DataTexture;
+  /** The tonemapped goegap sky image shown behind the world. */
+  background: THREE.Texture;
+}
 
 export interface RenderContext {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   render: () => void;
   resize: () => void;
-  /** Keep the sun's shadow frustum centred on a world point (the player) so shadows stay crisp. */
+  /** Keep the sun's shadow box centred on a world point (the player). */
   focusSun: (x: number, y: number, z: number) => void;
-  backendKind: BackendKind;
-  quality: QualityTier;
-  /** Baked sky IBL — the same texture `scene.environment` uses, for materials built outside
-   * `createRenderer` (water, terrain, props) that need it at construction time. */
+  /** The prefiltered HDR environment, the same texture as `scene.environment`. */
   environment: THREE.Texture;
-  /** Fixed sun direction (no day/night cycle), shared by the water and terrain sparkle/glint. */
+  /** Unit vector toward the sun disc in the HDR. */
   sunDirection: THREE.Vector3;
 }
 
-// Tuned by eye against the desert screenshots rather than sampled from the sky shader at
-// startup — a real GPU readback would add async complexity for a colour that is retuned visually
-// anyway (see the report's Notes on this simplification).
-const HORIZON_COLOR = new THREE.Color(0xdba066);
-
-export async function createRenderer(
-  canvas: HTMLCanvasElement,
-  backendFlag: BackendFlag,
-): Promise<RenderContext> {
-  const forceWebGL = backendFlag === 'webgl2';
-  const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, forceWebGL });
-  await renderer.init();
-
-  const backendKind = backendKindOf(renderer);
-  const quality = selectQuality(backendKind, window.devicePixelRatio);
-
-  renderer.setPixelRatio(quality.pixelRatio);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.7;
+export function createRenderer(canvas: HTMLCanvasElement, sky: SkyTextures): RenderContext {
+  const renderer = new THREE.WebGLRenderer({
+    canvas, antialias: false, powerPreference: 'high-performance', stencil: false, depth: true,
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // The post pipeline tone-maps (AgX); a second tone map here would flatten the image.
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.VSMShadowMap;
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(HORIZON_COLOR, 110, 290);
-
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 5000);
   camera.position.set(0, 30, 40);
   camera.lookAt(0, 0, 0);
 
-  const sky = createSky();
-  const { environment, background } = buildSkyTextures(renderer, sky);
+  const { environment, sunDirection, horizonColor } = buildSkyEnvironment(renderer, sky.hdr);
   scene.environment = environment;
-  scene.environmentIntensity = 0.1;
-  scene.background = background;
+  scene.environmentIntensity = 1.0;
+  sky.background.mapping = THREE.EquirectangularReflectionMapping;
+  sky.background.colorSpace = THREE.SRGBColorSpace;
+  scene.background = sky.background;
+  scene.backgroundIntensity = 1.0;
+  scene.fog = new THREE.Fog(horizonColor, FOG_NEAR, FOG_FAR);
 
-  const { focusSun } = createSunShadows(scene, quality);
-
-  const post = createPostPipeline(renderer, scene, camera, quality);
-  const overlay = createDevOverlay(backendKind);
+  const { focusSun } = createSunShadows(scene, sunDirection);
+  const post = createPostPipeline(renderer, scene, camera);
+  const overlay = createDevOverlay('renderer: webgl2');
 
   function resize(): void {
-    const w = canvas.clientWidth || window.innerWidth;
-    const h = canvas.clientHeight || window.innerHeight;
-    renderer.setSize(w, h, false);
-    camera.aspect = w / h;
+    const width = canvas.clientWidth || window.innerWidth;
+    const height = canvas.clientHeight || window.innerHeight;
+    camera.aspect = width / height;
     camera.updateProjectionMatrix();
-    post.resize();
+    post.resize(width, height);
   }
   resize();
 
@@ -83,9 +80,7 @@ export async function createRenderer(
     },
     resize,
     focusSun,
-    backendKind,
-    quality,
     environment,
-    sunDirection: SUN_DIRECTION,
+    sunDirection,
   };
 }

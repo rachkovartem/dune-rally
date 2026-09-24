@@ -2,7 +2,7 @@
 // Fits the loaded Pajero Sport GLB to the physics chassis, and turns the raw scene into the
 // reusable geometry the car rig is built from. fitCarToChassis and cylindricalUv are pure (no
 // three.js state, no DOM) so they stay unit-testable; assembleCar does the one-time three.js work.
-import * as THREE from 'three/webgpu';
+import * as THREE from 'three';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 import { materialSlotFor, type CarMaterialSlot, type WheelSlot } from '../assets/carPartRules';
 
