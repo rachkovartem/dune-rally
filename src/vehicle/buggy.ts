@@ -6,6 +6,7 @@ import { createVehiclePhysics, type VehiclePhysics } from '../../shared/vehicleP
 import { vehicleConfigFor, type VehicleConfig } from './vehicleConfig';
 import type { CarId } from './cars';
 import type { InputMsg } from '../../shared/protocol';
+import type { DrivetrainState } from '../../shared/drivetrain';
 
 export class Buggy {
   readonly mesh: THREE.Group;
@@ -31,7 +32,7 @@ export class Buggy {
     scene.add(this.mesh);
   }
 
-  applyControls(controls: InputMsg, grip = 1) {
+  applyControls(controls: InputMsg, grip: number) {
     this.vehicle.applyInput(controls, grip);
   }
 
@@ -88,12 +89,13 @@ export class Buggy {
     return this.vehicle.speed();
   }
 
-  /** Flip the buggy back upright a little above its current spot and kill its velocity. */
+  /** Engine rpm and gear, for engine sound and the HUD. */
+  drivetrain(): Readonly<DrivetrainState> {
+    return this.vehicle.drivetrain();
+  }
+
+  /** Flip the car back upright a little above its current spot, facing where its nose pointed. */
   reset() {
-    const t = this.vehicle.body.translation();
-    this.vehicle.body.setTranslation({ x: t.x, y: t.y + 3, z: t.z }, true);
-    this.vehicle.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
-    this.vehicle.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    this.vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.vehicle.resetUpright(3);
   }
 }

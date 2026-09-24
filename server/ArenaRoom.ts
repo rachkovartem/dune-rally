@@ -1,10 +1,12 @@
 // server/ArenaRoom.ts
 import { Room, Client } from '@colyseus/core';
 import { ArenaState, PlayerState } from './state';
-import { ArenaSim } from './arenaSim';
+import { ArenaSim, SIM_STEP_SECONDS } from './arenaSim';
 import { dailySeed } from '../src/world/seed';
-import { sanitizeInput, TICK_HZ, PATCH_HZ } from '../shared/protocol';
-import { DEFAULT_CAR_ID } from '../src/vehicle/cars';
+import { sanitizeCarId, sanitizeInput, TICK_HZ, PATCH_HZ, type JoinOptions } from '../shared/protocol';
+
+// The world steps at a fixed 1/60 s, so each 1/30 s tick runs two steps to keep real time.
+const STEPS_PER_TICK = Math.max(1, Math.round(1 / TICK_HZ / SIM_STEP_SECONDS));
 
 export class ArenaRoom extends Room<ArenaState> {
   private sim!: ArenaSim;
@@ -21,12 +23,21 @@ export class ArenaRoom extends Room<ArenaState> {
     this.onMessage('input', (client, msg) => {
       this.sim.setInput(client.sessionId, sanitizeInput(msg));
     });
+
+    this.onMessage('selectCar', (client, msg: unknown) => {
+      const carId = sanitizeCarId(typeof msg === 'object' && msg !== null && 'carId' in msg ? msg.carId : undefined);
+      this.sim.setPlayerCar(client.sessionId, carId);
+      const p = this.state.players.get(client.sessionId);
+      if (p) p.carId = carId;
+    });
   }
 
-  onJoin(client: Client, options: { name?: string }) {
-    this.sim.addPlayer(client.sessionId, DEFAULT_CAR_ID);
+  onJoin(client: Client, options: JoinOptions) {
+    const carId = sanitizeCarId(options?.carId);
+    this.sim.addPlayer(client.sessionId, carId);
     const p = new PlayerState();
     p.name = (options?.name ?? 'rider').slice(0, 24);
+    p.carId = carId;
     this.state.players.set(client.sessionId, p);
   }
 
@@ -36,7 +47,7 @@ export class ArenaRoom extends Room<ArenaState> {
   }
 
   private tick() {
-    this.sim.step();
+    for (let step = 0; step < STEPS_PER_TICK; step++) this.sim.step();
     for (const id of this.sim.playerIds()) {
       const t = this.sim.transform(id);
       const p = this.state.players.get(id);

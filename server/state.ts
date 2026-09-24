@@ -5,11 +5,13 @@ export class PlayerState extends Schema {
   x = 0; y = 0; z = 0;
   qx = 0; qy = 0; qz = 0; qw = 1;
   name = '';
+  carId = '';
 }
 defineTypes(PlayerState, {
   x: 'number', y: 'number', z: 'number',
   qx: 'number', qy: 'number', qz: 'number', qw: 'number',
   name: 'string',
+  carId: 'string',
 });
 
 export class ArenaState extends Schema {
