@@ -212,6 +212,9 @@ function toCarPart(
   // The source geometry is indexed (shared/welded vertices) — carry the index over, or
   // toCreasedNormals would read consecutive position triplets as unrelated triangles.
   if (mesh.geometry.index) baked.setIndex(mesh.geometry.index.clone());
+  // Parts with embedded textures (the Forester's tyres and brake discs) need their own UV set.
+  const sourceUv = mesh.geometry.getAttribute('uv');
+  if (sourceUv) baked.setAttribute('uv', sourceUv.clone());
   const geometry = toCreasedNormals(baked, CREASE_ANGLE);
   if (rules.needsCylindricalUv(mesh.name)) {
     const uv = cylindricalUv(decodedPositionArray(geometry), 'x');

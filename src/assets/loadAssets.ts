@@ -26,6 +26,17 @@ export interface HdrManifestEntry {
 
 export type AssetManifestEntry = ModelManifestEntry | TextureManifestEntry | HdrManifestEntry;
 
+/** Names the file that failed, so a caller can explain a known missing file in its own words. */
+export class AssetLoadError extends Error {
+  readonly url: string;
+
+  constructor(url: string, reason: string, cause: unknown) {
+    super(`${url} (${reason})`, { cause });
+    this.name = 'AssetLoadError';
+    this.url = url;
+  }
+}
+
 export interface LoadedAssets {
   models: Map<string, THREE.Group>;
   textures: Map<string, THREE.Texture>;
@@ -84,7 +95,7 @@ export async function loadAssets(
       } catch (error) {
         failed = true;
         const reason = error instanceof Error ? error.message : String(error);
-        throw new Error(`${entry.url} (${reason})`, { cause: error });
+        throw new AssetLoadError(entry.url, reason, error);
       }
     }),
   );

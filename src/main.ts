@@ -10,7 +10,7 @@ import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, addFeatureColliders, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
 import { vehicleConfigFor } from './vehicle/vehicleConfig';
-import type { CarId } from './vehicle/cars';
+import { CAR_IDS, type CarId } from './vehicle/cars';
 import { Keyboard } from './input/keyboard';
 import { controlsFromKeys } from './input/controls';
 import { ChaseCamera } from './render/chaseCamera';
@@ -21,12 +21,13 @@ import { Water } from './render/water';
 import { Knockables } from './render/knockables';
 import { AudioManager } from './audio/audio';
 import { sanitizeInput, SERVER_PORT } from '../shared/protocol';
+import { terrainGripFor } from '../shared/terrainGrip';
 import type RAPIER from '@dimforge/rapier3d-compat';
-import { carDefinitionFor } from './assets/carCatalog';
+import { carDefinitionFor, FORESTER_MODEL_MISSING_MESSAGE } from './assets/carCatalog';
 import { assembleCar, fitCarToChassis } from './render/carModel';
 import { registerCarAsset, getCarMaterials } from './render/buggyMesh';
 import { setBrakeLights } from './render/carMaterials';
-import type { AssetManifestEntry, LoadedAssets } from './assets/loadAssets';
+import { AssetLoadError, type AssetManifestEntry, type LoadedAssets } from './assets/loadAssets';
 import { PROP_TEXTURE_SETS, type PropKind } from './assets/textureManifest';
 import { createTerrainMaterial } from './render/terrainMaterial';
 import { setTerrainMaterial } from './render/terrainMesh';
@@ -46,9 +47,9 @@ const biome = createBiome(conn.seed);
 const knockables = new Knockables(() => audio.knock());
 
 // The car picker replaces this fixed choice in C2.
-const localCarId: CarId = 'pajero';
-const localCar = carDefinitionFor(localCarId);
+const localCarId: CarId = 'forester';
 const localCarConfig = vehicleConfigFor(localCarId);
+const carModelEntryId = (carId: CarId): string => `car:${carId}`;
 
 // One manifest and one progress readout for the sky, the ground and prop textures, and the car.
 // Any failed file stops the game with its message in the start overlay: there is no fallback
@@ -59,7 +60,11 @@ const SAND_SET_ID = 'Ground054';
 const manifest: AssetManifestEntry[] = [
   { id: 'sky-hdr', kind: 'hdr', url: SKY_HDR_URL },
   { id: 'sky-background', kind: 'texture', url: SKY_BACKGROUND_URL },
-  { id: 'car:pajero', kind: 'model', url: localCar.modelUrl },
+  ...CAR_IDS.map((carId): AssetManifestEntry => ({
+    id: carModelEntryId(carId),
+    kind: 'model',
+    url: carDefinitionFor(carId).modelUrl,
+  })),
 ];
 const addedTextureUrls = new Set<string>();
 const addTexture = (id: string, url: string): void => {
@@ -86,8 +91,10 @@ try {
   });
 } catch (error) {
   const reason = error instanceof Error ? error.message : String(error);
+  // The Forester GLB is gitignored and built locally, so on a fresh clone it is expected to be missing.
+  const foresterMissing = error instanceof AssetLoadError && error.url === carDefinitionFor('forester').modelUrl;
   if (startSubEl) {
-    startSubEl.textContent = `Ошибка загрузки: ${reason}`;
+    startSubEl.textContent = foresterMissing ? FORESTER_MODEL_MISSING_MESSAGE : `Ошибка загрузки: ${reason}`;
     startSubEl.style.color = '#ff6b5a';
   }
   throw error;
@@ -179,10 +186,13 @@ assetsReady = true;
 if (startSubEl) startSubEl.textContent = startSubDefaultText;
 if (startGoEl) startGoEl.style.display = '';
 
-// Fit the loaded model to the physics chassis and register it once, before any car mesh (local
-// or remote) is built.
-const carFit = fitCarToChassis(localCar.measured, localCarConfig);
-registerCarAsset(localCarId, assembleCar(loadedModel('car:pajero'), carFit, localCar.rules));
+// Fit every car's model to its own physics chassis and register it once, before any car mesh
+// (local or remote) is built.
+for (const carId of CAR_IDS) {
+  const car = carDefinitionFor(carId);
+  const carFit = fitCarToChassis(car.measured, vehicleConfigFor(carId));
+  registerCarAsset(carId, assembleCar(loadedModel(carModelEntryId(carId)), carFit, car.rules));
+}
 
 const buggy = new Buggy(world, ctx.scene, spawn, localCarId);
 
@@ -205,6 +215,7 @@ const water = new Water(ctx.scene, biome.waterLevel);
 const playerCountEl = document.getElementById('player-count');
 const speedEl = document.getElementById('speed');
 
+// Remote players do not send their car yet (C2), so they are all drawn as the Pajero.
 const addRemote = (id: string) => { if (id !== conn.sessionId) views.add(id, 'pajero'); };
 for (const [id] of conn.players()) addRemote(id);
 conn.onAdd(addRemote);
@@ -226,6 +237,9 @@ window.addEventListener('keydown', (e) => {
 const STEP = world.timestep;
 let last = performance.now() / 1000;
 let acc = 0;
+// Grip under the car from the latest surface sample (the same one the tyre audio uses).
+const spawnSurface = surfaceSampleAt(heightField, spawn.x, spawn.z);
+let localGrip = terrainGripFor(biome.coverAt(spawn.x, spawn.z, spawnSurface.height, spawnSurface.slope), localCarConfig);
 
 function frame() {
   const nowS = performance.now() / 1000;
@@ -239,7 +253,7 @@ function frame() {
   setBrakeLights(getCarMaterials(buggy.mesh), controls.brake > 0.1); // this car's own tail lights only
 
   while (acc >= STEP) {
-    buggy.applyControls(controls);
+    buggy.applyControls(controls, localGrip);
     world.step();
     buggy.update();
     acc -= STEP;
@@ -267,8 +281,10 @@ function frame() {
 
   // tyre sound matched to the surface under the car
   const surface = surfaceSampleAt(heightField, p.x, p.z);
-  audio.setSurface(biome.coverAt(p.x, p.z, surface.height, surface.slope));
-  audio.setDrive(buggy.speed(), controls.throttle, localCarConfig.maxSpeed);
+  const cover = biome.coverAt(p.x, p.z, surface.height, surface.slope);
+  audio.setSurface(cover);
+  localGrip = terrainGripFor(cover, localCarConfig);
+  audio.setDrive(buggy.speed(), controls.throttle, localCarConfig.drivetrain.topSpeed);
 
   if (playerCountEl) playerCountEl.textContent = String(conn.players().size);
   if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));
