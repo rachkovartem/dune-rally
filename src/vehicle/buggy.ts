@@ -121,6 +121,12 @@ export class Buggy {
     return this.vehicle.drivetrain();
   }
 
+  /** Move the car to a point, upright, at rest, facing where its nose pointed. */
+  placeUprightAt(x: number, y: number, z: number) {
+    this.vehicle.body.setTranslation({ x, y, z }, true);
+    this.vehicle.resetUpright(0);
+  }
+
   /** Flip the car back upright a little above its current spot, facing where its nose pointed. */
   reset() {
     this.vehicle.resetUpright(RESET_LIFT);

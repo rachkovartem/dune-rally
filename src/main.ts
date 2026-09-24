@@ -4,7 +4,7 @@ import { loadAssets } from './assets/loadAssets';
 import { createHeightField } from './world/noise';
 import { createBiome } from './world/biome';
 import { surfaceSampleAt } from './world/surfaceSample';
-import { CHUNK_SIZE } from './world/chunk';
+import { CHUNK_SIZE, chunkKey, chunkOrigin, chunksInRadius, worldToChunk, type ChunkCoord } from './world/chunk';
 import { featuresInChunk, SPAWN } from './world/worldDef';
 import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, addFeatureColliders, removeCollider } from './physics/physicsWorld';
@@ -24,6 +24,7 @@ import { AudioManager } from './audio/audio';
 import { sanitizeCarId, sanitizeInput, SERVER_PORT } from '../shared/protocol';
 import { terrainGripFor } from '../shared/terrainGrip';
 import type RAPIER from '@dimforge/rapier3d-compat';
+import { RESET_LIFT } from '../shared/vehiclePhysics';
 import { carDefinitionFor, FORESTER_MODEL_MISSING_MESSAGE } from './assets/carCatalog';
 import { assembleCar, fitCarToChassis } from './render/carModel';
 import { registerCarAsset, getCarMaterials } from './render/buggyMesh';
@@ -34,7 +35,7 @@ import { createTerrainMaterial } from './render/terrainMaterial';
 import { setTerrainMaterial } from './render/terrainMesh';
 import { createPropMaterials } from './render/propMaterials';
 import { setPropMaterials } from './render/scatter';
-import { SRGBColorSpace, RepeatWrapping, Object3D, type DataTexture, type Group, type Texture } from 'three';
+import { SRGBColorSpace, RepeatWrapping, Object3D, Vector3, type DataTexture, type Group, type Texture } from 'three';
 import { readSavedCarId, saveCarId } from './ui/carChoice';
 import { createCarPicker } from './ui/carPicker';
 import { createFrameGuard } from './debug/frameGuard';
@@ -97,7 +98,6 @@ for (const setId of Object.values(PROP_TEXTURE_SETS)) {
 const startGoEl = startEl.querySelector<HTMLElement>('.start-go');
 const startSubEl = startEl.querySelector<HTMLElement>('.start-sub');
 const startSubDefaultText = startSubEl?.textContent ?? '';
-let assetsReady = false;
 if (startSubEl) startSubEl.textContent = 'Загрузка… 0%';
 let assets: LoadedAssets;
 try {
@@ -172,15 +172,18 @@ setPropMaterials(createPropMaterials({
 const world = await initPhysics();
 const colliders = new Map<string, RAPIER.Collider>();
 const featureColliders = new Map<string, RAPIER.Collider[]>();
+const solidChunks = new Map<string, ChunkCoord>();
 const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, knockables, {
   onLoad: (key, heights, ox, oz) => {
     colliders.set(key, addChunkCollider(world, heights, ox, oz));
     const cx = Math.round(ox / CHUNK_SIZE);
     const cz = Math.round(oz / CHUNK_SIZE);
+    solidChunks.set(key, { cx, cz });
     const cols = addFeatureColliders(world, featuresInChunk(cx, cz), heightField);
     if (cols.length) featureColliders.set(key, cols);
   },
   onUnload: (key) => {
+    solidChunks.delete(key);
     const c = colliders.get(key);
     if (c) { removeCollider(world, c); colliders.delete(key); }
     const fc = featureColliders.get(key);
@@ -193,13 +196,21 @@ const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, kno
 const spawnX = SPAWN.x;
 const spawnZ = SPAWN.z;
 terrain.update(spawnX, spawnZ, 5); // request colliders around the spawn before the buggy drops
-// Spawn well above the surface so the async terrain colliders have loaded by the time it lands
-// on its wheels (a too-low spawn lands on the chassis belly → wheels never grip).
+// Spawn above the surface so the car lands on its wheels (a too-low spawn lands on the chassis
+// belly → wheels never grip). The start gate below waits for the colliders it lands on.
 const spawn = { x: spawnX, y: heightField(spawnX, spawnZ) + 8, z: spawnZ };
 
-assetsReady = true;
-if (startSubEl) startSubEl.textContent = startSubDefaultText;
-if (startGoEl) startGoEl.style.display = '';
+// The car drops onto the ground within its first second, so the chunks it can reach by then must
+// have colliders before it exists; otherwise it falls through and never stops.
+const spawnAreaChunkKeys = chunksInRadius(worldToChunk(spawn.x, spawn.z), 1).map(chunkKey);
+let readyToDrive = false;
+if (startSubEl) startSubEl.textContent = 'Загрузка мира…';
+function openStartGateWhenGroundIsSolid(): void {
+  if (readyToDrive || !spawnAreaChunkKeys.every((key) => colliders.has(key))) return;
+  readyToDrive = true;
+  if (startSubEl) startSubEl.textContent = startSubDefaultText;
+  if (startGoEl) startGoEl.style.display = '';
+}
 
 // Fit every car's model to its own physics chassis and register it once, before any car mesh
 // (local or remote) is built.
@@ -219,7 +230,7 @@ interface LocalCar {
 // Built on the start click, so the car the player picked is the one that drives.
 let localCar: LocalCar | null = null;
 
-const views = new PlayerViews(ctx.scene); // remote players only
+const views = new PlayerViews(ctx.scene, world); // remote players only
 const keyboard = new Keyboard();
 // TEMP debug hook
 window.__dbg = () => {
@@ -233,6 +244,17 @@ window.__dbg = () => {
     ...buggy.debug(),
     keys: [...keyboard.keys],
     remoteCars: [...conn.players().keys()].filter((id) => id !== conn.sessionId).map((id) => views.carIdOf(id)),
+    remotes: [...conn.players().keys()].filter((id) => id !== conn.sessionId).map((id) => {
+      const group = views.group(id);
+      const carId = views.carIdOf(id);
+      if (!group || !carId) return null;
+      const radius = vehicleConfigFor(carId).wheel.radius;
+      const wheelClearance = group.children.slice(1).map((pivot) => {
+        const centre = pivot.getWorldPosition(new Vector3());
+        return +(centre.y - radius - terrainSurfaceHeight(heightField, centre.x, centre.z)).toFixed(2);
+      });
+      return { carId, pos: { x: +group.position.x.toFixed(1), y: +group.position.y.toFixed(2), z: +group.position.z.toFixed(1) }, wheelClearance };
+    }),
     orbit: { ...chase.orbit },
     cameraClearance: +(ctx.camera.position.y - terrainSurfaceHeight(heightField, ctx.camera.position.x, ctx.camera.position.z)).toFixed(2),
   };
@@ -265,7 +287,7 @@ function startDriving(carId: CarId): void {
 }
 
 startEl.addEventListener('click', () => {
-  if (!assetsReady) return; // ignore clicks while the loading gate is still showing progress
+  if (!readyToDrive) return; // ignore clicks while the assets or the ground under the spawn still load
   if (!localCar) startDriving(picker.selected());
   startEl.style.display = 'none';
   window.focus();
@@ -279,6 +301,44 @@ window.addEventListener('keydown', (e) => {
   localCar.buggy.reset();
   conn.sendResetCar();
 });
+
+// Below the drawn ground by this much, the car can only have fallen through a missing collider.
+const FALL_THROUGH_MARGIN = 10;
+// Keeps a recovered car off the very edge of the chunk it lands on.
+const CHUNK_EDGE_INSET = 4;
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
+function nearestSolidGround(x: number, z: number): { x: number; y: number; z: number } {
+  let best: { x: number; z: number } | null = null;
+  let bestDistance = Infinity;
+  for (const coord of solidChunks.values()) {
+    const origin = chunkOrigin(coord);
+    const candidateX = clamp(x, origin.x + CHUNK_EDGE_INSET, origin.x + CHUNK_SIZE - CHUNK_EDGE_INSET);
+    const candidateZ = clamp(z, origin.z + CHUNK_EDGE_INSET, origin.z + CHUNK_SIZE - CHUNK_EDGE_INSET);
+    const distance = Math.hypot(candidateX - x, candidateZ - z);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { x: candidateX, z: candidateZ };
+    }
+  }
+  if (!best) throw new Error('fall guard: no terrain collider is loaded, so there is no ground to put the car on');
+  return { x: best.x, y: terrainSurfaceHeight(heightField, best.x, best.z) + RESET_LIFT, z: best.z };
+}
+
+/** A car under the ground is a bug, not a state to live with: say so loudly and put it back. */
+function recoverIfFallenThrough(buggy: Buggy): void {
+  const position = buggy.position();
+  const ground = terrainSurfaceHeight(heightField, position.x, position.z);
+  if (position.y >= ground - FALL_THROUGH_MARGIN) return;
+  const landing = nearestSolidGround(position.x, position.z);
+  console.error(
+    `[fall guard] the car fell through the ground at x=${position.x.toFixed(1)} y=${position.y.toFixed(1)} `
+    + `z=${position.z.toFixed(1)} (ground ${ground.toFixed(1)}, chunk ${chunkKey(worldToChunk(position.x, position.z))} `
+    + `solid: ${colliders.has(chunkKey(worldToChunk(position.x, position.z)))}); placed upright at `
+    + `x=${landing.x.toFixed(1)} y=${landing.y.toFixed(1)} z=${landing.z.toFixed(1)}`,
+  );
+  buggy.placeUprightAt(landing.x, landing.y, landing.z);
+}
 
 const guard = createFrameGuard((subsystem, message) => {
   console.error(`[frame] ${subsystem} failed: ${message}`);
@@ -316,6 +376,7 @@ function frame() {
         buggy.update();
       }
     });
+    guard.run('fall guard', () => recoverIfFallenThrough(buggy));
 
     const p = buggy.position();
     guard.run('terrain', () => terrain.update(p.x, p.z, 5));
@@ -344,6 +405,9 @@ function frame() {
       if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));
     });
   } else {
+    guard.run('start gate', openStartGateWhenGroundIsSolid);
+    // The world is not stepped until a car exists, so the remote wheels' ground rays need this.
+    guard.run('scene queries', () => world.updateSceneQueries());
     guard.run('sun', () => ctx.focusSun(spawn.x, spawn.y, spawn.z));
     guard.run('camera', () => chase.update(spawnViewTarget, dt));
   }
