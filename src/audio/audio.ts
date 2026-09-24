@@ -167,6 +167,11 @@ export class AudioManager {
 
   /** Drive the engine + wind from the car's speed and throttle. */
   setDrive(speed: number, throttle: number, maxSpeed: number): void {
+    // A NaN here would reach setTargetAtTime as "non-finite value", which does not say whose value.
+    for (const [name, value] of [['speed', speed], ['throttle', throttle], ['maxSpeed', maxSpeed]] as const) {
+      if (!Number.isFinite(value)) throw new Error(`AudioManager.setDrive: ${name} is ${value}`);
+    }
+    if (maxSpeed <= 0) throw new Error(`AudioManager.setDrive: maxSpeed must be positive, got ${maxSpeed}`);
     if (!this.started) return;
     const f = Math.min(1, speed / maxSpeed);
     const t = this.ctx.currentTime;

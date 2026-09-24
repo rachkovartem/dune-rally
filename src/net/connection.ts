@@ -1,9 +1,12 @@
 // src/net/connection.ts
 import { Client, Room } from 'colyseus.js';
-import type { InputMsg } from '../../shared/protocol';
+import { RESET_CAR_MESSAGE, type InputMsg, type JoinOptions, type SelectCarMsg } from '../../shared/protocol';
+import type { CarId } from '../vehicle/cars';
 
 export interface NetPlayer {
   name: string;
+  /** Raw from the server; read it through sanitizeCarId. */
+  carId: string;
   x: number; y: number; z: number;
   qx: number; qy: number; qz: number; qw: number;
 }
@@ -12,14 +15,19 @@ export interface Connection {
   sessionId: string;
   seed: number;
   sendInput(i: InputMsg): void;
+  /** Tell the server the player pressed R, so its copy of the car stands up too. */
+  sendResetCar(): void;
+  /** Swap this player's car on the server, so other players see the new model. */
+  selectCar(carId: CarId): void;
   onAdd(cb: (id: string, p: NetPlayer) => void): void;
   onRemove(cb: (id: string) => void): void;
   players(): Map<string, NetPlayer>;
 }
 
-export async function connectToArena(url: string, name: string): Promise<Connection> {
+export async function connectToArena(url: string, name: string, carId: CarId): Promise<Connection> {
   const client = new Client(url);
-  const room: Room = await client.joinOrCreate('arena', { name });
+  const joinOptions: JoinOptions = { name, carId };
+  const room: Room = await client.joinOrCreate('arena', joinOptions);
 
   const players = new Map<string, NetPlayer>();
   const addCbs: ((id: string, p: NetPlayer) => void)[] = [];
@@ -48,6 +56,11 @@ export async function connectToArena(url: string, name: string): Promise<Connect
     sessionId: room.sessionId,
     seed: room.state.seed,
     sendInput: (i: InputMsg) => room.send('input', i),
+    sendResetCar: () => room.send(RESET_CAR_MESSAGE),
+    selectCar: (selectedCarId: CarId) => {
+      const message: SelectCarMsg = { carId: selectedCarId };
+      room.send('selectCar', message);
+    },
     onAdd: (cb) => addCbs.push(cb),
     onRemove: (cb) => removeCbs.push(cb),
     players: () => players,

@@ -4,6 +4,7 @@ import { buildBuggyMesh } from '../render/buggyMesh';
 import { TransformBuffer } from './interpolation';
 import type { NetPlayer } from './connection';
 import type { CarId } from '../vehicle/cars';
+import { sanitizeCarId } from '../../shared/protocol';
 
 interface View { group: THREE.Group; buffer: TransformBuffer; carId: CarId }
 
@@ -27,7 +28,21 @@ export class PlayerViews {
 
   pushState(id: string, p: NetPlayer, t: number): void {
     const v = this.views.get(id);
-    if (v) v.buffer.push({ t, x: p.x, y: p.y, z: p.z, qx: p.qx, qy: p.qy, qz: p.qz, qw: p.qw });
+    if (!v) return;
+    const carId = sanitizeCarId(p.carId);
+    if (carId !== v.carId) this.rebuild(v, carId);
+    v.buffer.push({ t, x: p.x, y: p.y, z: p.z, qx: p.qx, qy: p.qy, qz: p.qz, qw: p.qw });
+  }
+
+  /** The player picked another car: swap the model, keep its motion history. */
+  private rebuild(view: View, carId: CarId): void {
+    const group = buildBuggyMesh(carId);
+    group.position.copy(view.group.position);
+    group.quaternion.copy(view.group.quaternion);
+    this.scene.remove(view.group);
+    this.scene.add(group);
+    view.group = group;
+    view.carId = carId;
   }
 
   /**
@@ -40,6 +55,10 @@ export class PlayerViews {
       v.group.position.set(s.x, s.y, s.z);
       v.group.quaternion.set(s.qx, s.qy, s.qz, s.qw);
     }
+  }
+
+  carIdOf(id: string): CarId | undefined {
+    return this.views.get(id)?.carId;
   }
 
   group(id: string): THREE.Group | undefined {

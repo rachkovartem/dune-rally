@@ -19,10 +19,13 @@ function labelElement(label: string): HTMLDivElement {
   return element;
 }
 
+export function debugModeEnabled(): boolean {
+  return new URLSearchParams(location.search).get('debug') === '1';
+}
+
 /** `?debug=1` → an fps readout plus one fixed label line. Off by default. */
 export function createDevOverlay(label: string): DevOverlay | null {
-  const params = new URLSearchParams(location.search);
-  if (params.get('debug') !== '1') return null;
+  if (!debugModeEnabled()) return null;
 
   const stats = new Stats();
   document.body.appendChild(stats.dom);

@@ -9,18 +9,19 @@ import { featuresInChunk, SPAWN } from './world/worldDef';
 import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, addFeatureColliders, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
-import { vehicleConfigFor } from './vehicle/vehicleConfig';
+import { vehicleConfigFor, type VehicleConfig } from './vehicle/vehicleConfig';
 import { CAR_IDS, type CarId } from './vehicle/cars';
+import { terrainSurfaceHeight } from './world/chunkGeometry';
 import { Keyboard } from './input/keyboard';
 import { controlsFromKeys } from './input/controls';
 import { ChaseCamera } from './render/chaseCamera';
-import { connectToArena } from './net/connection';
+import { connectToArena, type NetPlayer } from './net/connection';
 import { PlayerViews } from './net/playerViews';
 import { TireTracks } from './render/groundDecals';
 import { Water } from './render/water';
 import { Knockables } from './render/knockables';
 import { AudioManager } from './audio/audio';
-import { sanitizeInput, SERVER_PORT } from '../shared/protocol';
+import { sanitizeCarId, sanitizeInput, SERVER_PORT } from '../shared/protocol';
 import { terrainGripFor } from '../shared/terrainGrip';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { carDefinitionFor, FORESTER_MODEL_MISSING_MESSAGE } from './assets/carCatalog';
@@ -33,7 +34,11 @@ import { createTerrainMaterial } from './render/terrainMaterial';
 import { setTerrainMaterial } from './render/terrainMesh';
 import { createPropMaterials } from './render/propMaterials';
 import { setPropMaterials } from './render/scatter';
-import { SRGBColorSpace, RepeatWrapping, type DataTexture, type Group, type Texture } from 'three';
+import { SRGBColorSpace, RepeatWrapping, Object3D, type DataTexture, type Group, type Texture } from 'three';
+import { readSavedCarId, saveCarId } from './ui/carChoice';
+import { createCarPicker } from './ui/carPicker';
+import { createFrameGuard } from './debug/frameGuard';
+import { debugModeEnabled } from './render/devOverlay';
 
 const canvas = document.getElementById('app');
 if (!(canvas instanceof HTMLCanvasElement)) {
@@ -41,14 +46,25 @@ if (!(canvas instanceof HTMLCanvasElement)) {
 }
 const audio = new AudioManager();
 
-const conn = await connectToArena(`ws://${location.hostname}:${SERVER_PORT}`, 'rider');
+const startEl = document.getElementById('start');
+const carsEl = startEl?.querySelector<HTMLElement>('.start-cars');
+if (!startEl || !carsEl) throw new Error('Expected the #start overlay with a .start-cars picker in the page.');
+// Wired before connecting, so a choice made on the loading screen is not lost. The server hears
+// every change at once, and other players see the right model before this player starts driving.
+let announceCar: ((carId: CarId) => void) | null = null;
+const picker = createCarPicker(carsEl, readSavedCarId(localStorage), (carId) => {
+  saveCarId(localStorage, carId);
+  announceCar?.(carId);
+});
+
+const joinedCarId = picker.selected();
+const conn = await connectToArena(`ws://${location.hostname}:${SERVER_PORT}`, 'rider', joinedCarId);
+announceCar = (carId) => conn.selectCar(carId);
+if (picker.selected() !== joinedCarId) conn.selectCar(picker.selected());
 const heightField = createHeightField(conn.seed);
 const biome = createBiome(conn.seed);
 const knockables = new Knockables(() => audio.knock());
 
-// The car picker replaces this fixed choice in C2.
-const localCarId: CarId = 'forester';
-const localCarConfig = vehicleConfigFor(localCarId);
 const carModelEntryId = (carId: CarId): string => `car:${carId}`;
 
 // One manifest and one progress readout for the sky, the ground and prop textures, and the car.
@@ -78,9 +94,8 @@ for (const setId of Object.values(PROP_TEXTURE_SETS)) {
   addTexture(`${setId}-normal`, `/textures/${setId}/normal.webp`);
 }
 
-const startEl = document.getElementById('start');
-const startGoEl = startEl?.querySelector<HTMLElement>('.start-go') ?? null;
-const startSubEl = startEl?.querySelector<HTMLElement>('.start-sub') ?? null;
+const startGoEl = startEl.querySelector<HTMLElement>('.start-go');
+const startSubEl = startEl.querySelector<HTMLElement>('.start-sub');
 const startSubDefaultText = startSubEl?.textContent ?? '';
 let assetsReady = false;
 if (startSubEl) startSubEl.textContent = 'Загрузка… 0%';
@@ -194,102 +209,157 @@ for (const carId of CAR_IDS) {
   registerCarAsset(carId, assembleCar(loadedModel(carModelEntryId(carId)), carFit, car.rules));
 }
 
-const buggy = new Buggy(world, ctx.scene, spawn, localCarId);
+interface LocalCar {
+  buggy: Buggy;
+  carId: CarId;
+  config: VehicleConfig;
+  /** Grip under the car from the latest surface sample (the same one the tyre audio uses). */
+  grip: number;
+}
+// Built on the start click, so the car the player picked is the one that drives.
+let localCar: LocalCar | null = null;
 
 const views = new PlayerViews(ctx.scene); // remote players only
 const keyboard = new Keyboard();
 // TEMP debug hook
 window.__dbg = () => {
+  if (!localCar) return null;
+  const buggy = localCar.buggy;
   const p = buggy.position();
   return {
+    carId: localCar.carId,
     pos: { x: +p.x.toFixed(1), y: +p.y.toFixed(2), z: +p.z.toFixed(1) },
     speed: +buggy.speed().toFixed(2),
     ...buggy.debug(),
     keys: [...keyboard.keys],
+    remoteCars: [...conn.players().keys()].filter((id) => id !== conn.sessionId).map((id) => views.carIdOf(id)),
+    orbit: { ...chase.orbit },
+    cameraClearance: +(ctx.camera.position.y - terrainSurfaceHeight(heightField, ctx.camera.position.x, ctx.camera.position.z)).toFixed(2),
   };
 };
-window.__tp = (x, z) => buggy.teleport(x, heightField(x, z) + 3, z);
-const chase = new ChaseCamera(ctx.camera, heightField);
+window.__tp = (x, z) => localCar?.buggy.teleport(x, heightField(x, z) + 3, z);
+const chase = new ChaseCamera(ctx.camera, (x, z) => terrainSurfaceHeight(heightField, x, z));
+chase.bindInput(canvas);
+// What the camera looks at while the start overlay is up and no car exists yet.
+const spawnViewTarget = new Object3D();
+spawnViewTarget.position.set(spawn.x, heightField(spawn.x, spawn.z), spawn.z);
 const tracks = new TireTracks(ctx.scene, heightField);
 const water = new Water(ctx.scene, biome.waterLevel);
 const playerCountEl = document.getElementById('player-count');
 const speedEl = document.getElementById('speed');
+const hudErrorEl = document.getElementById('hud-error');
+const showErrorsInHud = debugModeEnabled();
 
-// Remote players do not send their car yet (C2), so they are all drawn as the Pajero.
-const addRemote = (id: string) => { if (id !== conn.sessionId) views.add(id, 'pajero'); };
-for (const [id] of conn.players()) addRemote(id);
+const addRemote = (id: string, player: NetPlayer) => {
+  if (id !== conn.sessionId) views.add(id, sanitizeCarId(player.carId));
+};
+for (const [id, player] of conn.players()) addRemote(id, player);
 conn.onAdd(addRemote);
 conn.onRemove((id) => views.remove(id));
 
-startEl?.addEventListener('click', () => {
+function startDriving(carId: CarId): void {
+  const config = vehicleConfigFor(carId);
+  const surface = surfaceSampleAt(heightField, spawn.x, spawn.z);
+  const grip = terrainGripFor(biome.coverAt(spawn.x, spawn.z, surface.height, surface.slope), config);
+  localCar = { buggy: new Buggy(world, ctx.scene, spawn, carId), carId, config, grip };
+}
+
+startEl.addEventListener('click', () => {
   if (!assetsReady) return; // ignore clicks while the loading gate is still showing progress
+  if (!localCar) startDriving(picker.selected());
   startEl.style.display = 'none';
   window.focus();
   audio.resume(); // user gesture → unlock audio
   audio.ui();
 });
 
-// R flips the buggy back upright (recover from a roll).
+// R flips the car back upright (recover from a roll), here and in the server's copy.
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyR') buggy.reset();
+  if (e.code !== 'KeyR' || !localCar) return;
+  localCar.buggy.reset();
+  conn.sendResetCar();
+});
+
+const guard = createFrameGuard((subsystem, message) => {
+  console.error(`[frame] ${subsystem} failed: ${message}`);
+  if (showErrorsInHud && hudErrorEl) {
+    hudErrorEl.textContent = `${subsystem}: ${message}`;
+    hudErrorEl.hidden = false;
+  }
 });
 
 const STEP = world.timestep;
 let last = performance.now() / 1000;
 let acc = 0;
-// Grip under the car from the latest surface sample (the same one the tyre audio uses).
-const spawnSurface = surfaceSampleAt(heightField, spawn.x, spawn.z);
-let localGrip = terrainGripFor(biome.coverAt(spawn.x, spawn.z, spawnSurface.height, spawnSurface.slope), localCarConfig);
 
 function frame() {
+  // Scheduled first, so nothing below can stop the next frame.
+  requestAnimationFrame(frame);
   const nowS = performance.now() / 1000;
   const dt = Math.min(nowS - last, 0.1); // clamp after a tab pause
-  acc += dt;
   last = nowS;
   const now = performance.now();
 
-  const controls = controlsFromKeys(keyboard.keys);
-  conn.sendInput(sanitizeInput(controls)); // server (for other players)
-  setBrakeLights(getCarMaterials(buggy.mesh), controls.brake > 0.1); // this car's own tail lights only
+  const car = localCar;
+  if (car) {
+    const buggy = car.buggy;
+    acc += dt;
+    const controls = controlsFromKeys(keyboard.keys);
+    guard.run('network input', () => conn.sendInput(sanitizeInput(controls))); // server (for other players)
+    guard.run('brake lights', () => setBrakeLights(getCarMaterials(buggy.mesh), controls.brake > 0.1)); // this car's own tail lights only
 
-  while (acc >= STEP) {
-    buggy.applyControls(controls, localGrip);
-    world.step();
-    buggy.update();
-    acc -= STEP;
+    guard.run('physics', () => {
+      while (acc >= STEP) {
+        acc -= STEP;
+        buggy.applyControls(controls, car.grip);
+        world.step();
+        buggy.update();
+      }
+    });
+
+    const p = buggy.position();
+    guard.run('terrain', () => terrain.update(p.x, p.z, 5));
+    guard.run('tyre tracks', () => tracks.update(buggy.mesh, buggy.speed()));
+    guard.run('water', () => water.update(p.x, p.z));
+    guard.run('sun', () => ctx.focusSun(p.x, p.y, p.z));
+    guard.run('camera', () => chase.update(buggy.mesh, dt));
+
+    // knock over trees/cacti the car ploughs through (fall toward travel direction)
+    guard.run('knockables', () => {
+      const cq = buggy.mesh.quaternion;
+      const fwdX = 2 * (cq.x * cq.z + cq.w * cq.y);
+      const fwdZ = 1 - 2 * (cq.x * cq.x + cq.y * cq.y);
+      knockables.update(p.x, p.z, fwdX, fwdZ, buggy.speed(), dt);
+    });
+
+    // tyre sound and grip matched to the surface under the car
+    guard.run('audio', () => {
+      const surface = surfaceSampleAt(heightField, p.x, p.z);
+      const cover = biome.coverAt(p.x, p.z, surface.height, surface.slope);
+      car.grip = terrainGripFor(cover, car.config);
+      audio.setSurface(cover);
+      audio.setDrive(buggy.speed(), controls.throttle, car.config.drivetrain.topSpeed);
+    });
+    guard.run('hud', () => {
+      if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));
+    });
+  } else {
+    guard.run('sun', () => ctx.focusSun(spawn.x, spawn.y, spawn.z));
+    guard.run('camera', () => chase.update(spawnViewTarget, dt));
   }
 
   // Remote players from the server, interpolated a little in the past.
-  const renderTime = now - 1000 / 10;
-  for (const [id, p] of conn.players()) {
-    if (id !== conn.sessionId) views.pushState(id, p, now);
-  }
-  views.update(renderTime, null, renderTime);
+  guard.run('remote players', () => {
+    const renderTime = now - 1000 / 10;
+    for (const [id, p] of conn.players()) {
+      if (id !== conn.sessionId) views.pushState(id, p, now);
+    }
+    views.update(renderTime, null, renderTime);
+  });
+  guard.run('hud', () => {
+    if (playerCountEl) playerCountEl.textContent = String(conn.players().size);
+  });
 
-  const p = buggy.position();
-  terrain.update(p.x, p.z, 5);
-  tracks.update(buggy.mesh, buggy.speed());
-  water.update(p.x, p.z);
-  ctx.focusSun(p.x, p.y, p.z);
-  chase.update(buggy.mesh);
-
-  // knock over trees/cacti the car ploughs through (fall toward travel direction)
-  const cq = buggy.mesh.quaternion;
-  const fwdX = 2 * (cq.x * cq.z + cq.w * cq.y);
-  const fwdZ = 1 - 2 * (cq.x * cq.x + cq.y * cq.y);
-  knockables.update(p.x, p.z, fwdX, fwdZ, buggy.speed(), dt);
-
-  // tyre sound matched to the surface under the car
-  const surface = surfaceSampleAt(heightField, p.x, p.z);
-  const cover = biome.coverAt(p.x, p.z, surface.height, surface.slope);
-  audio.setSurface(cover);
-  localGrip = terrainGripFor(cover, localCarConfig);
-  audio.setDrive(buggy.speed(), controls.throttle, localCarConfig.drivetrain.topSpeed);
-
-  if (playerCountEl) playerCountEl.textContent = String(conn.players().size);
-  if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));
-
-  ctx.render();
-  requestAnimationFrame(frame);
+  guard.run('render', () => ctx.render());
 }
 requestAnimationFrame(frame);

@@ -65,6 +65,19 @@
         animation: pulse 1.4s ease-in-out infinite;
       }
       @keyframes pulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+      #start .start-cars { margin-top: 26px; }
+      #start .start-cars-label { font-size: 16px; opacity: 0.9; margin-bottom: 10px; }
+      #start .car-option {
+        margin: 0 6px; padding: 8px 18px; cursor: pointer;
+        font: inherit; font-size: 16px; font-weight: 700; color: #fff;
+        background: rgba(0,0,0,0.45); border: 2px solid transparent; border-radius: 999px;
+      }
+      #start .car-option:hover { background: rgba(0,0,0,0.6); }
+      #start .car-option.is-selected { border-color: #ffd23d; color: #ffd23d; }
+      #hud-error {
+        position: absolute; top: 60px; left: 22px; max-width: 60vw;
+        font: 12px monospace; color: #ff6b5a; background: rgba(0,0,0,0.6); padding: 4px 8px;
+      }
     </style>
   </head>
   <body>
@@ -74,9 +87,10 @@
       <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b></div>
       <div id="hud-speed"><span id="speed">0</span><span class="unit">км/ч</span></div>
       <div id="hud-controls">
-        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp;
-        <kbd>S</kbd> — тормоз/назад &nbsp;·&nbsp; <kbd>R</kbd> — сброс
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> — рулить &nbsp;·&nbsp; <kbd>R</kbd> — сброс &nbsp;·&nbsp;
+        мышь — осмотреться &nbsp;·&nbsp; колесо — зум &nbsp;·&nbsp; <kbd>C</kbd> — камера
       </div>
+      <div id="hud-error" hidden></div>
     </div>
     <div id="start">
       <div class="start-card">
@@ -84,6 +98,11 @@
         <div class="start-sub">Багги-покатушки по процедурной пустыне · мультиплеер</div>
         <div class="start-controls">
           <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp; <kbd>S</kbd> — тормоз &nbsp;·&nbsp; <kbd>R</kbd> — сброс
+        </div>
+        <div class="start-cars">
+          <div class="start-cars-label">Выбери машину</div>
+          <button type="button" class="car-option" data-car-id="forester">Subaru Forester</button>
+          <button type="button" class="car-option" data-car-id="pajero">Mitsubishi Pajero Sport</button>
         </div>
         <div class="start-go" style="display: none">▶ Нажми, чтобы ехать</div>
       </div>
