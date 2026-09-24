@@ -1,6 +1,38 @@
 // src/vehicle/vehicleConfig.ts
+import type { Cover } from '../world/biome';
+import type { CarId } from './cars';
+
+export interface VehicleConfig {
+  chassis: { hx: number; hy: number; hz: number; mass: number };
+  com: { x: number; y: number; z: number };
+  inertia: { x: number; y: number; z: number };
+  linearDamping: number;
+  angularDamping: number;
+  wheel: {
+    radius: number;
+    width: number;
+    suspensionRestLength: number;
+    suspensionStiffness: number;
+    suspensionCompression: number;
+    suspensionRelaxation: number;
+    maxSuspensionTravel: number;
+    frictionSlip: number;
+    positions: readonly { x: number; y: number; z: number }[];
+  };
+  engineForce: number;
+  brakeForce: number;
+  maxSpeed: number;
+  maxSteer: number;
+  steerSpeed: number;
+  steeredWheels: readonly number[];
+  drivenWheels: readonly number[];
+  restitution: number;
+  friction: number;
+  gripOverrides: Partial<Record<Cover, number>>;
+}
+
 // A heavy mid-size SUV (Pajero-Sport-ish): planted, deliberate, "drives like an iron".
-export const vehicleConfig = {
+export const PAJERO_CONFIG: VehicleConfig = {
   chassis: { hx: 1.0, hy: 0.6, hz: 2.1, mass: 1600 },
 
   // Low centre of mass + large angular inertia → heavy, stable, hard to flip.
@@ -36,4 +68,11 @@ export const vehicleConfig = {
 
   restitution: 0.12,
   friction: 0.6,
+
+  gripOverrides: {},
 };
+
+// Both ids use the Pajero's numbers until the Forester gets its own tuned config.
+export function vehicleConfigFor(_carId: CarId): VehicleConfig {
+  return PAJERO_CONFIG;
+}

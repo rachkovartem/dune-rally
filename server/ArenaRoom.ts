@@ -4,6 +4,7 @@ import { ArenaState, PlayerState } from './state';
 import { ArenaSim } from './arenaSim';
 import { dailySeed } from '../src/world/seed';
 import { sanitizeInput, TICK_HZ, PATCH_HZ } from '../shared/protocol';
+import { DEFAULT_CAR_ID } from '../src/vehicle/cars';
 
 export class ArenaRoom extends Room<ArenaState> {
   private sim!: ArenaSim;
@@ -23,7 +24,7 @@ export class ArenaRoom extends Room<ArenaState> {
   }
 
   onJoin(client: Client, options: { name?: string }) {
-    this.sim.addPlayer(client.sessionId);
+    this.sim.addPlayer(client.sessionId, DEFAULT_CAR_ID);
     const p = new PlayerState();
     p.name = (options?.name ?? 'rider').slice(0, 24);
     this.state.players.set(client.sessionId, p);

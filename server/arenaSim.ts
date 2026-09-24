@@ -7,6 +7,8 @@ import { featuresInChunk, SPAWN } from '../src/world/worldDef';
 import { addChunkCollider, addFeatureColliders } from '../src/physics/physicsWorld';
 import { createVehiclePhysics, type VehiclePhysics } from '../shared/vehiclePhysics';
 import { ARENA_CHUNKS, type InputMsg } from '../shared/protocol';
+import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
+import type { CarId } from '../src/vehicle/cars';
 
 export interface PlayerTransform {
   x: number; y: number; z: number;
@@ -45,14 +47,14 @@ export class ArenaSim {
     return new ArenaSim(world, height);
   }
 
-  addPlayer(id: string): void {
+  addPlayer(id: string, carId: CarId): void {
     // Deterministic spread of spawn points across the hub-town plaza (golden-angle spiral).
     const n = this.spawnIndex++;
     const ang = n * 2.39996;
     const r = 4 + (n % 4) * 4;
     const x = SPAWN.x + Math.cos(ang) * r;
     const z = SPAWN.z + Math.sin(ang) * r;
-    const vehicle = createVehiclePhysics(this.world, { x, y: this.height(x, z) + 4, z });
+    const vehicle = createVehiclePhysics(this.world, { x, y: this.height(x, z) + 4, z }, vehicleConfigFor(carId));
     this.players.set(id, { vehicle, input: { throttle: 0, brake: 0, steer: 0 } });
   }
 
@@ -69,7 +71,7 @@ export class ArenaSim {
   }
 
   step(): void {
-    for (const p of this.players.values()) p.vehicle.applyInput(p.input);
+    for (const p of this.players.values()) p.vehicle.applyInput(p.input, 1);
     this.world.step();
     for (const p of this.players.values()) p.vehicle.update(this.world.timestep);
   }
