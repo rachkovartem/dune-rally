@@ -76,12 +76,11 @@ export class TireTracks {
 
   constructor(scene: THREE.Scene, height: Height2D) {
     // Opaque + polygonOffset so the track sits on the surface without z-fighting or
-    // transparency-sort drop-outs; excluded from the ink outline pass.
+    // transparency-sort drop-outs.
     const mat = new THREE.MeshBasicMaterial({ color: 0x5b4226 });
     mat.polygonOffset = true;
     mat.polygonOffsetFactor = -2;
     mat.polygonOffsetUnits = -2;
-    mat.userData.outlineParameters = { visible: false };
     const surfaceAt = (x: number, z: number) => terrainSurfaceHeight(height, x, z);
     this.left = new Ribbon(scene, mat, surfaceAt);
     this.right = new Ribbon(scene, mat, surfaceAt);

@@ -6,14 +6,17 @@ import { terrainSurfaceHeight } from '../world/chunkGeometry';
 import * as W from '../world/worldDef';
 import type { Height2D } from '../world/noise';
 import type { Biome, Cover } from '../world/biome';
-import { makeToonMaterial } from './celShading';
+
+function standardMaterial(color: number): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0 });
+}
 
 // Shared materials + geometries (reused across all instances to keep memory/draw cost down).
-const M_ROCK = makeToonMaterial(0x77756d);
-const M_TRUNK = makeToonMaterial(0x5a3d22);
-const M_LEAF = makeToonMaterial(0x3c6a2e);
-const M_BUSH = makeToonMaterial(0x4f7a32);
-const M_CACTUS = makeToonMaterial(0x4a7a40);
+const M_ROCK = standardMaterial(0x77756d);
+const M_TRUNK = standardMaterial(0x5a3d22);
+const M_LEAF = standardMaterial(0x3c6a2e);
+const M_BUSH = standardMaterial(0x4f7a32);
+const M_CACTUS = standardMaterial(0x4a7a40);
 
 const G_ROCK = new THREE.IcosahedronGeometry(0.6, 0);
 const G_TRUNK = new THREE.CylinderGeometry(0.16, 0.22, 1.4, 6);
@@ -25,12 +28,12 @@ const G_ARM = new THREE.BoxGeometry(0.22, 0.7, 0.22);
 // ── Town buildings (unit cube scaled per building → bounded memory) ────
 const G_UNIT = new THREE.BoxGeometry(1, 1, 1);
 const M_WALL = [
-  makeToonMaterial(0xb89b72),
-  makeToonMaterial(0xa67c52),
-  makeToonMaterial(0xc9b489),
-  makeToonMaterial(0x9c8466),
+  standardMaterial(0xb89b72),
+  standardMaterial(0xa67c52),
+  standardMaterial(0xc9b489),
+  standardMaterial(0x9c8466),
 ];
-const M_ROOF = makeToonMaterial(0x6b4f3a);
+const M_ROOF = standardMaterial(0x6b4f3a);
 
 function building(b: W.BuildingBox, rng: () => number): THREE.Object3D {
   const g = new THREE.Group();
@@ -48,7 +51,7 @@ function building(b: W.BuildingBox, rng: () => number): THREE.Object3D {
 
 // ── Stunt ramps (one shared unit wedge, scaled per ramp) ───────────────
 const G_WEDGE = makeUnitWedge();
-const M_RAMP = (() => { const m = makeToonMaterial(0xb05a2e); m.side = THREE.DoubleSide; return m; })();
+const M_RAMP = (() => { const m = standardMaterial(0xb05a2e); m.side = THREE.DoubleSide; return m; })();
 
 function makeUnitWedge(): THREE.BufferGeometry {
   // Unit wedge: x,z ∈ [-0.5,0.5], base y=0, rising to y=1 at the front (z=+0.5).
@@ -75,10 +78,10 @@ function ramp(r: W.Ramp): THREE.Object3D {
 }
 
 // ── Landmarks ──────────────────────────────────────────────────────────
-const M_BEACON = makeToonMaterial(0xb6bcc4);
-const M_BEACON_LIGHT = makeToonMaterial(0xff5a3c);
-const M_WIND_TOWER = makeToonMaterial(0xcdb9a0);
-const M_WIND_BLADE = makeToonMaterial(0x3a3a3a);
+const M_BEACON = standardMaterial(0xb6bcc4);
+const M_BEACON_LIGHT = standardMaterial(0xff5a3c);
+const M_WIND_TOWER = standardMaterial(0xcdb9a0);
+const M_WIND_BLADE = standardMaterial(0x3a3a3a);
 
 function beacon(): THREE.Object3D {
   const g = new THREE.Group();

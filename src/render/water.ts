@@ -12,7 +12,6 @@ export class Water {
     const mat = new THREE.MeshBasicMaterial({
       color: 0x2f6f8f, transparent: true, opacity: 0.62, depthWrite: false,
     });
-    mat.userData.outlineParameters = { visible: false };
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), mat);
     this.mesh.rotation.x = -Math.PI / 2; // lie flat
     this.mesh.renderOrder = 0;

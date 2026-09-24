@@ -1,77 +1,83 @@
-import * as THREE from 'three';
-import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
+// src/render/renderer.ts
+import * as THREE from 'three/webgpu';
+import { backendKindOf, type BackendFlag, type BackendKind } from './backend';
+import { selectQuality, type QualityTier } from './quality';
+import { createSky, buildEnvironment } from './sky';
+import { createSunShadows } from './sunShadows';
+import { createPostPipeline } from './postPipeline';
+import { createDevOverlay } from './devOverlay';
 
 export interface RenderContext {
-  renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   render: () => void;
   resize: () => void;
   /** Keep the sun's shadow frustum centred on a world point (the player) so shadows stay crisp. */
   focusSun: (x: number, y: number, z: number) => void;
+  backendKind: BackendKind;
+  quality: QualityTier;
 }
 
-// Sun direction offset (light sits this far from its target, along the sun direction).
-const SUN_OFFSET = new THREE.Vector3(60, 120, 40);
+// Tuned by eye against the desert screenshots rather than sampled from the sky shader at
+// startup — a real GPU readback would add async complexity for a colour that is retuned visually
+// anyway (see the report's Notes on this simplification).
+const HORIZON_COLOR = new THREE.Color(0xdba066);
 
-export function createRenderer(canvas: HTMLCanvasElement): RenderContext {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+export async function createRenderer(
+  canvas: HTMLCanvasElement,
+  backendFlag: BackendFlag,
+): Promise<RenderContext> {
+  const forceWebGL = backendFlag === 'webgl2';
+  const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, forceWebGL });
+  await renderer.init();
+
+  const backendKind = backendKindOf(renderer);
+  const quality = selectQuality(backendKind, window.devicePixelRatio);
+
+  renderer.setPixelRatio(quality.pixelRatio);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-  // Borderlands-style ink outlines.
-  const outline = new OutlineEffect(renderer, {
-    defaultThickness: 0.004,
-    defaultColor: [0, 0, 0],
-  });
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.22;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xf2c879); // hazy desert sky
-  scene.fog = new THREE.Fog(0xf2c879, 220, 480);
+  scene.fog = new THREE.Fog(HORIZON_COLOR, 110, 290);
 
-  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2000);
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 5000);
   camera.position.set(0, 30, 40);
   camera.lookAt(0, 0, 0);
 
-  // Key light (sun) casts real shadows; a hemisphere fill keeps shadowed faces warm, not black.
-  const sun = new THREE.DirectionalLight(0xfff2d6, 1.9);
-  sun.position.copy(SUN_OFFSET);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  const cam = sun.shadow.camera;
-  cam.left = -26;
-  cam.right = 26;
-  cam.top = 26;
-  cam.bottom = -26;
-  cam.near = 1;
-  cam.far = 340;
-  sun.shadow.bias = -0.0006;
-  sun.shadow.normalBias = 1.2;
-  scene.add(sun);
-  scene.add(sun.target);
-  scene.add(new THREE.HemisphereLight(0xffe9c0, 0x8a6a44, 1.0));
+  const sky = createSky();
+  scene.environment = buildEnvironment(renderer, sky);
+  scene.environmentIntensity = 0.2;
+  scene.add(sky);
 
-  function focusSun(x: number, y: number, z: number) {
-    sun.target.position.set(x, y, z);
-    sun.position.set(x + SUN_OFFSET.x, y + SUN_OFFSET.y, z + SUN_OFFSET.z);
-  }
+  const { focusSun } = createSunShadows(scene, quality);
 
-  function resize() {
+  const post = createPostPipeline(renderer, scene, camera, quality);
+  const overlay = createDevOverlay(backendKind);
+
+  function resize(): void {
     const w = canvas.clientWidth || window.innerWidth;
     const h = canvas.clientHeight || window.innerHeight;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    post.resize();
   }
   resize();
 
   return {
-    renderer,
     scene,
     camera,
-    render: () => outline.render(scene, camera),
+    render: () => {
+      post.render();
+      overlay?.update();
+    },
     resize,
     focusSun,
+    backendKind,
+    quality,
   };
 }

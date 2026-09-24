@@ -1,5 +1,7 @@
 // src/main.ts
 import { createRenderer } from './render/renderer';
+import { parseBackendFlag } from './render/backend';
+import { loadAssets } from './assets/loadAssets';
 import { createHeightField } from './world/noise';
 import { createBiome } from './world/biome';
 import { terrainSurfaceHeight } from './world/chunkGeometry';
@@ -24,7 +26,9 @@ const canvas = document.getElementById('app');
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Expected a <canvas id="app"> element in the page.');
 }
-const ctx = createRenderer(canvas);
+const backendFlag = parseBackendFlag(location.search);
+const ctx = await createRenderer(canvas, backendFlag);
+window.__render = { backend: ctx.backendKind };
 window.addEventListener('resize', ctx.resize);
 const audio = new AudioManager();
 
@@ -59,10 +63,26 @@ const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, kno
 // spawn spiral there too; with no reconciliation yet, the local car is what our own camera follows.)
 const spawnX = SPAWN.x;
 const spawnZ = SPAWN.z;
-terrain.update(spawnX, spawnZ, 4); // request colliders around the spawn before the buggy drops
+terrain.update(spawnX, spawnZ, 5); // request colliders around the spawn before the buggy drops
 // Spawn well above the surface so the async terrain colliders have loaded by the time it lands
 // on its wheels (a too-low spawn lands on the chassis belly → wheels never grip).
 const spawn = { x: spawnX, y: heightField(spawnX, spawnZ) + 8, z: spawnZ };
+
+// Loading gate: the car model and terrain textures are wired in later tasks, so this manifest is
+// empty for now — the mechanism still runs, showing progress in the start overlay once it doesn't.
+const startEl = document.getElementById('start');
+const startGoEl = startEl?.querySelector<HTMLElement>('.start-go') ?? null;
+const startSubEl = startEl?.querySelector<HTMLElement>('.start-sub') ?? null;
+const startSubDefaultText = startSubEl?.textContent ?? '';
+let assetsReady = false;
+if (startSubEl) startSubEl.textContent = 'Загрузка… 0%';
+await loadAssets([], (fraction) => {
+  if (startSubEl) startSubEl.textContent = `Загрузка… ${Math.round(fraction * 100)}%`;
+});
+assetsReady = true;
+if (startSubEl) startSubEl.textContent = startSubDefaultText;
+if (startGoEl) startGoEl.style.display = '';
+
 const buggy = new Buggy(world, ctx.scene, spawn);
 
 const views = new PlayerViews(ctx.scene); // remote players only
@@ -89,8 +109,8 @@ for (const [id] of conn.players()) addRemote(id);
 conn.onAdd(addRemote);
 conn.onRemove((id) => views.remove(id));
 
-const startEl = document.getElementById('start');
 startEl?.addEventListener('click', () => {
+  if (!assetsReady) return; // ignore clicks while the loading gate is still showing progress
   startEl.style.display = 'none';
   window.focus();
   audio.resume(); // user gesture → unlock audio
@@ -131,7 +151,7 @@ function frame() {
   views.update(renderTime, null, renderTime);
 
   const p = buggy.position();
-  terrain.update(p.x, p.z, 4);
+  terrain.update(p.x, p.z, 5);
   tracks.update(buggy.mesh, buggy.speed());
   water.update(p.x, p.z);
   ctx.focusSun(p.x, p.y, p.z);

@@ -1,15 +1,12 @@
 // src/render/terrainMesh.ts
 import * as THREE from 'three';
 import { buildChunkGeometry } from '../world/chunkGeometry';
-import { makeToonMaterial } from './celShading';
 import type { Biome } from '../world/biome';
 
-// White base so per-vertex colours show through; toon shading + vertex colour gives banded ground.
-const terrainMaterial = makeToonMaterial(0xffffff);
+// White base so per-vertex colours show through under normal PBR shading (real terrain textures
+// replace the flat per-triangle colour in a later task).
+const terrainMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
 terrainMaterial.vertexColors = true;
-// Ink outlines suit discrete objects (the buggy); on the continuous terrain mesh the
-// OutlineEffect's inverted-hull pass floods the surface. Opt the terrain out of outlining.
-terrainMaterial.userData.outlineParameters = { visible: false };
 
 const e1 = new THREE.Vector3();
 const e2 = new THREE.Vector3();

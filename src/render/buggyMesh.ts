@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { makeToonMaterial } from './celShading';
 import { vehicleConfig as cfg } from '../vehicle/vehicleConfig';
 
 // ── Pajero Sport palette ──────────────────────────────────────────────
@@ -11,14 +10,18 @@ const HEAD = 0xfff2cf; // pale headlights
 const TAIL = 0x7a1410; // red tail lights
 
 // ── tiny primitive helpers ────────────────────────────────────────────
+function standardMaterial(color: number): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.1 });
+}
+
 function box(w: number, h: number, d: number, color: number): THREE.Mesh {
-  return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), makeToonMaterial(color));
+  return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), standardMaterial(color));
 }
 
 function cyl(radius: number, len: number, color: number, segments = 16): THREE.Mesh {
   return new THREE.Mesh(
     new THREE.CylinderGeometry(radius, radius, len, segments),
-    makeToonMaterial(color),
+    standardMaterial(color),
   );
 }
 
@@ -134,7 +137,7 @@ function buildWheel(p: { x: number; y: number; z: number }): THREE.Group {
   // Tyre — axle along X.
   const tyre = new THREE.Mesh(
     new THREE.CylinderGeometry(cfg.wheel.radius, cfg.wheel.radius, cfg.wheel.width, 20),
-    makeToonMaterial(BLACK),
+    standardMaterial(BLACK),
   );
   tyre.rotation.z = Math.PI / 2;
   spinner.add(tyre);
@@ -160,7 +163,7 @@ function buildWheel(p: { x: number; y: number; z: number }): THREE.Group {
 }
 
 /**
- * Low-poly cel-shaded Mitsubishi Pajero Sport (2020, charcoal grey).
+ * Low-poly PBR-shaded Mitsubishi Pajero Sport (2020, charcoal grey).
  * Front is +Z. Layout is [bodyGroup, wheelPivot0..3] so the physics Buggy reads
  * children[0] as the body and children.slice(1) as the four wheel pivots; each
  * pivot steers via yaw and holds a spinner (rolls around local X) holding the tyre.
