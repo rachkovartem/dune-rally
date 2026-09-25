@@ -1,6 +1,8 @@
 // shared/terrainGrip.test.ts
 import { describe, it, expect } from 'vitest';
-import { groundGripFor, rollingResistanceFor, ROAD_ROLLING_RESISTANCE, type GripOverrides } from './terrainGrip';
+import {
+  FIRM_SAND, FULL_GRIP, groundFor, groundGripFor, rollingResistanceFor, ROAD_ROLLING_RESISTANCE, type GripOverrides,
+} from './terrainGrip';
 import { COVER_IDS, type Cover } from '../src/world/biome';
 import { CAR_IDS, isCarId } from '../src/vehicle/cars';
 import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
@@ -63,5 +65,63 @@ describe('rollingResistanceFor', () => {
     const sand = rollingResistanceFor(terrainGripFor('sand', NO_OVERRIDES));
     expect(sand).toBeGreaterThanOrEqual(0.04);
     expect(sand).toBeLessThanOrEqual(0.1);
+  });
+});
+
+describe('groundGripFor — the hard salt crust (S2-3)', () => {
+  it.each(CAR_IDS)('rolls the %s on salt like on the road, easier than on gravel', (carId) => {
+    const config = vehicleConfigFor(carId);
+    expect(groundGripFor('salt', config).rollingResistance).toBe(ROAD_ROLLING_RESISTANCE);
+    expect(groundGripFor('salt', config).rollingResistance).toBeLessThan(groundGripFor('gravel', config).rollingResistance);
+  });
+});
+
+describe('groundFor(cover, softness, config) — the ground at a place (SH-1, SH-3)', () => {
+  it('is the flat bench ground on a road with no sinkage', () => {
+    expect(groundFor('road', 0, NO_OVERRIDES)).toEqual(FULL_GRIP);
+  });
+
+  it.each(ALL_COVERS.filter((cover) => cover !== 'sand'))('agrees with groundGripFor on %s at softness 0', (cover) => {
+    for (const config of [NO_OVERRIDES, ...CAR_IDS.map(vehicleConfigFor)]) expect(groundFor(cover, 0, config)).toEqual(groundGripFor(cover, config));
+  });
+
+  it('carries the softness of the place unchanged', () => {
+    expect(groundFor('sand', 0.6, NO_OVERRIDES).softness).toBe(0.6);
+    expect(groundFor('gravel', 0, NO_OVERRIDES).softness).toBe(0);
+  });
+
+  it('keeps the road firm and fully grippy sideways, and makes sand the loosest cover', () => {
+    const road = groundFor('road', 0, NO_OVERRIDES);
+    expect(road.looseness).toBe(0);
+    expect(road.lateralFactor).toBe(1);
+    const sand = groundFor('sand', 1, NO_OVERRIDES).looseness;
+    for (const cover of ALL_COVERS) expect(groundFor(cover, 0, NO_OVERRIDES).looseness).toBeLessThanOrEqual(sand);
+  });
+
+  it('keeps the salt crust firm (it must not slide like gravel) and lets gravel roll away sideways', () => {
+    expect(groundFor('salt', 0, NO_OVERRIDES).looseness).toBeLessThan(groundFor('gravel', 0, NO_OVERRIDES).looseness);
+    expect(groundFor('gravel', 0, NO_OVERRIDES).lateralFactor).toBeLessThan(1);
+  });
+
+  it.each(CAR_IDS)('grips the %s better on the firm plain sand than on soft dune sand (owner decision)', (carId) => {
+    const config = vehicleConfigFor(carId);
+    const plain = groundFor('sand', FIRM_SAND.maxSoftness, config).grip;
+    const justSofter = groundFor('sand', FIRM_SAND.maxSoftness + 0.01, config).grip;
+    const dune = groundFor('sand', 1, config).grip;
+    expect(plain).toBeGreaterThan(dune);
+    expect(justSofter).toBe(dune);
+    expect(plain).toBeLessThanOrEqual(1);
+  });
+
+  it('never lifts the firm sand grip above 1, even for a car with a high sand override', () => {
+    expect(groundFor('sand', 0, { gripOverrides: { sand: 0.95 } }).grip).toBe(1);
+  });
+
+  it('rolls harder on the firm plain than on the road even though it grips better than dune sand', () => {
+    expect(groundFor('sand', 0.15, NO_OVERRIDES).rollingResistance).toBeGreaterThan(ROAD_ROLLING_RESISTANCE);
+  });
+
+  it.each([-0.01, 1.01, Number.NaN])('throws for a softness of %s instead of clamping it quietly', (softness) => {
+    expect(() => groundFor('sand', softness, NO_OVERRIDES)).toThrow('outside 0..1');
   });
 });

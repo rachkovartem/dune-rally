@@ -1,7 +1,13 @@
 // src/physics/physicsWorld.test.ts
 import { describe, it, expect, beforeAll } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { addChunkCollider, toColumnMajor } from './physicsWorld';
+import { addChunkCollider, addPropColliders, toColumnMajor } from './physicsWorld';
+import type { PropPlacement } from '../world/propPlacement';
+import { PROP_COLLIDER_SHAPES } from '../world/propColliders';
+import { createVehiclePhysics } from '../../shared/vehiclePhysics';
+import { WORLD_GRAVITY } from '../../shared/drivetrain';
+import { FULL_GRIP } from '../../shared/terrainGrip';
+import { vehicleConfigFor } from '../vehicle/vehicleConfig';
 import { CHUNK_SIZE, chunkOrigin, type ChunkCoord } from '../world/chunk';
 import { generateChunkHeights } from '../world/heightfieldData';
 import { terrainSurfaceHeight } from '../world/chunkGeometry';
@@ -80,5 +86,75 @@ describe('addChunkCollider — the collider is exactly the drawn ground (S0-1 ga
     const { worst, misses } = worstGap(steep, { cx: 1, cz: -1 });
     expect(misses).toBe(0);
     expect(worst).toBeLessThan(TOLERANCE);
+  });
+});
+
+describe('addPropColliders — the shared boulders stop a car (S3-2)', () => {
+  beforeAll(async () => {
+    await RAPIER.init();
+  });
+
+  const placement = (change: Partial<PropPlacement>): PropPlacement => ({
+    modelId: 'namaqualand_boulder_03', x: 0, z: 30, groundY: 0, sink: 0, yaw: 0.4, scale: 2, layer: 'rock',
+    skyline: false, knockable: false, solid: true, rock: 'granite', ...change,
+  });
+
+  function flatWorld(): RAPIER.World {
+    const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY, z: 0 });
+    const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0), ground);
+    return world;
+  }
+
+  it('builds one collider per solid placement and skips the rest', () => {
+    const world = flatWorld();
+    const colliders = addPropColliders(world, [
+      placement({}),
+      placement({ modelId: 'wild_rooibos_bush', solid: false, rock: null }),
+      placement({ modelId: 'namaqualand_boulder_05', solid: false }),
+    ]);
+    expect(colliders).toHaveLength(1);
+  });
+
+  it('puts the top of the boulder where its model is: a ray from above lands on it, a ray beside it on the ground', () => {
+    const world = flatWorld();
+    addPropColliders(world, [placement({ yaw: 0, x: 10, z: 10 })]);
+    world.step();
+    const shape = PROP_COLLIDER_SHAPES.namaqualand_boulder_03;
+    if (!shape) throw new Error('boulder 03 is not solid');
+    const centreX = 10 + shape.centreX * 2;
+    const centreZ = 10 + shape.centreZ * 2;
+    const down = (x: number, z: number): number => {
+      const hit = world.castRay(new RAPIER.Ray({ x, y: 50, z }, { x: 0, y: -1, z: 0 }), 100, true);
+      return hit ? 50 - hit.timeOfImpact : Number.NaN;
+    };
+    // The edges are rounded, so only the middle of the top reads the full height.
+    expect(down(centreX, centreZ)).toBeCloseTo((shape.centreY + shape.halfY) * 2, 2);
+    expect(down(centreX + shape.halfX * 2 + 1, centreZ)).toBeCloseTo(0, 6);
+  });
+
+  it('throws for a placement marked solid whose model has no collider shape, instead of leaving a hole', () => {
+    expect(() => addPropColliders(flatWorld(), [placement({ modelId: 'wild_rooibos_bush', rock: null })])).toThrow('no collider shape');
+  });
+
+  it('stops a car driven at a boulder: it never passes the boulder\'s near face', () => {
+    const world = flatWorld();
+    const boulder = placement({ yaw: 0, x: 0, z: 40 });
+    addPropColliders(world, [boulder]);
+    const shape = PROP_COLLIDER_SHAPES.namaqualand_boulder_03;
+    if (!shape) throw new Error('boulder 03 is not solid');
+    const nearFace = 40 + (shape.centreZ - shape.halfZ) * boulder.scale;
+    const vehicle = createVehiclePhysics(world, { x: 0, y: 1.5, z: 0 }, vehicleConfigFor('pajero'));
+    let farthest = -Infinity;
+    for (let step = 0; step < 60 * 8; step++) {
+      vehicle.applyInput({ throttle: step < 60 ? 0 : 1, brake: 0, steer: 0 }, FULL_GRIP);
+      world.step();
+      vehicle.update(world.timestep);
+      farthest = Math.max(farthest, vehicle.body.translation().z);
+    }
+    expect(vehicle.speed()).toBeLessThan(2);
+    // The body's centre stays behind the face (the nose is about half a car length ahead of it).
+    expect(farthest).toBeLessThan(nearFace);
+    expect(farthest).toBeGreaterThan(nearFace - 5);
   });
 });

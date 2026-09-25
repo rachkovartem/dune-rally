@@ -4,7 +4,8 @@ import { describe, it, expect } from 'vitest';
 import { propPlacementsInChunk, type PlacementInput, type PropPlacement } from './propPlacement';
 import { createHeightField } from './noise';
 import { createBiome } from './biome';
-import { borderFaceDepth, isPropExcluded, SPAWN } from './worldDef';
+import { borderFaceDepth, isPropExcluded, nearestRoad, ROAD_HALF, ROAD_SHOULDER, SPAWN } from './worldDef';
+import { propColliderBox } from './propColliders';
 import { worldToChunk, type ChunkCoord } from './chunk';
 import { terrainSurfaceHeight } from './chunkGeometry';
 import { BOULDER_IDS, type PolyPropId } from './propIds';
@@ -73,17 +74,93 @@ describe('propPlacementsInChunk — where the natural props stand (R2, S1-1)', (
     for (const placement of ofLayer('base')) expect(placement.groundY).toBeCloseTo(terrainSurfaceHeight(height, placement.x, placement.z), 6);
   });
 
-  it('moves only the border boulders with the drawn ground; the valley props do not depend on it', () => {
-    // Regression: the client passes its drawn height; the server must still get the same valley props.
+  // Replacement (S3-2): the border boulders at the face foot are solid now, so they stand on the
+  // collider; only the drawn-only boulders higher up the face still follow the drawn ground.
+  it('moves only the non-solid border boulders with the drawn ground; valley props and solids do not depend on it', () => {
+    // Regression: the client passes its drawn height; the server must still get the same solids,
+    // or a boulder stops the car on one side and not on the other.
     const lifted = (colliderHeight: number): number => colliderHeight + 5;
+    let drawnOnly = 0;
+    let solidBorder = 0;
     for (const chunk of CHUNKS) {
       const plain = propPlacementsInChunk(inputFor(chunk));
       const drawn = propPlacementsInChunk(inputFor(chunk, lifted));
-      expect(drawn.filter((placement) => placement.layer !== 'border')).toEqual(plain.filter((placement) => placement.layer !== 'border'));
-      const plainBorder = plain.filter((placement) => placement.layer === 'border');
-      const drawnBorder = drawn.filter((placement) => placement.layer === 'border');
-      expect(drawnBorder).toHaveLength(plainBorder.length);
-      drawnBorder.forEach((placement, index) => expect(placement.groundY - plainBorder[index].groundY).toBeCloseTo(5, 6));
+      const followsDrawn = (placement: PropPlacement): boolean => placement.layer === 'border' && !placement.solid;
+      expect(drawn.filter((placement) => !followsDrawn(placement))).toEqual(plain.filter((placement) => !followsDrawn(placement)));
+      const plainDrawnOnly = plain.filter(followsDrawn);
+      const liftedDrawnOnly = drawn.filter(followsDrawn);
+      expect(liftedDrawnOnly).toHaveLength(plainDrawnOnly.length);
+      liftedDrawnOnly.forEach((placement, index) => expect(placement.groundY - plainDrawnOnly[index].groundY).toBeCloseTo(5, 6));
+      drawnOnly += plainDrawnOnly.length;
+      solidBorder += plain.filter((placement) => placement.layer === 'border' && placement.solid).length;
+    }
+    // Both kinds must be in the sample, or the rows above check nothing.
+    expect(drawnOnly).toBeGreaterThan(0);
+    expect(solidBorder).toBeGreaterThan(0);
+  });
+});
+
+// Chunks the rock zones cover whole: three on Groot Koppie, two on the dolerite ridge.
+const KOPPIE_CHUNKS: readonly ChunkCoord[] = [{ cx: 22, cz: 8 }, { cx: 23, cz: 9 }, { cx: 23, cz: 10 }, { cx: 24, cz: 10 }, { cx: 22, cz: 9 }];
+const RIDGE_CHUNKS: readonly ChunkCoord[] = [{ cx: 31, cz: 32 }, { cx: 42, cz: 34 }];
+// Chunks a road or a track crosses inside or next to a rock zone: the Koppie Klim and the poort track.
+const LANE_CHUNKS: readonly ChunkCoord[] = [{ cx: 25, cz: 11 }, { cx: 25, cz: 12 }, { cx: 24, cz: 10 }, { cx: 36, cz: 32 }, { cx: 37, cz: 34 }, { cx: 24, cz: 14 }];
+const SOLID_SAMPLE: readonly PropPlacement[] = [...CHUNKS, ...KOPPIE_CHUNKS, ...RIDGE_CHUNKS, ...LANE_CHUNKS]
+  .flatMap((chunk) => propPlacementsInChunk(inputFor(chunk)))
+  .filter((placement) => placement.solid);
+
+describe('propPlacementsInChunk — the rock zones and the shared solids (S3-2)', () => {
+  it.each(KOPPIE_CHUNKS)('fills a koppie chunk ($cx, $cz) with 25–35 rock props, at least 60 % of them boulders', (chunk) => {
+    const rock = propPlacementsInChunk(inputFor(chunk)).filter((placement) => placement.layer === 'rock');
+    expect(rock.length).toBeGreaterThanOrEqual(25);
+    expect(rock.length).toBeLessThanOrEqual(35);
+    expect(rock.filter((placement) => isBoulder(placement.modelId)).length / rock.length).toBeGreaterThanOrEqual(0.6);
+  });
+
+  it.each(RIDGE_CHUNKS)('makes the boulders of a ridge chunk ($cx, $cz) dolerite and those of a koppie granite', (chunk) => {
+    const ridgeBoulders = propPlacementsInChunk(inputFor(chunk)).filter((placement) => isBoulder(placement.modelId));
+    const koppieBoulders = propPlacementsInChunk(inputFor(KOPPIE_CHUNKS[0])).filter((placement) => isBoulder(placement.modelId));
+    expect(ridgeBoulders.length).toBeGreaterThan(0);
+    for (const placement of ridgeBoulders) expect(placement.rock).toBe('dolerite');
+    for (const placement of koppieBoulders) expect(placement.rock).toBe('granite');
+  });
+
+  it('gives a rock only to boulders', () => {
+    for (const placement of [...ALL, ...SOLID_SAMPLE]) expect(placement.rock === null).toBe(!isBoulder(placement.modelId));
+  });
+
+  it('makes every boulder off the border face solid, and never a bush or the loose stones', () => {
+    const everything = [...CHUNKS, ...KOPPIE_CHUNKS].flatMap((chunk) => propPlacementsInChunk(inputFor(chunk)));
+    for (const placement of everything) {
+      if (placement.modelId === 'wild_rooibos_bush' || placement.modelId === 'namaqualand_stones_01') expect(placement.solid).toBe(false);
+      if (isBoulder(placement.modelId) && placement.layer !== 'border') expect(placement.solid).toBe(true);
+    }
+  });
+
+  it('stands every solid on the collider ground, lowered by its own sink (never on the drawn border height)', () => {
+    expect(SOLID_SAMPLE.length).toBeGreaterThan(0);
+    for (const placement of SOLID_SAMPLE) {
+      expect(placement.groundY + placement.sink).toBeCloseTo(terrainSurfaceHeight(height, placement.x, placement.z), 6);
+      expect(placement.sink).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('keeps the whole collider box of every solid off the roads, the tracks, the pads and the jump landings', () => {
+    // A boulder whose centre is clear but whose side reaches the lane stops a car on the road.
+    const roadEdge = ROAD_HALF + ROAD_SHOULDER;
+    for (const placement of SOLID_SAMPLE) {
+      const box = propColliderBox(placement);
+      if (!box) throw new Error(`${placement.modelId} is solid but has no collider box`);
+      const cos = Math.cos(box.yaw);
+      const sin = Math.sin(box.yaw);
+      const corners = [[-1, -1], [-1, 1], [1, -1], [1, 1], [0, 0]].map(([alongX, alongZ]) => ({
+        x: box.x + alongX * box.halfX * cos + alongZ * box.halfZ * sin,
+        z: box.z - alongX * box.halfX * sin + alongZ * box.halfZ * cos,
+      }));
+      for (const corner of corners) {
+        expect(isPropExcluded(corner.x, corner.z), `${placement.modelId} at (${placement.x.toFixed(1)}, ${placement.z.toFixed(1)})`).toBe(false);
+        expect(nearestRoad(corner.x, corner.z, roadEdge), `${placement.modelId} at (${placement.x.toFixed(1)}, ${placement.z.toFixed(1)})`).toBeNull();
+      }
     }
   });
 });

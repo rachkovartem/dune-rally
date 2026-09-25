@@ -121,6 +121,10 @@ describe('elantraComponentSlotOf — the grille bars are black, the surround chr
     expect(elantraComponentSlotOf(GRILLE_KEY, box([-0.55, 0.25, 2.1], [0.55, 0.6, 2.29]))).toBeNull();
   });
 
+  it('keeps a bar that pokes 1 cm out of the bar box chrome, so a surround piece is never painted black', () => {
+    expect(elantraComponentSlotOf(GRILLE_KEY, box([-0.45, 0.3, 2.2], [0.51, 0.32, 2.25]))).toBeNull();
+  });
+
   it('leaves a part with no rule where it is', () => {
     expect(elantraComponentSlotOf('chassis/Geom3D|[Color B04]1', box([-0.45, 0.3, 2.2], [0.45, 0.32, 2.25]))).toBeNull();
   });

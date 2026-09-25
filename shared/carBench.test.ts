@@ -4,11 +4,12 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
-  chassisBottomHeight, chassisBottomOf, createBenchCar, runBraking, runCrest, runDropSettle, runHillClimb, runRidge,
-  runRollover, runStraightLine, runTurn, speedAt, type StraightLineResult,
+  chassisBottomHeight, chassisBottomOf, createBenchCar, runBraking, runCatch, runCrest, runDig, runDriftTurn, runDropSettle,
+  runEnterAtSpeed, runEscape, runHillClimb, runRidge, runRollover, runStraightLine, runTopSpeed, runTurn, speedAt,
+  type DigResult, type DriftTurnResult, type StraightLineResult,
 } from './carBench';
 import type { Quaternion } from './vehiclePhysics';
-import { FULL_GRIP, groundGripFor, type GroundGrip } from './terrainGrip';
+import { FULL_GRIP, groundFor, groundGripFor, type GroundGrip, type SurfaceGround } from './terrainGrip';
 import { CAR_IDS, type CarId } from '../src/vehicle/cars';
 import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
 
@@ -252,5 +253,130 @@ describe('chassisBottomHeight — the lowest corner of the chassis box', () => {
     ['pitched 30°', aboutAxis('x', 30), BOX.hy * Math.cos(Math.PI / 6) + BOX.hz * Math.sin(Math.PI / 6)],
   ])('reaches down from the centre by the box half-sizes along each axis (%s)', (_name, rotation, reach) => {
     expect(chassisBottomHeight(centre, rotation, BOX)).toBeCloseTo(centre.y - reach, 9);
+  });
+});
+
+// ── sand handling (plan v3 surface SH-4): one small case per runner, as an order between the cars ──
+const DUNE_SAND = 1;
+const PLAIN_SAND = 0.15;
+const groundOf = (carId: CarId, cover: 'road' | 'salt' | 'sand', softness = 0): SurfaceGround => groundFor(cover, softness, vehicleConfigFor(carId));
+
+const drifts = new Map<string, DriftTurnResult>();
+function drift(carId: CarId, cover: 'road' | 'salt' | 'sand', mode: 'hold' | 'lift'): DriftTurnResult {
+  const key = `${carId}:${cover}:${mode}`;
+  let result = drifts.get(key);
+  if (!result) {
+    result = runDriftTurn(vehicleConfigFor(carId), groundOf(carId, cover, cover === 'sand' ? DUNE_SAND : 0), 60 * KMH, mode);
+    drifts.set(key, result);
+  }
+  return result;
+}
+
+const digs = new Map<string, DigResult>();
+function dig(carId: CarId, softness: number): DigResult {
+  const key = `${carId}:${softness}`;
+  let result = digs.get(key);
+  if (!result) {
+    result = runDig(vehicleConfigFor(carId), groundOf(carId, 'sand', softness), 5);
+    digs.set(key, result);
+  }
+  return result;
+}
+
+describe('runDriftTurn — sand makes the car slide, road and salt do not (SH-4 T-A, T-B, T-C)', () => {
+  it.each(CAR_IDS)('keeps the %s within 3° of body slip at full lock at 60 km/h on the road and on the salt', (carId) => {
+    // Regression: the sand model must not change road and salt handling.
+    expect(drift(carId, 'road', 'hold').maxBodySlip).toBeLessThanOrEqual(3 * DEGREE);
+    expect(drift(carId, 'salt', 'hold').maxBodySlip).toBeLessThanOrEqual(3 * DEGREE);
+  });
+
+  it.each(CAR_IDS)('slides the %s more on dune sand than on the road in the same turn', (carId) => {
+    expect(drift(carId, 'sand', 'hold').maxBodySlip).toBeGreaterThan(drift(carId, 'road', 'hold').maxBodySlip);
+  });
+
+  it('lets the front-driven Elantra push wide on dune sand: less slide and less turn than the Forester', () => {
+    expect(drift('elantra', 'sand', 'hold').maxBodySlip).toBeLessThan(drift('forester', 'sand', 'hold').maxBodySlip);
+    expect(drift('elantra', 'sand', 'hold').headingChange).toBeLessThan(drift('forester', 'sand', 'hold').headingChange);
+  });
+
+  it('slides the Elantra further when the driver lifts off in the turn, and flips nobody', () => {
+    expect(drift('elantra', 'sand', 'lift').maxBodySlip).toBeGreaterThan(drift('elantra', 'sand', 'hold').maxBodySlip);
+    for (const carId of CAR_IDS) {
+      expect(drift(carId, 'sand', 'lift').flipped).toBe(false);
+      expect(drift(carId, 'sand', 'lift').maxBodySlip).toBeLessThan(45 * DEGREE);
+    }
+  });
+});
+
+describe('runCatch — a slide on sand can be caught (SH-4 T-D)', () => {
+  it.each(CAR_IDS)('brings the %s back under 8° of slide after counter-steer, without a flip', (carId) => {
+    const result = runCatch(vehicleConfigFor(carId), groundOf(carId, 'sand', DUNE_SAND));
+    expect(result.flipped).toBe(false);
+    expect(result.slipAfter).toBeLessThanOrEqual(8 * DEGREE);
+  });
+});
+
+describe('runDig — soft sand swallows a spinning car (SH-4 T-E)', () => {
+  it('orders the cars on dune sand after 5 s of full throttle: Pajero faster than Forester, Forester faster than Elantra', () => {
+    expect(dig('pajero', DUNE_SAND).speed).toBeGreaterThan(dig('forester', DUNE_SAND).speed);
+    expect(dig('forester', DUNE_SAND).speed).toBeGreaterThan(dig('elantra', DUNE_SAND).speed);
+  });
+
+  it('digs the Elantra in on dune sand, front wheels deeper than the rear (it drives the front)', () => {
+    const result = dig('elantra', DUNE_SAND);
+    expect(result.stuck).toBe(true);
+    expect(Math.min(result.maxSink[0], result.maxSink[1])).toBeGreaterThan(Math.max(result.maxSink[2], result.maxSink[3]));
+  });
+
+  it('keeps the Elantra moving on the firm plain sand (owner decision: getting stuck belongs to the dunes)', () => {
+    expect(dig('elantra', PLAIN_SAND).stuck).toBe(false);
+    expect(dig('elantra', PLAIN_SAND).speed).toBeGreaterThan(12 * KMH);
+  });
+
+  it('never sinks a car on the road', () => {
+    const result = runDig(vehicleConfigFor('elantra'), groundOf('elantra', 'road'), 3);
+    for (const sink of result.maxSink) expect(sink).toBe(0);
+  });
+});
+
+describe('runEscape — a dug-in car backs out along its own track (SH-4 T-F)', () => {
+  it('backs the stuck Elantra out at least 2 m in 3 s of reverse, its wheels lifting out of the ruts', () => {
+    const result = runEscape(vehicleConfigFor('elantra'), groundOf('elantra', 'sand', DUNE_SAND));
+    expect(result.dig.stuck).toBe(true);
+    expect(result.backedOut).toBeGreaterThanOrEqual(2);
+    expect(Math.max(...result.sinkAfter)).toBeLessThan(Math.max(...result.dig.sinkAtEnd));
+  });
+});
+
+describe('runEnterAtSpeed — a rolling car floats (SH-4 T-H)', () => {
+  it.each(CAR_IDS)('keeps the %s at 60 km/h or more after 8 s of full throttle into dune sand, hardly sunk', (carId) => {
+    const result = runEnterAtSpeed(vehicleConfigFor(carId), groundOf(carId, 'road'), groundOf(carId, 'sand', DUNE_SAND), 60 * KMH, [8]);
+    expect(result.speedAt[0]).toBeGreaterThanOrEqual(60 * KMH);
+    expect(result.maxSink).toBeLessThan(dig(carId, DUNE_SAND).maxSink.reduce((deepest, sink) => Math.max(deepest, sink), 0));
+  });
+});
+
+describe('runHillClimb with a run-up — momentum is the skill on dunes (SH-4 T-G)', () => {
+  it.each<CarId>(['forester', 'pajero'])('takes the %s up a 0.4 dune-sand slope with a 60 m run-up, and less far from a standstill', (carId) => {
+    const config = vehicleConfigFor(carId);
+    const ground = groundOf(carId, 'sand', DUNE_SAND);
+    const withRunUp = runHillClimb(config, 0.4, ground, { runUp: 60 });
+    const standing = runHillClimb(config, 0.4, ground);
+    expect(withRunUp.reachedTop).toBe(true);
+    expect(standing.bestProgress).toBeLessThan(withRunUp.bestProgress);
+  });
+});
+
+describe('the Pajero drive modes on the bench (Super Select II)', () => {
+  it('digs through dune sand faster in 4H than in 2H, where only the rear wheels drive', () => {
+    const config = vehicleConfigFor('pajero');
+    const ground = groundOf('pajero', 'sand', DUNE_SAND);
+    expect(runDig(config, ground, 5, { driveMode: '4H' }).speed).toBeGreaterThan(runDig(config, ground, 5, { driveMode: '2H' }).speed);
+  });
+
+  it('reaches a clearly lower top speed in 4LLc (low range) than in 4H on the road', () => {
+    const config = vehicleConfigFor('pajero');
+    const road = groundOf('pajero', 'road');
+    expect(runTopSpeed(config, road, 25, { driveMode: '4LLc' })).toBeLessThan(0.9 * runTopSpeed(config, road, 25, { driveMode: '4H' }));
   });
 });

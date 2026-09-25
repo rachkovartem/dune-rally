@@ -7,6 +7,9 @@ import { SPAWN_SLOT_COUNT, spawnPoseFor } from '../src/world/worldDef';
 import { borderFaceDepth } from '../src/world/terrain/border';
 import { createHeightField } from '../src/world/noise';
 import { terrainSurfaceHeight } from '../src/world/chunkGeometry';
+import { createBiome } from '../src/world/biome';
+import { propPlacementsInChunk, type PropPlacement } from '../src/world/propPlacement';
+import { propColliderBox } from '../src/world/propColliders';
 
 const IDLE: InputMsg = { throttle: 0, brake: 0, steer: 0 };
 const HEIGHT = createHeightField(123);
@@ -282,5 +285,79 @@ describe('ArenaSim.applyClientPose — the driver corrects the server copy (S1-X
   it('ignores a pose for a player that is not in the arena', () => {
     expect(sim.applyClientPose('ghost', poseFrom(rest, { x: rest.x + 50 }))).toBe(false);
     expect(transformOf(sim, 'driver')).toEqual(rest);
+  });
+});
+
+describe('ArenaSim.applyClientPose — the surface state comes with a snap (SH-5)', () => {
+  const DUG_IN = { spin: 0, sink: [0.2, 0.2, 0.2, 0.2], digDirection: [1, 1, 1, 1] as (1 | -1)[] };
+
+  async function snappedHeight(surface: PoseMsg['surface']): Promise<number> {
+    const sim = await ArenaSim.create(123);
+    sim.addPlayer('driver', 'forester', 0);
+    stepFor(sim, 'driver', IDLE, 90);
+    const rest = transformOf(sim, 'driver');
+    const pose = poseFrom(rest, { x: rest.x + 3 });
+    expect(sim.applyClientPose('driver', surface ? { ...pose, surface } : pose)).toBe(true);
+    stepFor(sim, 'driver', IDLE, 6);
+    return transformOf(sim, 'driver').y;
+  }
+
+  it('sits a copy snapped with the driver\'s dug-in wheels lower than one snapped without them', async () => {
+    // Regression: without the copied state the server copy is not dug in where the driver's car is.
+    const plain = await snappedHeight(undefined);
+    const dugIn = await snappedHeight(DUG_IN);
+    expect(dugIn).toBeLessThan(plain - 0.03);
+  });
+
+  it('leaves the surface state alone when the copy does not snap', async () => {
+    const sim = await ArenaSim.create(123);
+    sim.addPlayer('driver', 'forester', 0);
+    stepFor(sim, 'driver', IDLE, 90);
+    const rest = transformOf(sim, 'driver');
+    expect(sim.applyClientPose('driver', { ...poseFrom(rest, { x: rest.x + 1 }), surface: DUG_IN })).toBe(false);
+    stepFor(sim, 'driver', IDLE, 6);
+    expect(transformOf(sim, 'driver').y).toBeCloseTo(rest.y, 2);
+  });
+});
+
+describe('ArenaSim — the server sees the shared boulders (S3-2)', () => {
+  const height = createHeightField(123);
+  const biome = createBiome(123);
+
+  /** A big solid boulder on the open plain with 45 m of flat, free ground to its south. */
+  function openPlainBoulder(): PropPlacement {
+    const placements: PropPlacement[] = [];
+    for (let cx = 17; cx < 23; cx++) {
+      for (let cz = 21; cz < 27; cz++) placements.push(...propPlacementsInChunk({ cx, cz, seed: 123, height, biome, drawnHeight: (ground) => ground }));
+    }
+    const found = placements.find((placement) => {
+      if (!placement.solid || placement.layer !== 'base' || placement.modelId !== 'namaqualand_boulder_03' || placement.scale < 1.3) return false;
+      const clear = placements.every((other) => other === placement || !other.solid || Math.abs(other.x - placement.x) > 5 || other.z < placement.z || other.z > placement.z + 45);
+      let steepest = 0;
+      for (let ahead = 0; ahead < 40; ahead += 2) steepest = Math.max(steepest, Math.abs(height(placement.x, placement.z + ahead + 2) - height(placement.x, placement.z + ahead)) / 2);
+      return clear && steepest < 0.05;
+    });
+    if (!found) throw new Error('no free boulder on the sampled plain');
+    return found;
+  }
+
+  it('stops a car driven north at a boulder short of the boulder\'s south face', async () => {
+    const boulder = openPlainBoulder();
+    const box = propColliderBox(boulder);
+    if (!box) throw new Error('the boulder has no box');
+    // The box is turned; its farthest reach south is the most the car's centre could ever pass.
+    const southReach = box.z + Math.abs(box.halfX * Math.sin(box.yaw)) + Math.abs(box.halfZ * Math.cos(box.yaw));
+    const sim = await ArenaSim.create(123);
+    sim.addPlayer('driver', 'forester', 0);
+    sim.teleportPlayer('driver', box.x, box.z + 30, 1.5, { vx: 0, vz: 0 });
+    stepFor(sim, 'driver', IDLE, 30);
+    let closest = Infinity;
+    for (let step = 0; step < 30 * 8; step++) {
+      stepFor(sim, 'driver', { throttle: 1, brake: 0, steer: 0 }, 1);
+      closest = Math.min(closest, transformOf(sim, 'driver').z);
+    }
+    // Facing north (−z), the car's centre stays south of the boulder's far side, and got close to it.
+    expect(closest).toBeGreaterThan(southReach);
+    expect(closest).toBeLessThan(southReach + 6);
   });
 });

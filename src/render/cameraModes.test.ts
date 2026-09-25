@@ -114,7 +114,7 @@ describe('looking around in the views fixed to the car', () => {
   });
 });
 
-describe('«Салон» on a car with no cabin (Pajero)', () => {
+describe('«Салон» on a car with no cabin (every car has one today; the fallback stays for a model without)', () => {
   const MEASURED: CarViewPoints = { hood: { x: 0, y: 1.2, z: 1 }, bumper: { x: 0, y: 0.5, z: 2.4 }, cockpit: { x: 0.35, y: 1.2, z: -0.2 } };
 
   it('puts the cockpit camera on the bonnet and says so in the banner', () => {

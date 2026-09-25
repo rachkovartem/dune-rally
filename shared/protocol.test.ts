@@ -1,6 +1,6 @@
 // shared/protocol.test.ts
 import { describe, it, expect } from 'vitest';
-import { sanitizeCarId, sanitizeInput, sanitizePose } from './protocol';
+import { POSE_MAX_SINK, POSE_MAX_SPIN, sanitizeCarId, sanitizeInput, sanitizePose } from './protocol';
 import { DEFAULT_CAR_ID } from '../src/vehicle/cars';
 
 describe('sanitizeInput', () => {
@@ -14,6 +14,34 @@ describe('sanitizeInput', () => {
     expect(sanitizeInput(undefined)).toEqual({ throttle: 0, brake: 0, steer: 0 });
     expect(sanitizeInput({ throttle: NaN, steer: Infinity })).toEqual({ throttle: 0, brake: 0, steer: 0 });
   });
+});
+
+describe('sanitizeInput — traction control and the drive mode from the wire (SH-2, drive modes)', () => {
+  // A plain object, so the test can send what a hostile or broken client would.
+  const fromWire = (extra: Record<string, unknown>): ReturnType<typeof sanitizeInput> =>
+    sanitizeInput(Object.assign({ throttle: 1, brake: 0, steer: 0 }, extra));
+
+  it.each([true, false])('keeps traction control %s', (tractionControl) => {
+    expect(fromWire({ tractionControl }).tractionControl).toBe(tractionControl);
+  });
+
+  it.each<[string, unknown]>([['missing (an old client)', undefined], ['the text "false"', 'false'], ['the number 0', 0], ['null', null]])(
+    'leaves traction control unset (so it stays on) when it is %s',
+    (_name, tractionControl) => {
+      expect('tractionControl' in fromWire({ tractionControl })).toBe(false);
+    },
+  );
+
+  it.each(['2H', '4H', '4HLc', '4LLc'])('keeps the known drive mode %s', (driveMode) => {
+    expect(fromWire({ driveMode }).driveMode).toBe(driveMode);
+  });
+
+  it.each<[string, unknown]>([['a wrong-case mode', '4llc'], ['an empty string', ''], ['a number', 4], ['missing', undefined]])(
+    'drops %s, so the car keeps its current mode',
+    (_name, driveMode) => {
+      expect('driveMode' in fromWire({ driveMode })).toBe(false);
+    },
+  );
 });
 
 describe('sanitizeCarId — the protocol boundary for a car choice (R112, R113)', () => {
@@ -62,5 +90,45 @@ describe('sanitizePose — a driver\'s pose from the wire (S1-X)', () => {
   ])('drops %s', (_name, raw) => {
     // A broken or hostile pose must never move the server copy into NaN or out of the world.
     expect(sanitizePose(raw)).toBeNull();
+  });
+});
+
+describe('sanitizePose — the surface state of the driver\'s car (SH-5)', () => {
+  const VALID = { x: 1500, y: 12, z: 2000, qx: 0, qy: 1, qz: 0, qw: 0, vx: 3, vy: 0, vz: -20 };
+  const SURFACE = { spin: 4.5, sink: [0.1, 0.12, 0.02, 0.02], digDirection: [1, 1, -1, -1] };
+
+  it('keeps a valid surface state with the pose', () => {
+    expect(sanitizePose({ ...VALID, surface: SURFACE })?.surface).toEqual(SURFACE);
+  });
+
+  it('keeps a pose from an old client that sends no surface', () => {
+    const pose = sanitizePose(VALID);
+    expect(pose).not.toBeNull();
+    expect(pose?.surface).toBeUndefined();
+  });
+
+  it('clamps the spin and every sinkage into their ranges', () => {
+    const surface = sanitizePose({ ...VALID, surface: { ...SURFACE, spin: 99, sink: [-1, 0.3, 5, 0] } })?.surface;
+    expect(surface?.spin).toBe(POSE_MAX_SPIN);
+    expect(surface?.sink).toEqual([0, 0.3, POSE_MAX_SINK, 0]);
+    expect(sanitizePose({ ...VALID, surface: { ...SURFACE, spin: -3 } })?.surface?.spin).toBe(0);
+  });
+
+  it('maps every dig direction to 1 or -1', () => {
+    expect(sanitizePose({ ...VALID, surface: { ...SURFACE, digDirection: [0, -0.2, 7, -9] } })?.surface?.digDirection).toEqual([1, -1, 1, -1]);
+  });
+
+  it.each<[string, unknown]>([
+    ['a NaN spin', { ...SURFACE, spin: Number.NaN }],
+    ['a missing spin', { sink: SURFACE.sink, digDirection: SURFACE.digDirection }],
+    ['three sinkages', { ...SURFACE, sink: [0, 0, 0] }],
+    ['five dig directions', { ...SURFACE, digDirection: [1, 1, 1, 1, 1] }],
+    ['a sinkage sent as text', { ...SURFACE, sink: ['0.1', 0, 0, 0] }],
+    ['an infinite dig direction', { ...SURFACE, digDirection: [1, 1, 1, Number.POSITIVE_INFINITY] }],
+    ['a surface that is not an object', 'deep'],
+  ])('drops a surface with %s but keeps the pose', (_name, surface) => {
+    const pose = sanitizePose({ ...VALID, surface });
+    expect(pose).not.toBeNull();
+    expect(pose?.surface).toBeUndefined();
   });
 });

@@ -20,9 +20,12 @@ describe('carDefinitionFor (R75, R101)', () => {
   });
 
   it('pairs each car with its own assembly rules', () => {
-    // Only the Forester has hub-fixed brake discs; the Pajero's rules do not know them.
-    expect(carDefinitionFor('forester').rules.wheelCornerOf('brakeRL')).toBe('wheelRL');
-    expect(() => carDefinitionFor('pajero').rules.slotFor('brakeRL')).toThrow();
+    // Replacement (Pajero gen-3): the new Pajero model has hub-fixed brake discs like the Forester,
+    // and only the Elantra has none. A rules mix-up would spin a disc with the wheel or crash on load.
+    for (const carId of ['forester', 'pajero'] as const) {
+      expect(carDefinitionFor(carId).rules.wheelCornerOf('brakeRL')).toBe('wheelRL');
+      expect(carDefinitionFor(carId).rules.spinsWithWheel('brakeRL')).toBe(false);
+    }
     expect(carDefinitionFor('pajero').rules.needsCylindricalUv('wheelFL')).toBe(true);
     expect(carDefinitionFor('forester').rules.needsCylindricalUv('wheelFL')).toBe(false);
   });

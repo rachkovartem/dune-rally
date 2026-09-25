@@ -13,7 +13,7 @@ import {
   type VehiclePhysics,
 } from './vehiclePhysics';
 import { WORLD_GRAVITY } from './drivetrain';
-import { FULL_GRIP, rollingResistanceFor, type GroundGrip } from './terrainGrip';
+import { FULL_GRIP, groundFor, groundGripFor, type SurfaceGround } from './terrainGrip';
 import type { InputMsg } from './protocol';
 import { CAR_IDS } from '../src/vehicle/cars';
 import { restingSuspensionLength, vehicleConfigFor, type VehicleConfig } from '../src/vehicle/vehicleConfig';
@@ -36,7 +36,7 @@ function carOnFlatGround(config: VehicleConfig): TestCar {
 }
 
 // Replacement (S2-3): the car takes the whole ground (grip and rolling resistance), not a grip number.
-function drive(car: TestCar, input: InputMsg, seconds: number, ground: GroundGrip = FULL_GRIP): void {
+function drive(car: TestCar, input: InputMsg, seconds: number, ground: SurfaceGround = FULL_GRIP): void {
   const steps = Math.round(seconds * 60);
   for (let step = 0; step < steps; step++) {
     car.vehicle.applyInput(input, ground);
@@ -96,11 +96,13 @@ describe('createVehiclePhysics — driving promises (R67, R68, R69)', () => {
     expect(car.vehicle.forwardSpeed()).toBeGreaterThan(0);
   });
 
-  it.each(CAR_IDS)('reaches a lower speed on grip 0.5 than on grip 1 with the same throttle (%s)', (carId) => {
-    const firm = settledCar(vehicleConfigFor(carId));
-    const soft = settledCar(vehicleConfigFor(carId));
-    drive(firm, FULL_THROTTLE, 5, FULL_GRIP);
-    drive(soft, FULL_THROTTLE, 5, { grip: 0.5, rollingResistance: rollingResistanceFor(0.5) });
+  // Replacement (SH-1): the ground is a whole SurfaceGround of a real cover, not a bare grip number.
+  it.each(CAR_IDS)('reaches a lower speed on mud (grip 0.5, firm) than on road with the same throttle (%s)', (carId) => {
+    const config = vehicleConfigFor(carId);
+    const firm = settledCar(config);
+    const soft = settledCar(config);
+    drive(firm, FULL_THROTTLE, 5, groundGripFor('road', config));
+    drive(soft, FULL_THROTTLE, 5, groundGripFor('mud', config));
     expect(soft.vehicle.forwardSpeed()).toBeLessThan(firm.vehicle.forwardSpeed());
   });
 
@@ -256,5 +258,95 @@ describe('wheelbaseOf', () => {
     const wheel = (z: number) => ({ x: 0, y: 0, z });
     expect(wheelbaseOf({ wheel: { ...vehicleConfigFor('pajero').wheel, positions: [wheel(-1.5), wheel(1.2), wheel(1.2), wheel(-1.5)] } }))
       .toBeCloseTo(2.7, 10);
+  });
+});
+
+describe('createVehiclePhysics — surface state: sinkage, spin and resets (SH-2, SH-5)', () => {
+  const duneFor = (config: VehicleConfig): SurfaceGround => groundFor('sand', 1, config);
+
+  it('sinks the driven wheels of a spinning Elantra on dune sand, and resetUpright lifts them all out', () => {
+    const config = vehicleConfigFor('elantra');
+    const car = settledCar(config);
+    const restingHeight = car.vehicle.body.translation().y;
+    drive(car, FULL_THROTTLE, 3, duneFor(config));
+    expect(Math.max(...car.vehicle.wheelSurface().map((wheel) => wheel.sink))).toBeGreaterThan(0.05);
+
+    car.vehicle.resetUpright(1);
+    expect(car.vehicle.wheelSurface().map((wheel) => wheel.sink)).toEqual([0, 0, 0, 0]);
+    expect(car.vehicle.spin()).toBe(0);
+    // Regression: a wheel left short after the reset would rest the car lower than a fresh one.
+    drive(car, IDLE, 3);
+    expect(car.vehicle.body.translation().y).toBeCloseTo(restingHeight, 2);
+  });
+
+  it('takes a copied surface state and gives it back (a snapped server copy is dug in like the driver\'s car)', () => {
+    const car = settledCar(vehicleConfigFor('forester'));
+    const state = { spin: 3.5, spinDirection: -1 as const, sink: [0.1, 0.12, 0.05, 0.02], digDirection: [1, 1, -1, -1] as const };
+    car.vehicle.setSurfaceState(state);
+    expect(car.vehicle.surfaceState()).toEqual({ ...state, sink: [...state.sink], digDirection: [...state.digDirection] });
+    expect(car.vehicle.wheelSurface().map((wheel) => wheel.sink)).toEqual(state.sink);
+  });
+
+  it('clamps a copied sinkage to the deepest a wheel can go, and throws for the wrong wheel count', () => {
+    const config = vehicleConfigFor('forester');
+    const car = settledCar(config);
+    car.vehicle.setSurfaceState({ spin: 99, spinDirection: 1, sink: [5, 0, 0, 0], digDirection: [1, 1, 1, 1] });
+    expect(car.vehicle.surfaceState().sink[0]).toBeLessThan(config.wheel.radius);
+    expect(car.vehicle.spin()).toBeLessThan(99);
+    expect(() => car.vehicle.setSurfaceState({ spin: 0, spinDirection: 1, sink: [0, 0, 0], digDirection: [1, 1, 1] })).toThrow('expected 4 wheels');
+  });
+
+  it('never sinks a car that spins its wheels on the road', () => {
+    const config = vehicleConfigFor('elantra');
+    const car = settledCar(config);
+    drive(car, FULL_THROTTLE, 3, groundFor('road', 0, config));
+    expect(car.vehicle.wheelSurface().map((wheel) => wheel.sink)).toEqual([0, 0, 0, 0]);
+  });
+});
+
+describe('createVehiclePhysics — config consistency of the drive split (SH-2)', () => {
+  it('throws for a front-driven car that sets a rear drive share', () => {
+    const config = vehicleConfigFor('elantra');
+    expect(() => carOnFlatGround({ ...config, surface: { ...config.surface, rearDriveShare: 0.4 } })).toThrow('rearDriveShare');
+  });
+
+  it('throws for an all-wheel-drive car with no rear drive share, or one outside (0, 1)', () => {
+    const config = vehicleConfigFor('forester');
+    expect(() => carOnFlatGround({ ...config, surface: { ...config.surface, rearDriveShare: undefined } })).toThrow('rearDriveShare');
+    expect(() => carOnFlatGround({ ...config, surface: { ...config.surface, rearDriveShare: 1 } })).toThrow('outside (0, 1)');
+  });
+});
+
+describe('createVehiclePhysics — drive modes and traction control (drive modes, SH-2)', () => {
+  const KMH = 1 / 3.6;
+
+  it('starts the Pajero in its start mode and reports the other cars as fixed', () => {
+    const pajero = settledCar(vehicleConfigFor('pajero')).vehicle.driveState().drive;
+    expect(pajero.kind).toBe('selectable');
+    if (pajero.kind === 'selectable') expect(pajero.mode).toBe(vehicleConfigFor('pajero').driveSelect?.startMode);
+    expect(settledCar(vehicleConfigFor('elantra')).vehicle.driveState().drive).toEqual({ kind: 'fixed', layout: 'fwd' });
+    expect(settledCar(vehicleConfigFor('forester')).vehicle.driveState().drive).toEqual({ kind: 'fixed', layout: 'awd' });
+  });
+
+  it('refuses the low range while the Pajero rolls and says why, then takes it once the car stands', () => {
+    const car = settledCar(vehicleConfigFor('pajero'));
+    drive(car, FULL_THROTTLE, 3);
+    expect(car.vehicle.forwardSpeed()).toBeGreaterThan(10 * KMH);
+    drive(car, { ...IDLE, driveMode: '4LLc' }, 1 / 60);
+    const moving = car.vehicle.driveState().drive;
+    expect(moving).toMatchObject({ kind: 'selectable', requested: '4LLc', blocked: 'rangeChangeTooFast' });
+    if (moving.kind === 'selectable') expect(moving.mode).not.toBe('4LLc');
+    drive(car, { throttle: 0, brake: 1, steer: 0, driveMode: '4LLc' }, 0.2);
+    for (let step = 0; step < 600 && Math.abs(car.vehicle.forwardSpeed()) > 1 * KMH; step++) drive(car, { throttle: 0, brake: 1, steer: 0, driveMode: '4LLc' }, 1 / 60);
+    drive(car, { ...IDLE, driveMode: '4LLc' }, 1 / 60);
+    expect(car.vehicle.driveState().drive).toMatchObject({ kind: 'selectable', mode: '4LLc', blocked: null });
+  });
+
+  it('turns traction control off only for an input that says so, and back on for one that does not', () => {
+    const car = settledCar(vehicleConfigFor('forester'));
+    drive(car, { ...FULL_THROTTLE, tractionControl: false }, 1 / 60);
+    expect(car.vehicle.driveState().tractionControl).toBe(false);
+    drive(car, FULL_THROTTLE, 1 / 60);
+    expect(car.vehicle.driveState().tractionControl).toBe(true);
   });
 });

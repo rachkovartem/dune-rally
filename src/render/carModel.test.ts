@@ -2,8 +2,9 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { ARCH_CLEARANCE, assembleCar, cylindricalUv, fitCarToChassis, type CarAssemblyRules, type CarFit, type MeasuredCarLike } from './carModel';
-import { measuredCar } from '../assets/carPartRules';
 import { measuredCarForester } from '../assets/foresterPartRules';
+import { measuredCarPajeroGen3 } from '../assets/pajeroGen3PartRules';
+import { measuredCarElantra } from '../assets/elantraPartRules';
 import { restingSuspensionLength, vehicleConfigFor, type VehicleConfig } from '../vehicle/vehicleConfig';
 import type { CarMaterialSlot, WheelSlot } from '../assets/carPartRules';
 
@@ -11,9 +12,11 @@ import type { CarMaterialSlot, WheelSlot } from '../assets/carPartRules';
 const restingTyreTop = (config: VehicleConfig): number =>
   config.wheel.positions[0].y - restingSuspensionLength(config.wheel) + config.wheel.radius;
 
+// Replacement (Pajero gen-3): the game draws the gen-3 model now, so its measurements are the ones fitted.
 const fits: [string, MeasuredCarLike, VehicleConfig][] = [
-  ['Pajero', measuredCar, vehicleConfigFor('pajero')],
+  ['Pajero', measuredCarPajeroGen3, vehicleConfigFor('pajero')],
   ['Forester', measuredCarForester, vehicleConfigFor('forester')],
+  ['Elantra', measuredCarElantra, vehicleConfigFor('elantra')],
 ];
 
 describe('fitCarToChassis — the model sits on the physics wheels (R38–R41, R102–R104)', () => {
@@ -54,12 +57,12 @@ describe('fitCarToChassis — the model sits on the physics wheels (R38–R41, R
     const softer: VehicleConfig = { ...base, wheel: { ...base.wheel, suspensionStiffness: base.wheel.suspensionStiffness / 2 } };
     const extraSag = restingSuspensionLength(base.wheel) - restingSuspensionLength(softer.wheel);
     expect(extraSag).toBeGreaterThan(0);
-    const offsetChange = fitCarToChassis(measuredCar, softer).bodyOffset.y - fitCarToChassis(measuredCar, base).bodyOffset.y;
+    const offsetChange = fitCarToChassis(measuredCarPajeroGen3, softer).bodyOffset.y - fitCarToChassis(measuredCarPajeroGen3, base).bodyOffset.y;
     expect(offsetChange).toBeCloseTo(extraSag, 9);
   });
 
   it.each([0, -1.2, Number.NaN])('throws for a measured wheelbase of %s instead of producing an infinite scale', (wheelbase) => {
-    expect(() => fitCarToChassis({ ...measuredCar, wheelbase }, vehicleConfigFor('pajero'))).toThrow('measured.wheelbase must be > 0');
+    expect(() => fitCarToChassis({ ...measuredCarPajeroGen3, wheelbase }, vehicleConfigFor('pajero'))).toThrow('measured.wheelbase must be > 0');
   });
 });
 
