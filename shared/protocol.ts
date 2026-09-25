@@ -49,7 +49,8 @@ export const DEFAULT_PLAYER_NAME = 'rider';
 
 // Control, bidi and invisible characters. Not all of \p{Cf}: the zero-width joiner (U+200D) is
 // left in, because it holds emoji sequences together.
-const HIDDEN_CHARACTERS = /[\p{Cc}\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/gu;
+const HIDDEN_CHARACTERS =
+  /[\p{Cc}\u061C\u180E\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/gu;
 
 /**
  * The name other players see. A non-string in the state breaks the encoder for the whole room, so
