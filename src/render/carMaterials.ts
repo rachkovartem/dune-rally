@@ -34,11 +34,14 @@ export interface CarGlassRecipe {
   doubleSided: boolean;
 }
 
-/** Every slot the two cars style differently. The Pajero keeps its accepted values (spec), and
- * the Forester takes the drive prototype's values the user approved. */
+/** Every slot the cars style differently. The Pajero keeps its accepted values (spec), the
+ * Forester takes the drive prototype's values the user approved, and the Elantra is matched to the
+ * owner's photo of a red AD. */
 export interface CarMaterialRecipe {
   paint: CarPaintRecipe;
   glass: CarGlassRecipe;
+  /** The clear covers over the lamps: a thick milky cover hides the lamp inside. */
+  clearGlass: CarGlassRecipe;
   chrome: CarSurfaceRecipe;
   rubber: CarSurfaceRecipe;
   rim: CarSurfaceRecipe;
@@ -66,6 +69,7 @@ export const CAR_MATERIAL_RECIPES: Record<CarId, CarMaterialRecipe> = {
   pajero: {
     paint: { color: 0x3a3d43, metalness: 0.55, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.08, flakeStrength: 0 },
     glass: { color: 0x0b1218, roughness: 0.02, opacity: 0.75, clearcoat: 0, clearcoatRoughness: 0, doubleSided: true },
+    clearGlass: { color: 0xdfe8ee, roughness: 0.02, opacity: 0.35, clearcoat: 1, clearcoatRoughness: 0.02, doubleSided: true },
     chrome: { color: 0xc9cbd1, metalness: 1, roughness: 0.12, emissive: null },
     rubber: { color: 0x0f1012, metalness: 0, roughness: 0.9, emissive: null },
     rim: { color: 0xc7cacf, metalness: 0.9, roughness: 0.25, emissive: null },
@@ -78,6 +82,7 @@ export const CAR_MATERIAL_RECIPES: Record<CarId, CarMaterialRecipe> = {
     // No flake: the converted paint mesh has no UV set, and the approved prototype has none.
     paint: { color: 0x0b0c0e, metalness: 0.6, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.03, flakeStrength: 0 },
     glass: { color: 0x0a0f14, roughness: 0.03, opacity: 0.85, clearcoat: 1, clearcoatRoughness: 0.02, doubleSided: false },
+    clearGlass: { color: 0xdfe8ee, roughness: 0.02, opacity: 0.35, clearcoat: 1, clearcoatRoughness: 0.02, doubleSided: true },
     chrome: { color: 0xdadde0, metalness: 1, roughness: 0.15, emissive: null },
     rubber: { color: 0x141517, metalness: 0, roughness: 0.9, emissive: null },
     rim: { color: 0xb9bcc0, metalness: 0.95, roughness: 0.28, emissive: null },
@@ -85,6 +90,24 @@ export const CAR_MATERIAL_RECIPES: Record<CarId, CarMaterialRecipe> = {
     taillight: { color: 0x6a0a0a, metalness: 0.2, roughness: 0.3, emissive: { color: 0xff2a1a, intensity: 0.6 } },
     interior: { color: 0x15171a, metalness: 0, roughness: 0.95, emissive: null },
     blackTrim: { color: 0x1a1b1d, metalness: 0.1, roughness: 0.7, emissive: null },
+  },
+  elantra: {
+    // Matched side by side with the photo under the game's HDRI and AgX: a bluer or more metallic
+    // base turns magenta where the bonnet reflects the sky, a more orange one reads orange in sun.
+    paint: { color: 0x8a0a1c, metalness: 0.45, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.03, flakeStrength: 0.15 },
+    glass: { color: 0x0a0f14, roughness: 0.03, opacity: 0.85, clearcoat: 1, clearcoatRoughness: 0.02, doubleSided: false },
+    // Thin, so the projector and the tail lamps show through their covers as on the real car.
+    clearGlass: { color: 0xf2f5f7, roughness: 0.02, opacity: 0.12, clearcoat: 1, clearcoatRoughness: 0.02, doubleSided: true },
+    chrome: { color: 0xdadde0, metalness: 1, roughness: 0.15, emissive: null },
+    rubber: { color: 0x141517, metalness: 0, roughness: 0.9, emissive: null },
+    rim: { color: 0xb9bcc0, metalness: 0.95, roughness: 0.28, emissive: null },
+    // A dark mirror behind the thin cover reads as a projector with depth, not a white lamp face.
+    headlight: { color: 0x3a3e44, metalness: 1, roughness: 0.1, emissive: { color: 0xfff2cf, intensity: 0.05 } },
+    // Dark and a little glossy, so the large lamp faces stay red glass in sun instead of salmon.
+    taillight: { color: 0x30030a, metalness: 0.2, roughness: 0.18, emissive: { color: 0xc8040e, intensity: 0.22 } },
+    interior: { color: 0x15171a, metalness: 0, roughness: 0.95, emissive: null },
+    // Glossier than the other cars' trim: it also holds the grille bars, which are gloss black on the AD.
+    blackTrim: { color: 0x121314, metalness: 0.1, roughness: 0.4, emissive: null },
   },
 };
 
@@ -243,9 +266,7 @@ export function createCarMaterials(recipe: CarMaterialRecipe, embedded: Embedded
   return {
     paint: paintMaterial(recipe.paint),
     glass: glassMaterial(recipe.glass),
-    clearGlass: glassMaterial({
-      color: 0xdfe8ee, roughness: 0.02, opacity: 0.35, clearcoat: 1, clearcoatRoughness: 0.02, doubleSided: true,
-    }),
+    clearGlass: glassMaterial(recipe.clearGlass),
     chrome: surfaceMaterial(recipe.chrome),
     rubber,
     rim: surfaceMaterial(recipe.rim),

@@ -3,11 +3,12 @@
 // the horizon far past the streamed chunks. A per-chunk mask cuts it away wherever a near chunk is
 // drawn, so the two never fight for the same pixel and nothing pops when a chunk arrives.
 import * as THREE from 'three';
-import { coverFromIndex, type Cover } from '../world/biome';
+import { coverFromIndex, surfaceTintAt, type Cover } from '../world/biome';
 import { CHUNK_SIZE, type ChunkCoord } from '../world/chunk';
 import type { FarGrid } from '../world/farGrid';
 import { coverTint, gridNormals, rockWeightAt } from './terrainMesh';
 import { visualTerrainHeight } from './horizonShape';
+import { surfaceTintFor, tintColor } from './surfaceTints';
 
 export interface LinearColor {
   r: number;
@@ -128,11 +129,20 @@ function buildFarGeometry(grid: FarGrid, colors: FarColors): THREE.BufferGeometr
   const colorValues = new Float32Array(vertexCount * 3);
   for (let vertex = 0; vertex < vertexCount; vertex++) {
     const slope = Math.hypot(normals[vertex * 3], normals[vertex * 3 + 2]) / Math.max(Math.abs(normals[vertex * 3 + 1]), 1e-4);
-    const rockWeight = rockWeightAt(positions[vertex * 3], positions[vertex * 3 + 2], slope);
-    const ground = farVertexColor(coverFromIndex(grid.covers[vertex]), colors.sandMean);
-    colorValues[vertex * 3] = ground.r + (colors.rockMean.r - ground.r) * rockWeight;
-    colorValues[vertex * 3 + 1] = ground.g + (colors.rockMean.g - ground.g) * rockWeight;
-    colorValues[vertex * 3 + 2] = ground.b + (colors.rockMean.b - ground.b) * rockWeight;
+    const x = positions[vertex * 3];
+    const z = positions[vertex * 3 + 2];
+    const rockWeight = rockWeightAt(x, z, slope);
+    const cover = coverFromIndex(grid.covers[vertex]);
+    const ground = farVertexColor(cover, colors.sandMean);
+    // The same order as the near shader: the rock mix first, then the surface tint over both.
+    const tinted = tintColor({
+      r: ground.r + (colors.rockMean.r - ground.r) * rockWeight,
+      g: ground.g + (colors.rockMean.g - ground.g) * rockWeight,
+      b: ground.b + (colors.rockMean.b - ground.b) * rockWeight,
+    }, surfaceTintFor(surfaceTintAt(x, z, cover)));
+    colorValues[vertex * 3] = tinted.r;
+    colorValues[vertex * 3 + 1] = tinted.g;
+    colorValues[vertex * 3 + 2] = tinted.b;
   }
 
   const cells = side - 1;

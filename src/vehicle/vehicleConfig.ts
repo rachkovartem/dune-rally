@@ -1,6 +1,6 @@
 // src/vehicle/vehicleConfig.ts
 import type { Cover } from '../world/biome';
-import type { VehicleId } from './cars';
+import type { CarId } from './cars';
 import { WORLD_GRAVITY, type DriveLayout, type DrivetrainSpec } from '../../shared/drivetrain';
 
 export interface VehicleConfig {
@@ -124,7 +124,7 @@ export const PAJERO_CONFIG: VehicleConfig = {
   restitution: 0.12,
   friction: 0.6,
 
-  gripOverrides: { sand: 0.75, mud: 0.62, rock: 0.9, gravel: 0.95 },
+  gripOverrides: { sand: 0.75, mud: 0.62, rock: 0.9, gravel: 0.95, salt: 0.95 },
 };
 
 // Subaru Forester 2.5i (SK, FB25, Lineartronic CVT, symmetrical AWD). Wheel geometry is the
@@ -209,9 +209,9 @@ export const FORESTER_CONFIG: VehicleConfig = {
 // 6-speed automatic, FWD. Real sizes, approximate: wheelbase 2.700, track about 1.563 / 1.572,
 // 205/55 R16, ground clearance about 0.150. A road car: quick on road, weak in sand and on rock.
 export const ELANTRA_CONFIG: VehicleConfig = {
-  // Box from 0.15 m (the real underbody) to about 1.42 m at rest, so it scrapes on rocks and ridges.
-  // It is shorter than the real 4.57 m so the bumpers keep an approach angle of about 15°.
-  chassis: { hx: 0.88, hy: 0.635, hz: 1.9, offsetY: -0.124, mass: 1300 + 75 },
+  // Box from about 0.2 m (the model's visible sill) to about 1.42 m at rest, so it scrapes on rocks
+  // and ridges. It is shorter than the real 4.57 m so the bumpers keep an approach angle of about 15°.
+  chassis: { hx: 0.88, hy: 0.6125, hz: 1.9, offsetY: -0.1015, mass: 1300 + 75 },
 
   com: { x: 0, y: -0.45, z: 0 },
   inertia: { x: 2000, y: 2200, z: 1000 },
@@ -229,10 +229,11 @@ export const ELANTRA_CONFIG: VehicleConfig = {
     maxSuspensionForce: 45000,
     frictionSlip: 3.3,
     positions: [
-      { x: -0.782, y: -0.3, z: 1.35 },
-      { x: 0.782, y: -0.3, z: 1.35 },
-      { x: -0.786, y: -0.3, z: -1.35 },
-      { x: 0.786, y: -0.3, z: -1.35 },
+      // The body model's own wheel centres, so the wheels sit in its arches with no inset.
+      { x: -0.8035, y: -0.3, z: 1.35 },
+      { x: 0.8035, y: -0.3, z: 1.35 },
+      { x: -0.8035, y: -0.3, z: -1.35 },
+      { x: 0.8035, y: -0.3, z: -1.35 },
     ],
   },
 
@@ -302,12 +303,12 @@ export function restingSuspensionLength(
   return wheel.suspensionRestLength - WORLD_GRAVITY / (wheel.positions.length * wheel.suspensionStiffness);
 }
 
-const CONFIG_BY_CAR: Record<VehicleId, VehicleConfig> = {
+const CONFIG_BY_CAR: Record<CarId, VehicleConfig> = {
   forester: FORESTER_CONFIG,
   pajero: PAJERO_CONFIG,
   elantra: ELANTRA_CONFIG,
 };
 
-export function vehicleConfigFor(carId: VehicleId): VehicleConfig {
+export function vehicleConfigFor(carId: CarId): VehicleConfig {
   return CONFIG_BY_CAR[carId];
 }

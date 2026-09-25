@@ -65,6 +65,8 @@ const COVER_TEXTURE_SET: Record<Cover, TextureSetId> = {
   forest: 'Ground097',
   snow: 'Ground054',
   water: 'Ground054',
+  // The white crust is the sand set under a surface tint (plan v3 S2-3), not a download of its own.
+  salt: 'Ground054',
 };
 
 export function textureSetForCover(cover: Cover): TextureSetId {

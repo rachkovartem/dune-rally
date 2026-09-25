@@ -1,6 +1,6 @@
 // src/assets/carCatalog.ts
 // One entry per selectable car: its display label, model file, measured size and assembly rules.
-import type { VehicleId } from '../vehicle/cars';
+import type { CarId } from '../vehicle/cars';
 import type { CarAssemblyRules, MeasuredCarLike } from '../render/carModel';
 import { PAJERO_ASSEMBLY_RULES, measuredCar } from './carPartRules';
 import { ELANTRA_ASSEMBLY_RULES, measuredCarElantra } from './elantraPartRules';
@@ -17,6 +17,15 @@ export const ELANTRA_MODEL_MISSING_MESSAGE =
 /** The side of the cabin the steering wheel is on, as the driver sees it. */
 export type DriverSide = 'left' | 'right';
 
+/**
+ * A model that is gitignored and built on the owner's machine, so a fresh clone does not have it.
+ * `requiredToPlay` false: the game starts without it and only this car leaves the picker.
+ */
+export interface LocalModel {
+  missingMessage: string;
+  requiredToPlay: boolean;
+}
+
 export interface CarDefinition {
   label: string;
   modelUrl: string;
@@ -24,10 +33,13 @@ export interface CarDefinition {
   rules: CarAssemblyRules;
   /** Where the cockpit camera puts the driver's eye. */
   driverSide: DriverSide;
+  /** False when the model has no inside: the cockpit camera then sits on the bonnet. */
+  hasCabin: boolean;
+  /** null for a model that is committed to the repo. */
+  localModel: LocalModel | null;
 }
 
-// Keyed by VehicleId so a car can land its model before it joins the picker (CarId).
-const CAR_DEFINITIONS: Partial<Record<VehicleId, CarDefinition>> = {
+const CAR_DEFINITIONS: Readonly<Record<CarId, CarDefinition>> = {
   elantra: {
     label: 'Hyundai Elantra',
     modelUrl: '/models/elantra-2016.glb',
@@ -35,6 +47,8 @@ const CAR_DEFINITIONS: Partial<Record<VehicleId, CarDefinition>> = {
     rules: ELANTRA_ASSEMBLY_RULES,
     // The model's cabin has seats but no steering wheel; the left-hand-drive version is assumed.
     driverSide: 'left',
+    hasCabin: true,
+    localModel: { missingMessage: ELANTRA_MODEL_MISSING_MESSAGE, requiredToPlay: false },
   },
   forester: {
     label: 'Subaru Forester',
@@ -43,6 +57,9 @@ const CAR_DEFINITIONS: Partial<Record<VehicleId, CarDefinition>> = {
     rules: FORESTER_ASSEMBLY_RULES,
     // Measured on the model's interior: the steering wheel sits left of the centreline.
     driverSide: 'left',
+    hasCabin: true,
+    // The default car: without it there is nothing to fall back to.
+    localModel: { missingMessage: FORESTER_MODEL_MISSING_MESSAGE, requiredToPlay: true },
   },
   pajero: {
     label: 'Mitsubishi Pajero Sport',
@@ -51,12 +68,11 @@ const CAR_DEFINITIONS: Partial<Record<VehicleId, CarDefinition>> = {
     rules: PAJERO_ASSEMBLY_RULES,
     // The model has no cabin to measure; the left-hand-drive market version is assumed.
     driverSide: 'left',
+    hasCabin: false,
+    localModel: null,
   },
 };
 
-/** Throws for a car whose model is not converted yet, so a missing car never turns into another. */
-export function carDefinitionFor(carId: VehicleId): CarDefinition {
-  const definition = CAR_DEFINITIONS[carId];
-  if (!definition) throw new Error(`carDefinitionFor: the "${carId}" car is not converted yet`);
-  return definition;
+export function carDefinitionFor(carId: CarId): CarDefinition {
+  return CAR_DEFINITIONS[carId];
 }

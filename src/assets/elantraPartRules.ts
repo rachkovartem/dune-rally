@@ -108,7 +108,7 @@ export const ELANTRA_RAW_ROLES: Readonly<Record<string, ElantraRawRole>> = {
   'bump_front/component#26/Geom3D_component#26|[Color B01]3': body('blackTrim'),
   'bump_front/component#26/Geom3D|[Color B01]5': body('chrome'),
   'bump_front/component#26/Geom3D|[Color B01]3': body('blackTrim'),
-  // Grille surround and bars; its "H" is removed by ELANTRA_BADGE_COMPONENTS.
+  // Grille surround and bars; its "H" is removed by ELANTRA_BADGE_COMPONENTS, its bars move by ELANTRA_COMPONENT_SLOTS.
   'bump_front/component#26/Geom3D|[Color A05]': body('chrome'),
   'bump_front/component#26/Geom3D|[Color A08]3': body('blackTrim'),
   'SA7B/Geom3D_SA7B|(none)': body('blackTrim'),
@@ -197,6 +197,25 @@ export const ELANTRA_BADGE_COMPONENTS: Readonly<
     box: { min: { x: 0.08, y: -0.03, z: -0.03 }, max: { x: 0.1, y: 0.03, z: 0.03 } },
   },
 };
+
+// Holds the seven horizontal bars and not the hexagonal surround, which is wider and taller.
+const GRILLE_BARS_BOX: ElantraBox = { min: { x: -0.5, y: 0.27, z: 2.13 }, max: { x: 0.5, y: 0.56, z: 2.285 } };
+
+/**
+ * Pieces of a raw part that take another body slot: a connected component that lies fully inside
+ * `box` (car space) goes to `slot`. On the real AD the grille bars are gloss black and only the
+ * surround is chrome, but the source puts both in one chrome part.
+ */
+export const ELANTRA_COMPONENT_SLOTS: Readonly<Record<string, { box: ElantraBox; slot: ElantraBodySlot }>> = {
+  'bump_front/component#26/Geom3D|[Color A05]': { box: GRILLE_BARS_BOX, slot: 'blackTrim' },
+};
+
+/** The body slot one connected component of a raw part moves to; null keeps the part's own slot. */
+export function elantraComponentSlotOf(rawKey: string, component: ElantraBox): ElantraBodySlot | null {
+  const rule = ELANTRA_COMPONENT_SLOTS[rawKey];
+  if (!rule) return null;
+  return isInside(rule.box, component) ? rule.slot : null;
+}
 
 export const ELANTRA_TRIANGLE_TARGETS: Readonly<Record<ElantraTargetKey, number>> = {
   // Kept whole: the source paint is already low on the rear bumper, and the clearcoat shows every facet.

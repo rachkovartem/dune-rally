@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { buildChunkGeometry } from '../world/chunkGeometry';
 import { coverFromIndex, type Cover } from '../world/biome';
-import type { ChunkSurface } from '../world/chunkSurface';
+import type { TintedChunkSurface } from '../world/chunkSurface';
+import { SURFACE_TINT_TABLE } from './surfaceTints';
 import { borderFaceDepth, smoothstep } from '../world/worldDef';
 import { visualTerrainHeight } from './horizonShape';
 import { VERTS_PER_SIDE } from '../world/heightfieldData';
@@ -34,6 +35,7 @@ const A_STEP_TINT_BY_COVER: Record<Cover, number> = {
   forest: 0.9,
   snow: 0.9,
   water: 0.9,
+  salt: 1,
 };
 
 /** Brightness the tyre tracks multiply their sand by, so a rut on a road reads like the road. */
@@ -141,11 +143,12 @@ export function rockWeightAt(x: number, z: number, slope: number): number {
 
 /**
  * Builds a chunk render mesh from its row-major surface grid: an indexed grid with smooth
- * normals, a planar world-space `uv`, a per-vertex `color` tint from the surface cover and
- * a `rockWeight` for the terrain material's rock layer, plus skirts under the edges. Vertices match the physics collider
+ * normals, a planar world-space `uv`, a per-vertex `color` tint from the surface cover,
+ * a `rockWeight` for the terrain material's rock layer and the surface tint (`surfaceTint` rgb +
+ * desaturation, `surfaceDetail` normal strength + roughness), plus skirts under the edges. Vertices match the physics collider
  * geometry everywhere a car can reach; only the ground past the border crest is drawn lower (horizonShape).
  */
-export function buildTerrainMesh(surface: ChunkSurface, originX: number, originZ: number): THREE.Mesh {
+export function buildTerrainMesh(surface: TintedChunkSurface, originX: number, originZ: number): THREE.Mesh {
   const { positions, indices } = buildChunkGeometry(surface.heights, originX, originZ);
   for (let vertex = 0; vertex < positions.length / 3; vertex++) {
     const x = positions[vertex * 3];
@@ -163,6 +166,8 @@ export function buildTerrainMesh(surface: ChunkSurface, originX: number, originZ
   const uvs = new Float32Array(vertexCount * 2);
   const colors = new Float32Array(vertexCount * 3);
   const rockWeights = new Float32Array(vertexCount);
+  const surfaceTints = new Float32Array(vertexCount * 4);
+  const surfaceDetails = new Float32Array(vertexCount * 2);
   for (let vertex = 0; vertex < vertexCount; vertex++) {
     const x = positions[vertex * 3];
     const z = positions[vertex * 3 + 2];
@@ -177,10 +182,21 @@ export function buildTerrainMesh(surface: ChunkSurface, originX: number, originZ
     colors[vertex * 3] = tint;
     colors[vertex * 3 + 1] = tint;
     colors[vertex * 3 + 2] = tint;
+
+    const surfaceTint = SURFACE_TINT_TABLE[surface.tints[vertex]];
+    if (surfaceTint === undefined) throw new Error(`buildTerrainMesh: no surface tint has index ${surface.tints[vertex]}`);
+    surfaceTints[vertex * 4] = surfaceTint.red;
+    surfaceTints[vertex * 4 + 1] = surfaceTint.green;
+    surfaceTints[vertex * 4 + 2] = surfaceTint.blue;
+    surfaceTints[vertex * 4 + 3] = surfaceTint.desaturate;
+    surfaceDetails[vertex * 2] = surfaceTint.normalStrength;
+    surfaceDetails[vertex * 2 + 1] = surfaceTint.roughness;
   }
   geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute('rockWeight', new THREE.BufferAttribute(rockWeights, 1));
+  geometry.setAttribute('surfaceTint', new THREE.BufferAttribute(surfaceTints, 4));
+  geometry.setAttribute('surfaceDetail', new THREE.BufferAttribute(surfaceDetails, 2));
   withSkirts(geometry, VERTS_PER_SIDE);
 
   const mesh = new THREE.Mesh(geometry, terrainMaterial);

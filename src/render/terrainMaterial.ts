@@ -3,6 +3,7 @@
 // version: the sand set on every cover, shaded apart by the mesh's per-vertex colour. The
 // per-layer splat blend replaces it in Step B.
 import * as THREE from 'three';
+import { SURFACE_TINT_GLSL } from './surfaceTints';
 
 export interface TerrainTextureSet {
   color: THREE.Texture;
@@ -53,16 +54,21 @@ const ROCK_DETAIL_TILE_METRES = 47;
 const ROCK_MIP_BIAS = 1.5;
 
 /** Projects the rock image along all three axes, so a steep cliff face is not smeared the way the
- * planar sand UV is, and mixes it over the sand by the mesh's `rockWeight`. */
+ * planar sand UV is, and mixes it over the sand by the mesh's `rockWeight`. The surface tint comes
+ * after the rock mix, so the dolerite ridge darkens its rock faces too. */
 function addRockLayer(material: THREE.MeshStandardMaterial, rock: THREE.Texture): void {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.rockMap = { value: rock };
     shader.vertexShader = 'attribute float rockWeight;\nvarying float vRockWeight;\nvarying vec3 vRockWorld;\nvarying vec3 vRockNormal;\n'
+      + 'attribute vec4 surfaceTint;\nattribute vec2 surfaceDetail;\nvarying vec4 vSurfaceTint;\nvarying vec2 vSurfaceDetail;\n'
       + shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        vSurfaceTint = surfaceTint;
+        vSurfaceDetail = surfaceDetail;
         vRockWeight = rockWeight;
         vRockWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
         vRockNormal = normalize(mat3(modelMatrix) * objectNormal);`);
     shader.fragmentShader = `#define ROCK_MIP_BIAS ${ROCK_MIP_BIAS.toFixed(1)}\n` + 'uniform sampler2D rockMap;\nvarying float vRockWeight;\nvarying vec3 vRockWorld;\nvarying vec3 vRockNormal;\n'
+      + 'varying vec4 vSurfaceTint;\nvarying vec2 vSurfaceDetail;\n' + SURFACE_TINT_GLSL
       + `vec3 rockSample(vec3 world, vec3 blend, float tile) {
           vec3 p = world / tile;
           return texture(rockMap, p.zy, ROCK_MIP_BIAS).rgb * blend.x + texture(rockMap, p.xz, ROCK_MIP_BIAS).rgb * blend.y + texture(rockMap, p.xy, ROCK_MIP_BIAS).rgb * blend.z;
@@ -74,15 +80,19 @@ function addRockLayer(material: THREE.MeshStandardMaterial, rock: THREE.Texture)
             rockBlend /= dot(rockBlend, vec3(1.0));
             vec3 rock = rockSample(vRockWorld, rockBlend, ${ROCK_TILE_METRES.toFixed(1)}) * (0.55 + 0.9 * rockSample(vRockWorld.zyx, rockBlend.zyx, ${ROCK_DETAIL_TILE_METRES.toFixed(1)}));
             diffuseColor.rgb = mix(diffuseColor.rgb, rock, vRockWeight);
-          }`)
+          }
+          diffuseColor.rgb = applySurfaceTint(diffuseColor.rgb, vSurfaceTint);`)
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+          roughnessFactor *= vSurfaceDetail.y;`)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-          normal = normalize(mix(normal, nonPerturbedNormal, vRockWeight * 0.8));`);
+          normal = normalize(mix(normal, nonPerturbedNormal, vRockWeight * 0.8));
+          normal = normalize(mix(nonPerturbedNormal, normal, vSurfaceDetail.x));`);
   };
-  material.customProgramCacheKey = () => 'terrain-rock-layer';
+  material.customProgramCacheKey = () => 'terrain-rock-layer-surface-tint';
 }
 
-/** Shared terrain material; the mesh supplies a planar `uv`, a per-vertex `color` tint and a
- * `rockWeight` for the rock layer. */
+/** Shared terrain material; the mesh supplies a planar `uv`, a per-vertex `color` tint, a
+ * `rockWeight` for the rock layer and the `surfaceTint` / `surfaceDetail` of the surface tint. */
 export function createTerrainMaterial(sand: TerrainTextureSet, rock: THREE.Texture): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
     map: sand.color,

@@ -15,7 +15,7 @@ import {
   withRotatingMass,
   type DrivetrainState,
 } from './drivetrain';
-import { rollingResistanceFor } from './terrainGrip';
+import type { GroundGrip } from './terrainGrip';
 
 /** How far (m) R lifts a car before it stands it on its wheels; the client and the server use the same. */
 export const RESET_LIFT = 3;
@@ -30,7 +30,8 @@ export interface Quaternion {
 export interface VehiclePhysics {
   body: RAPIER.RigidBody;
   controller: RAPIER.DynamicRayCastVehicleController;
-  applyInput(input: InputMsg, grip: number): void;
+  /** One step of driver input on the ground under the car. */
+  applyInput(input: InputMsg, ground: GroundGrip): void;
   update(dt: number): void;
   steerAngle(): number;
   speed(): number;
@@ -169,7 +170,8 @@ export function createVehiclePhysics(
   return {
     body,
     controller,
-    applyInput(input: InputMsg, grip: number) {
+    applyInput(input: InputMsg, ground: GroundGrip) {
+      const { grip } = ground;
       const dt = world.timestep;
       const alongNose = forwardSpeed();
       const intent = pedalIntent(input.throttle, input.brake, alongNose);
@@ -207,7 +209,7 @@ export function createVehiclePhysics(
         intent,
         forwardSpeed: alongNose,
         grip,
-        rollingResistance: rollingResistanceFor(grip),
+        rollingResistance: ground.rollingResistance,
         normalForce,
         drivenNormalForce,
         brakeForce: config.brakeForce,

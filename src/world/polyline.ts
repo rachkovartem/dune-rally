@@ -127,24 +127,41 @@ export function nearestOnPolyline(
   x: number,
   z: number,
 ): SegmentHit | null {
-  let best: SegmentHit | null = null;
+  // Squared distances pick the winner; only the winner's distance is taken as a square root.
+  let bestIndex = -1;
+  let bestSquared = Infinity;
+  let bestT = 0;
   for (const segmentIndex of segmentIndices) {
     if (!Number.isInteger(segmentIndex) || segmentIndex < 0 || segmentIndex >= points.length - 1) {
       throw new Error(`nearestOnPolyline: no segment ${segmentIndex} in a line of ${points.length} points`);
     }
-    const a = points[segmentIndex];
-    const b = points[segmentIndex + 1];
-    const hit = segDist(x, z, a.x, a.z, b.x, b.z);
-    if (best && hit.dist >= best.distance) continue;
-    const cross = (b.x - a.x) * (z - a.z) - (b.z - a.z) * (x - a.x);
-    best = {
-      distance: hit.dist,
-      t: hit.t,
-      side: cross >= 0 ? 1 : -1,
-      x: a.x + (b.x - a.x) * hit.t,
-      z: a.z + (b.z - a.z) * hit.t,
-      segmentIndex,
-    };
+    const start = points[segmentIndex];
+    const end = points[segmentIndex + 1];
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const lengthSquared = dx * dx + dz * dz;
+    let t = lengthSquared > 0 ? ((x - start.x) * dx + (z - start.z) * dz) / lengthSquared : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const offsetX = x - (start.x + t * dx);
+    const offsetZ = z - (start.z + t * dz);
+    const squared = offsetX * offsetX + offsetZ * offsetZ;
+    if (squared >= bestSquared) continue;
+    bestSquared = squared;
+    bestIndex = segmentIndex;
+    bestT = t;
   }
-  return best;
+  if (bestIndex < 0) return null;
+  const start = points[bestIndex];
+  const end = points[bestIndex + 1];
+  const closestX = start.x + (end.x - start.x) * bestT;
+  const closestZ = start.z + (end.z - start.z) * bestT;
+  const cross = (end.x - start.x) * (z - start.z) - (end.z - start.z) * (x - start.x);
+  return {
+    distance: Math.hypot(x - closestX, z - closestZ),
+    t: bestT,
+    side: cross >= 0 ? 1 : -1,
+    x: closestX,
+    z: closestZ,
+    segmentIndex: bestIndex,
+  };
 }

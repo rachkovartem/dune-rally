@@ -29,6 +29,18 @@ export const CAMERA_MODE_LABELS: Readonly<Record<CameraModeId, string>> = {
   cinematic: 'Кино',
 };
 
+/** What the banner says for «Салон» on a car whose model has no inside. */
+export const COCKPIT_WITHOUT_CABIN_LABEL = 'Салон (нет салона — вид с капота)';
+
+export function cameraModeLabelFor(mode: CameraModeId, hasCabin: boolean): string {
+  return mode === 'cockpit' && !hasCabin ? COCKPIT_WITHOUT_CABIN_LABEL : CAMERA_MODE_LABELS[mode];
+}
+
+/** A car without a cabin has nothing to sit in, so its cockpit view is the bonnet view. */
+export function mountedViewPointsFor(measured: CarViewPoints, hasCabin: boolean): CarViewPoints {
+  return hasCabin ? measured : { ...measured, cockpit: measured.hood };
+}
+
 export const CAMERA_MODE_STORAGE_KEY = 'dune-rally.cameraMode';
 export const DEFAULT_CAMERA_MODE: CameraModeId = 'close';
 
@@ -260,9 +272,10 @@ export class CameraRig {
   private viewPointsOf(car: THREE.Object3D, carId: CarId): CarViewPoints {
     const known = this.viewPoints.get(car);
     if (known) return known;
-    const measured = carViewPointsFrom(sampleCarBody(car), carDefinitionFor(carId).driverSide);
-    this.viewPoints.set(car, measured);
-    return measured;
+    const definition = carDefinitionFor(carId);
+    const points = mountedViewPointsFor(carViewPointsFrom(sampleCarBody(car), definition.driverSide), definition.hasCabin);
+    this.viewPoints.set(car, points);
+    return points;
   }
 
   private updateMounted(car: THREE.Object3D, point: CarPoint, dt: number): void {

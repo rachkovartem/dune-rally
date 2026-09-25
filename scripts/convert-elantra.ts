@@ -10,14 +10,17 @@ import { dedup, joinPrimitives, meshopt, prune, simplifyPrimitive, weldPrimitive
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import {
   ELANTRA_BADGE_COMPONENTS,
+  ELANTRA_COMPONENT_SLOTS,
   ELANTRA_RAW_ROLES,
   ELANTRA_TRIANGLE_TARGETS,
   classifyElantraPart,
   elantraBadgeReasonOf,
   elantraCarSpacePoint,
+  elantraComponentSlotOf,
   elantraMaterialSlotFor,
   elantraPlateQuad,
   elantraRawKeyOf,
+  type ElantraBodySlot,
   type ElantraDeletionReason,
   type ElantraTargetKey,
   type ElantraVector,
@@ -136,6 +139,39 @@ function withoutBadges(
     kept.push(soup.indices[triangle * 3], soup.indices[triangle * 3 + 1], soup.indices[triangle * 3 + 2]);
   }
   return { positions: soup.positions, indices: new Uint32Array(kept) };
+}
+
+/** Splits off the connected components the rules move to another body slot. */
+function splitByComponentSlot(rawKey: string, soup: TriangleSoup): { kept: TriangleSoup; moved: { slot: ElantraBodySlot; soup: TriangleSoup }[] } {
+  if (!ELANTRA_COMPONENT_SLOTS[rawKey]) return { kept: soup, moved: [] };
+  const { components, componentOfTriangle } = connectedComponents(soup);
+  const slotOfComponent = new Map<number, ElantraBodySlot>();
+  for (const component of components) {
+    const box = {
+      min: { x: component.min[0], y: component.min[1], z: component.min[2] },
+      max: { x: component.max[0], y: component.max[1], z: component.max[2] },
+    };
+    const slot = elantraComponentSlotOf(rawKey, box);
+    if (slot) slotOfComponent.set(component.id, slot);
+  }
+  if (slotOfComponent.size === 0) throw new Error(`convert-elantra: the component slot rule for "${rawKey}" matched nothing`);
+  const kept: number[] = [];
+  const movedIndices = new Map<ElantraBodySlot, number[]>();
+  for (let triangle = 0; triangle < componentOfTriangle.length; triangle++) {
+    const corners = [soup.indices[triangle * 3], soup.indices[triangle * 3 + 1], soup.indices[triangle * 3 + 2]];
+    const slot = slotOfComponent.get(componentOfTriangle[triangle]);
+    if (!slot) {
+      kept.push(...corners);
+      continue;
+    }
+    const list = movedIndices.get(slot) ?? [];
+    list.push(...corners);
+    movedIndices.set(slot, list);
+  }
+  return {
+    kept: { positions: soup.positions, indices: new Uint32Array(kept) },
+    moved: [...movedIndices].map(([slot, indices]) => ({ slot, soup: { positions: soup.positions, indices: new Uint32Array(indices) } })),
+  };
 }
 
 function primitiveFromSoup(doc: Document, soup: TriangleSoup, hub: ElantraVector | null): Primitive {
@@ -259,6 +295,7 @@ async function main(): Promise<void> {
   // 1. Classify every raw primitive in car space: delete it, or put it in the group of its clean id.
   const groups = new Map<string, PartGroup>();
   const deletedTriangles = new Map<ElantraDeletionReason, number>();
+  const movedTriangles: string[] = [];
   const seenKeys = new Set<string>();
   let rawTriangles = 0;
   for (const node of source.getRoot().listNodes()) {
@@ -274,17 +311,19 @@ async function main(): Promise<void> {
         deletedTriangles.set(decision.reason, (deletedTriangles.get(decision.reason) ?? 0) + soup.indices.length / 3);
         continue;
       }
-      const kept = withoutBadges(rawKey, soup, decision.hub, deletedTriangles);
-      const group = groups.get(decision.cleanId) ?? {
-        slot: decision.slot,
-        targetKey: decision.targetKey,
-        hub: decision.hub,
-        primitives: [],
-        rawParts: 0,
+      const { kept, moved } = splitByComponentSlot(rawKey, withoutBadges(rawKey, soup, decision.hub, deletedTriangles));
+      const addToGroup = (cleanId: string, slot: CarMaterialSlot, targetKey: ElantraTargetKey, hub: ElantraVector | null, part: TriangleSoup): void => {
+        const group = groups.get(cleanId) ?? { slot, targetKey, hub, primitives: [], rawParts: 0 };
+        group.primitives.push(primitiveFromSoup(doc, part, hub));
+        group.rawParts++;
+        groups.set(cleanId, group);
       };
-      group.primitives.push(primitiveFromSoup(doc, kept, decision.hub));
-      group.rawParts++;
-      groups.set(decision.cleanId, group);
+      addToGroup(decision.cleanId, decision.slot, decision.targetKey, decision.hub, kept);
+      for (const piece of moved) {
+        // Body slots are their own clean ids, and a moved piece is never part of a wheel.
+        addToGroup(piece.slot, piece.slot, piece.slot, null, piece.soup);
+        movedTriangles.push(`${piece.soup.indices.length / 3} triangles of ${rawKey} -> ${piece.slot}`);
+      }
     }
   }
   const unusedKeys = Object.keys(ELANTRA_RAW_ROLES).filter((rawKey) => !seenKeys.has(rawKey));
@@ -356,6 +395,7 @@ async function main(): Promise<void> {
   report.sort((rowA, rowB) => rowB.after - rowA.after);
   console.log(`Deleted badge triangles (${[...deletedTriangles.values()].reduce((sum, count) => sum + count, 0)}):`);
   for (const [reason, count] of deletedTriangles) console.log(`  ${reason.padEnd(16)}${count}`);
+  for (const line of movedTriangles) console.log(`Moved: ${line}`);
   console.log('clean id            slot        raw   before   target    after');
   for (const row of report) {
     console.log(

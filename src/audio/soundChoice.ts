@@ -23,6 +23,7 @@ export interface SoundSettings {
 const DEFAULT_LAYERS: Readonly<Record<CarId, Readonly<Record<LayerName, string>>>> = {
   forester: { idle: 'f-idle-outback-730', low: 'f-low-outback-1430', mid: 'f-mid-outback-2730', high: 'f-high-fa20-5000' },
   pajero: { idle: 'p-idle-pajero-exhaust-1040', low: 'p-low-tdi-1225', mid: 'p-mid-tdi-1650', high: 'p-high-peugeot-2900' },
+  elantra: { idle: 'e-idle-forester-700', low: 'e-low-outback-1350', mid: 'e-mid-outback-2500', high: 'e-high-fa20-4600' },
 };
 
 export function defaultCarChoice(carId: CarId): CarSoundChoice {

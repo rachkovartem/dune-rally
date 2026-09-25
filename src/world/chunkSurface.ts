@@ -3,7 +3,7 @@
 // so the main thread does not call coverAt once per vertex.
 import { CHUNK_SIZE, CHUNK_RES, chunkOrigin, type ChunkCoord } from './chunk';
 import { VERTS_PER_SIDE } from './heightfieldData';
-import { coverIndex, type Biome } from './biome';
+import { coverIndex, surfaceTintAt, surfaceTintIndex, type Biome } from './biome';
 import type { Height2D } from './noise';
 
 export interface ChunkSurface {
@@ -13,7 +13,12 @@ export interface ChunkSurface {
   covers: Uint8Array;
 }
 
-export function generateChunkSurface(height: Height2D, biome: Biome, chunk: ChunkCoord): ChunkSurface {
+export interface TintedChunkSurface extends ChunkSurface {
+  /** Same layout as `heights`; each value is a `surfaceTintIndex`. */
+  tints: Uint8Array;
+}
+
+export function generateChunkSurface(height: Height2D, biome: Biome, chunk: ChunkCoord): TintedChunkSurface {
   const origin = chunkOrigin(chunk);
   const step = CHUNK_SIZE / CHUNK_RES;
   // One extra ring of samples around the chunk, so the edge vertices get the same central
@@ -30,6 +35,7 @@ export function generateChunkSurface(height: Height2D, biome: Biome, chunk: Chun
 
   const heights = new Float32Array(VERTS_PER_SIDE * VERTS_PER_SIDE);
   const covers = new Uint8Array(VERTS_PER_SIDE * VERTS_PER_SIDE);
+  const tints = new Uint8Array(VERTS_PER_SIDE * VERTS_PER_SIDE);
   for (let row = 0; row < VERTS_PER_SIDE; row++) {
     const z = origin.z + row * step;
     for (let col = 0; col < VERTS_PER_SIDE; col++) {
@@ -41,8 +47,10 @@ export function generateChunkSurface(height: Height2D, biome: Biome, chunk: Chun
       ) / (2 * step);
       const index = row * VERTS_PER_SIDE + col;
       heights[index] = groundHeight;
-      covers[index] = coverIndex(biome.coverAt(x, z, groundHeight, slope));
+      const cover = biome.coverAt(x, z, groundHeight, slope);
+      covers[index] = coverIndex(cover);
+      tints[index] = surfaceTintIndex(surfaceTintAt(x, z, cover));
     }
   }
-  return { heights, covers };
+  return { heights, covers, tints };
 }

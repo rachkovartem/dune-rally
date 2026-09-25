@@ -17,6 +17,8 @@ export interface TerrainChunkResult {
   heights: Float32Array;
   /** Same layout as `heights`; each value is a `coverIndex`. */
   covers: Uint8Array;
+  /** Same layout as `heights`; each value is a `surfaceTintIndex`. */
+  tints: Uint8Array;
 }
 
 export interface TerrainFarResult { kind: 'far'; grid: FarGrid }
@@ -44,7 +46,7 @@ self.onmessage = (event: MessageEvent<TerrainWorkerJob>) => {
     self.postMessage(result, { transfer: [grid.heights.buffer, grid.covers.buffer] });
     return;
   }
-  const { heights, covers } = generateChunkSurface(world.height, world.biome, { cx: job.cx, cz: job.cz });
-  const result: TerrainChunkResult = { kind: 'chunk', cx: job.cx, cz: job.cz, heights, covers };
-  self.postMessage(result, { transfer: [heights.buffer, covers.buffer] });
+  const { heights, covers, tints } = generateChunkSurface(world.height, world.biome, { cx: job.cx, cz: job.cz });
+  const result: TerrainChunkResult = { kind: 'chunk', cx: job.cx, cz: job.cz, heights, covers, tints };
+  self.postMessage(result, { transfer: [heights.buffer, covers.buffer, tints.buffer] });
 };

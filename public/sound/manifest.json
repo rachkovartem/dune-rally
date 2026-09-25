@@ -584,6 +584,72 @@
     "sourceLevelDb": -15.3,
     "note": "Peugeot BlueHDi top of a free rev (plateau 16.8-17.6 s), very short loop"
    }
+  ],
+  "elantra": [
+   {
+    "id": "e-idle-forester-700",
+    "layer": "idle",
+    "file": "forester/f-idle-forester-760.wav",
+    "rpm": 700,
+    "sourceId": 397351,
+    "sourceTitle": "Forester engine",
+    "author": "Ykropiw",
+    "licence": "CC0",
+    "sourceStart": 5,
+    "sourceEnd": 8.08,
+    "seconds": 3,
+    "method": "steady",
+    "sourceLevelDb": -22.8,
+    "note": "Forester loop f-idle-forester-760 reused for the Elantra inline-4 until its own set exists; recorded rpm set about 8 % low so it plays brighter"
+   },
+   {
+    "id": "e-low-outback-1350",
+    "layer": "low",
+    "file": "forester/f-low-outback-1430.wav",
+    "rpm": 1350,
+    "sourceId": 825222,
+    "sourceTitle": "Subaru Engine Sound 2013 Outback 2.5L (FB25, CVT)",
+    "author": "Tom_Kaszuba",
+    "licence": "CC-BY",
+    "sourceStart": 460,
+    "sourceEnd": 463.08,
+    "seconds": 3,
+    "method": "steady",
+    "sourceLevelDb": -23.3,
+    "note": "Forester loop f-low-outback-1430 reused for the Elantra inline-4 until its own set exists; recorded rpm set about 8 % low so it plays brighter"
+   },
+   {
+    "id": "e-mid-outback-2500",
+    "layer": "mid",
+    "file": "forester/f-mid-outback-2730.wav",
+    "rpm": 2500,
+    "sourceId": 825222,
+    "sourceTitle": "Subaru Engine Sound 2013 Outback 2.5L (FB25, CVT)",
+    "author": "Tom_Kaszuba",
+    "licence": "CC-BY",
+    "sourceStart": 664.5,
+    "sourceEnd": 667.58,
+    "seconds": 3,
+    "method": "steady",
+    "sourceLevelDb": -15.7,
+    "note": "Forester loop f-mid-outback-2730 reused for the Elantra inline-4 until its own set exists; recorded rpm set about 8 % low so it plays brighter"
+   },
+   {
+    "id": "e-high-fa20-4600",
+    "layer": "high",
+    "file": "forester/f-high-fa20-5000.wav",
+    "rpm": 4600,
+    "sourceId": 183654,
+    "sourceTitle": "FR-S / BRZ FA20 dyno pull",
+    "author": "dezoris",
+    "licence": "CC0",
+    "sourceStart": 13.2,
+    "sourceEnd": 15.79,
+    "seconds": 2.5,
+    "method": "dechirp",
+    "sourceLevelDb": -18.8,
+    "note": "Forester loop f-high-fa20-5000 reused for the Elantra inline-4 until its own set exists; recorded rpm set about 8 % low so it plays brighter"
+   }
   ]
  }
 }

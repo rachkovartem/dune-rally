@@ -186,10 +186,10 @@ export class TerrainManager {
     this.mostBuildsInOneFrame = Math.max(this.mostBuildsInOneFrame, builds);
   }
 
-  private buildChunk(key: string, { cx, cz, heights, covers }: TerrainChunkResult): void {
+  private buildChunk(key: string, { cx, cz, heights, covers, tints }: TerrainChunkResult): void {
     const started = performance.now();
     const origin = chunkOrigin({ cx, cz });
-    const mesh = buildTerrainMesh({ heights, covers }, origin.x, origin.z);
+    const mesh = buildTerrainMesh({ heights, covers, tints }, origin.x, origin.z);
     this.scene.add(mesh);
     this.meshes.set(key, mesh);
     this.drawnChunks.set(key, { cx, cz });

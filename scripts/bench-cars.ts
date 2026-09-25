@@ -1,17 +1,16 @@
 // scripts/bench-cars.ts
-// Prints the car comparison numbers (spec C2.6–C2.12) for every car on road and sand grip, the
-// real-gravity checks of plan v3 S0-4, the FWD and underbody checks of the Elantra addendum (E2),
-// and a PASS/FAIL line per target. Exit code 1 on any FAIL.
+// Prints the car numbers (spec C2.6–C2.12, plan v3 S0-4 real gravity, Elantra E2, plan v3 S2-3
+// ground: salt, gravel, sand, Die Myl) with a PASS/FAIL line per target; exit code 1 on any FAIL.
 // Run: npx tsx scripts/bench-cars.ts
 import RAPIER from '@dimforge/rapier3d-compat';
-import { VEHICLE_IDS } from '../src/vehicle/cars';
+import { CAR_IDS } from '../src/vehicle/cars';
 import { restingSuspensionLength, vehicleConfigFor } from '../src/vehicle/vehicleConfig';
-import { terrainGripFor } from '../shared/terrainGrip';
+import { FULL_GRIP, groundGripFor } from '../shared/terrainGrip';
 import {
-  chassisBottomOf, createBenchCar, runBraking, runCrest, runDropSettle, runHillClimb, runRidge, runRollover,
+  chassisBottomOf, createBenchCar, runBraking, runCrest, runDropSettle, runGroundLine, runHillClimb, runRidge, runRollover,
   runStraightLine, runTurn, speedAt, stepBenchCar,
 } from '../shared/carBench';
-import type { VehicleId } from '../src/vehicle/cars';
+import type { CarId } from '../src/vehicle/cars';
 
 const KMH = 3.6;
 const DEGREES = 180 / Math.PI;
@@ -28,16 +27,16 @@ const rows: string[][] = [[
 const speedAt5: Record<string, number> = {};
 const results: Record<string, { timeTo100: number | null; topSpeed: number; rollAt60: number; headingAt60: number; flipped: boolean }> = {};
 
-for (const carId of VEHICLE_IDS) {
+for (const carId of CAR_IDS) {
   const config = vehicleConfigFor(carId);
   for (const surface of surfaces) {
-    const grip = terrainGripFor(surface, config);
-    const straight = runStraightLine(config, grip, 70);
+    const ground = groundGripFor(surface, config);
+    const straight = runStraightLine(config, ground, 70);
     speedAt5[`${carId}:${surface}`] = speedAt(straight, 5);
-    const braking = runBraking(config, grip, 100 / KMH);
-    const fromStandstill = runTurn(config, { entrySpeed: 0, seconds: 5, steer: -1, grip });
-    const at60 = runTurn(config, { entrySpeed: 60 / KMH, seconds: 5, steer: -1, grip });
-    const atTop = runTurn(config, { entrySpeed: straight.topSpeed * 0.97, seconds: 3, steer: -1, grip });
+    const braking = runBraking(config, ground, 100 / KMH);
+    const fromStandstill = runTurn(config, { entrySpeed: 0, seconds: 5, steer: -1, ground });
+    const at60 = runTurn(config, { entrySpeed: 60 / KMH, seconds: 5, steer: -1, ground });
+    const atTop = runTurn(config, { entrySpeed: straight.topSpeed * 0.97, seconds: 3, steer: -1, ground });
     results[`${carId}:${surface}`] = {
       timeTo100: straight.timeTo100,
       topSpeed: straight.topSpeed,
@@ -46,7 +45,7 @@ for (const carId of VEHICLE_IDS) {
       flipped: at60.flipped || atTop.flipped,
     };
     rows.push([
-      carId, surface, grip.toFixed(2),
+      carId, surface, ground.grip.toFixed(2),
       secondsOrDash(straight.timeTo60), secondsOrDash(straight.timeTo100),
       kmh(speedAt(straight, 5)), kmh(speedAt(straight, 10)), kmh(speedAt(straight, 20)), kmh(straight.topSpeed),
       braking.distance.toFixed(1),
@@ -65,8 +64,8 @@ const gap = (surface: string): number => 1 - speedAt5[`pajero:${surface}`] / spe
 console.log(`\nC2.12 Pajero speed gap at 5 s: road ${(gap('road') * 100).toFixed(1)}%, sand ${(gap('sand') * 100).toFixed(1)}%`);
 
 console.log('\nGear / rpm trace, full throttle on road (every second):');
-for (const carId of VEHICLE_IDS) {
-  const straight = runStraightLine(vehicleConfigFor(carId), 1, 12);
+for (const carId of CAR_IDS) {
+  const straight = runStraightLine(vehicleConfigFor(carId), FULL_GRIP, 12);
   const trace = straight.samples
     .filter((_, index) => (index + 1) % 60 === 0)
     .map((sample) => `${sample.time.toFixed(0)}s ${kmh(sample.speed)} km/h g${sample.gear} ${sample.rpm.toFixed(0)}rpm`);
@@ -74,13 +73,13 @@ for (const carId of VEHICLE_IDS) {
 }
 
 console.log('\nSteering direction: D (steer +1) for 3 s from standstill:');
-for (const carId of VEHICLE_IDS) {
-  const right = runTurn(vehicleConfigFor(carId), { entrySpeed: 0, seconds: 3, steer: 1, grip: 1 });
+for (const carId of CAR_IDS) {
+  const right = runTurn(vehicleConfigFor(carId), { entrySpeed: 0, seconds: 3, steer: 1, ground: FULL_GRIP });
   console.log(`${carId}: heading change ${(right.headingChange * DEGREES).toFixed(0)}° (negative = turned right)`);
 }
 
 console.log('\nRollover: on the roof at 10 m/s heading 90°, full throttle 3 s, then R and W 3 s:');
-for (const carId of VEHICLE_IDS) {
+for (const carId of CAR_IDS) {
   const rollover = runRollover(vehicleConfigFor(carId), Math.PI / 2, 10);
   console.log(
     `${carId}: wheels in contact on roof max ${rollover.maxWheelsInContactUpsideDown}, `
@@ -91,12 +90,12 @@ for (const carId of VEHICLE_IDS) {
 }
 
 console.log('\nReverse: hold S for 8 s from a standstill:');
-const reverseSpeeds: Partial<Record<VehicleId, number>> = {};
-for (const carId of VEHICLE_IDS) {
+const reverseSpeeds: Partial<Record<CarId, number>> = {};
+for (const carId of CAR_IDS) {
   const car = createBenchCar(vehicleConfigFor(carId));
   let slowest = 0;
   while (car.time < 8) {
-    stepBenchCar(car, { throttle: 0, brake: 1, steer: 0 }, 1);
+    stepBenchCar(car, { throttle: 0, brake: 1, steer: 0 }, FULL_GRIP);
     slowest = Math.min(slowest, car.vehicle.forwardSpeed());
   }
   reverseSpeeds[carId] = -slowest;
@@ -118,8 +117,8 @@ interface GroundChecks {
   sandClimb: ReturnType<typeof runHillClimb>;
   drop: ReturnType<typeof runDropSettle>;
 }
-const checks: Partial<Record<VehicleId, GroundChecks>> = {};
-for (const carId of VEHICLE_IDS) {
+const checks: Partial<Record<CarId, GroundChecks>> = {};
+for (const carId of CAR_IDS) {
   const config = vehicleConfigFor(carId);
   const resting = restingSuspensionLength(config.wheel);
   const settled = createBenchCar(config);
@@ -132,8 +131,8 @@ for (const carId of VEHICLE_IDS) {
     measuredResting,
     droop: config.wheel.suspensionRestLength - resting,
     crest: runCrest(config, CREST_RADIUS, CREST_SPEED),
-    rockClimb: runHillClimb(config, ROCK_FACE_SLOPE, terrainGripFor('rock', config)),
-    sandClimb: runHillClimb(config, SLIP_FACE_SLOPE, terrainGripFor('sand', config)),
+    rockClimb: runHillClimb(config, ROCK_FACE_SLOPE, groundGripFor('rock', config)),
+    sandClimb: runHillClimb(config, SLIP_FACE_SLOPE, groundGripFor('sand', config)),
     drop: runDropSettle(config, DROP_HEIGHT),
   };
   checks[carId] = result;
@@ -153,14 +152,14 @@ const verdict = (label: string, pass: boolean, value: string): void => {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${label}: ${value}`);
 };
 const within = (value: number | null, low: number, high: number): boolean => value !== null && value >= low && value <= high;
-const DEGREES_LIMIT: Record<VehicleId, number> = { forester: 4, pajero: 6, elantra: 3.5 };
+const DEGREES_LIMIT: Record<CarId, number> = { forester: 4, pajero: 6, elantra: 3.5 };
 // Elantra AD 2.0 6AT: about 9–10 s and 190–205 km/h (approximate, not one source). Its 200 km/h
 // governor fades the force over a band, so it settles a little above 200.
-const ZERO_TO_100: Record<VehicleId, [number, number]> = { forester: [8.5, 9.5], pajero: [11.0, 12.5], elantra: [9.0, 10.0] };
-const TOP_SPEED: Record<VehicleId, [number, number]> = { forester: [185, 200], pajero: [170, 180], elantra: [190, 205] };
+const ZERO_TO_100: Record<CarId, [number, number]> = { forester: [8.5, 9.5], pajero: [11.0, 12.5], elantra: [9.0, 10.0] };
+const TOP_SPEED: Record<CarId, [number, number]> = { forester: [185, 200], pajero: [170, 180], elantra: [190, 205] };
 // The Elantra value is provisional: the visual fit is set again when its body model lands.
-const RESTING_TARGET: Record<VehicleId, number> = { forester: 0.481, pajero: 0.353, elantra: 0.293 };
-for (const carId of VEHICLE_IDS) {
+const RESTING_TARGET: Record<CarId, number> = { forester: 0.481, pajero: 0.353, elantra: 0.293 };
+for (const carId of CAR_IDS) {
   const road = results[`${carId}:road`];
   const sand = results[`${carId}:sand`];
   const ground = checks[carId];
@@ -198,11 +197,13 @@ console.log('\nFWD and underbody (Elantra addendum E2):');
 const ROAD_SLOPE = 0.35;
 const ROCK_SLOPE = 0.4;
 const DUNE_SAND_SLOPE = 0.25;
-// 8° ramps make the Elantra's belly scrape while its wheels still pull it over; at 12° it hangs.
-const SCRAPE_RIDGE_ANGLE = 8;
-const RIDGE_ANGLE = 12;
+// With the belly at the sill (0.2 m), 9° ramps make the Elantra scrape while its wheels still pull
+// it over; from 13° it hangs (14° keeps a margin). The Forester's belly never touches either.
+const SCRAPE_RIDGE_ANGLE = 9;
+const RIDGE_ANGLE = 14;
 const RIDGE_SPEED = 10 / KMH;
-const UNDERBODY_TARGET = 0.15;
+// The model's visible sill (0.202 m), so the body does not sink into the ground before it scrapes.
+const UNDERBODY_TARGET = 0.2;
 interface TerrainChecks {
   settledBottom: number;
   roadSlope: ReturnType<typeof runHillClimb>;
@@ -211,15 +212,15 @@ interface TerrainChecks {
   scrapeRidge: ReturnType<typeof runRidge>;
   ridge: ReturnType<typeof runRidge>;
 }
-const terrain: Partial<Record<VehicleId, TerrainChecks>> = {};
-for (const carId of VEHICLE_IDS) {
+const terrain: Partial<Record<CarId, TerrainChecks>> = {};
+for (const carId of CAR_IDS) {
   const config = vehicleConfigFor(carId);
   const settled = createBenchCar(config);
   const result: TerrainChecks = {
     settledBottom: chassisBottomOf(settled.vehicle, config),
-    roadSlope: runHillClimb(config, ROAD_SLOPE, terrainGripFor('road', config)),
-    rockSlope: runHillClimb(config, ROCK_SLOPE, terrainGripFor('rock', config)),
-    duneSandSlope: runHillClimb(config, DUNE_SAND_SLOPE, terrainGripFor('sand', config)),
+    roadSlope: runHillClimb(config, ROAD_SLOPE, groundGripFor('road', config)),
+    rockSlope: runHillClimb(config, ROCK_SLOPE, groundGripFor('rock', config)),
+    duneSandSlope: runHillClimb(config, DUNE_SAND_SLOPE, groundGripFor('sand', config)),
     scrapeRidge: runRidge(config, SCRAPE_RIDGE_ANGLE, RIDGE_SPEED),
     ridge: runRidge(config, RIDGE_ANGLE, RIDGE_SPEED),
   };
@@ -263,5 +264,52 @@ verdict(`elantra hangs on the ${RIDGE_ANGLE}° ridge at ${kmh(RIDGE_SPEED)} km/h
   `elantra stuck ${elantraTerrain.ridge.stuckSeconds.toFixed(1)} s, forester crossed ${foresterTerrain.ridge.crossed}`);
 verdict('elantra gap to forester at 5 s bigger on sand than on road', elantraGap('sand') > elantraGap('road'),
   `road ${(elantraGap('road') * 100).toFixed(1)}%, sand ${(elantraGap('sand') * 100).toFixed(1)}%`);
+console.log('\nGround (plan v3 S2-3, AC7): speed after 3 s of full throttle from a stop:');
+// The design's riverbed sand and dune sand are the same cover, so they give the same numbers.
+const GROUND_SURFACES = ['salt', 'gravel', 'sand'] as const;
+const LAUNCH_SECONDS = 3;
+const launch: Partial<Record<CarId, Record<(typeof GROUND_SURFACES)[number], number>>> = {};
+for (const carId of CAR_IDS) {
+  const config = vehicleConfigFor(carId);
+  const speeds = { salt: 0, gravel: 0, sand: 0 };
+  for (const surface of GROUND_SURFACES) speeds[surface] = speedAt(runStraightLine(config, groundGripFor(surface, config), LAUNCH_SECONDS), LAUNCH_SECONDS);
+  launch[carId] = speeds;
+  const ground = (surface: (typeof GROUND_SURFACES)[number]): string => {
+    const grip = groundGripFor(surface, config);
+    return `${surface} ${kmh(speeds[surface])} km/h (grip ${grip.grip.toFixed(2)}, RR ${grip.rollingResistance.toFixed(3)})`;
+  };
+  console.log(`${carId}: ${GROUND_SURFACES.map(ground).join(' · ')}`);
+}
+for (const carId of CAR_IDS) {
+  const speeds = launch[carId];
+  if (!speeds) throw new Error(`bench: no launch numbers for ${carId}`);
+  verdict(`${carId} fastest on salt, slowest on sand after ${LAUNCH_SECONDS} s`, speeds.salt > speeds.gravel && speeds.gravel > speeds.sand,
+    `salt ${kmh(speeds.salt)}, gravel ${kmh(speeds.gravel)}, sand ${kmh(speeds.sand)} km/h`);
+}
+const pajeroLaunch = launch.pajero;
+const foresterLaunch = launch.forester;
+if (!pajeroLaunch || !foresterLaunch) throw new Error('bench: missing launch numbers');
+verdict('pajero faster than forester on dune sand after 3 s', pajeroLaunch.sand > foresterLaunch.sand,
+  `${kmh(pajeroLaunch.sand)} vs ${kmh(foresterLaunch.sand)} km/h`);
+
+console.log('\nDie Myl (AC1): full throttle from a stop, 900 m of gravel then 1350 m of salt:');
+const MYL_GRAVEL = 900;
+const MYL_SALT = 1350;
+const MYL_MIN_SECONDS = 45;
+const MYL_MIN_SPEED = 180;
+for (const carId of CAR_IDS) {
+  const config = vehicleConfigFor(carId);
+  const run = runGroundLine(config, [
+    { length: MYL_GRAVEL, ground: groundGripFor('gravel', config) },
+    { length: MYL_SALT, ground: groundGripFor('salt', config) },
+  ], 180);
+  console.log(`${carId}: ${run.seconds === null ? 'did not finish' : `${run.seconds.toFixed(1)} s`}, `
+    + `${kmh(run.speedAtEndOf[0])} km/h at the pan edge, ${kmh(run.speedAtEndOf[1])} km/h at the west shore, top ${kmh(run.topSpeed)}`);
+  if (carId === 'forester') {
+    verdict(`forester Die Myl takes ≥ ${MYL_MIN_SECONDS} s and reaches ≥ ${MYL_MIN_SPEED} km/h`,
+      run.seconds !== null && run.seconds >= MYL_MIN_SECONDS && run.topSpeed * KMH >= MYL_MIN_SPEED,
+      `${run.seconds === null ? '—' : run.seconds.toFixed(1)} s, ${kmh(run.topSpeed)} km/h`);
+  }
+}
 console.log(failures === 0 ? '\nAll targets PASS.' : `\n${failures} target(s) FAIL.`);
 process.exitCode = failures === 0 ? 0 : 1;

@@ -7,6 +7,7 @@ import type { VehicleConfig } from '../src/vehicle/vehicleConfig';
 import type { InputMsg } from './protocol';
 import { createVehiclePhysics, forwardAxisOf, RESET_LIFT, upAxisOf, type Quaternion, type VehiclePhysics } from './vehiclePhysics';
 import { WORLD_GRAVITY } from './drivetrain';
+import { FULL_GRIP, type GroundGrip } from './terrainGrip';
 
 // Same step as the game's client and server worlds.
 const BENCH_STEP = 1 / 60;
@@ -41,15 +42,15 @@ export function createBenchCar(config: VehicleConfig): BenchCar {
   addFlatGround(world);
   const vehicle = createVehiclePhysics(world, { x: 0, y: 2.5, z: 0 }, config);
   const car: BenchCar = { world, vehicle, time: 0 };
-  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, 1);
+  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, FULL_GRIP);
   car.time = 0;
   return car;
 }
 
 const IDLE: InputMsg = { throttle: 0, brake: 0, steer: 0 };
 
-export function stepBenchCar(car: BenchCar, input: InputMsg, grip: number): void {
-  car.vehicle.applyInput(input, grip);
+export function stepBenchCar(car: BenchCar, input: InputMsg, ground: GroundGrip): void {
+  car.vehicle.applyInput(input, ground);
   car.world.step();
   car.vehicle.update(car.world.timestep);
   car.time += car.world.timestep;
@@ -106,14 +107,14 @@ export interface StraightLineResult {
 }
 
 /** Full throttle from a standstill for `seconds`. */
-export function runStraightLine(config: VehicleConfig, grip: number, seconds: number): StraightLineResult {
+export function runStraightLine(config: VehicleConfig, ground: GroundGrip, seconds: number): StraightLineResult {
   const car = createBenchCar(config);
   const samples: SpeedSample[] = [];
   let timeTo60: number | null = null;
   let timeTo100: number | null = null;
   let topSpeed = 0;
   while (car.time < seconds - 1e-9) {
-    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, grip);
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, ground);
     const speed = car.vehicle.forwardSpeed();
     const drivetrain = car.vehicle.drivetrain();
     samples.push({ time: car.time, speed, rpm: drivetrain.rpm, gear: drivetrain.gear });
@@ -137,19 +138,19 @@ export function speedAt(result: StraightLineResult, time: number): number {
 /** Accelerates up to `fromSpeed`, then holds full brake until the car stops. */
 export function runBraking(
   config: VehicleConfig,
-  grip: number,
+  ground: GroundGrip,
   fromSpeed: number,
 ): { distance: number; seconds: number } {
   const car = createBenchCar(config);
   while (car.vehicle.forwardSpeed() < fromSpeed) {
     if (car.time > 120) throw new Error(`runBraking: the car never reached ${fromSpeed} m/s`);
-    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, grip);
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, ground);
   }
   const start = car.vehicle.body.translation();
   const startTime = car.time;
   while (car.vehicle.forwardSpeed() > 0.3) {
     if (car.time - startTime > 60) throw new Error('runBraking: the car did not stop within 60 s');
-    stepBenchCar(car, { throttle: 0, brake: 1, steer: 0 }, grip);
+    stepBenchCar(car, { throttle: 0, brake: 1, steer: 0 }, ground);
   }
   const end = car.vehicle.body.translation();
   return { distance: Math.hypot(end.x - start.x, end.z - start.z), seconds: car.time - startTime };
@@ -161,7 +162,7 @@ export interface TurnOptions {
   seconds: number;
   /** -1 = full left (A), +1 = full right (D). */
   steer: number;
-  grip: number;
+  ground: GroundGrip;
 }
 
 export interface TurnResult {
@@ -177,7 +178,7 @@ export function runTurn(config: VehicleConfig, options: TurnOptions): TurnResult
   const car = createBenchCar(config);
   while (car.vehicle.forwardSpeed() < options.entrySpeed) {
     if (car.time > 120) throw new Error(`runTurn: the car never reached ${options.entrySpeed} m/s`);
-    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, options.grip);
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, options.ground);
   }
   const startTime = car.time;
   let previousYaw = yawOf(car.vehicle.body.rotation());
@@ -187,7 +188,7 @@ export function runTurn(config: VehicleConfig, options: TurnOptions): TurnResult
   while (car.time - startTime < options.seconds - 1e-9) {
     const holdSpeed = options.entrySpeed > 0;
     const throttle = !holdSpeed || car.vehicle.forwardSpeed() < options.entrySpeed ? 1 : 0;
-    stepBenchCar(car, { throttle, brake: 0, steer: options.steer }, options.grip);
+    stepBenchCar(car, { throttle, brake: 0, steer: options.steer }, options.ground);
     const rotation = car.vehicle.body.rotation();
     const yaw = yawOf(rotation);
     let delta = yaw - previousYaw;
@@ -233,7 +234,7 @@ export function runRollover(config: VehicleConfig, heading: number, slideSpeed: 
   let speedAfterLanding = 0;
   const startTime = car.time;
   while (car.time - startTime < 3) {
-    stepBenchCar(car, full, 1);
+    stepBenchCar(car, full, FULL_GRIP);
     maxWheelsInContactUpsideDown = Math.max(maxWheelsInContactUpsideDown, car.vehicle.wheelsInContact());
     if (car.time - startTime <= 0.5) speedAfterLanding = flatSpeed();
   }
@@ -242,11 +243,11 @@ export function runRollover(config: VehicleConfig, heading: number, slideSpeed: 
 
   car.vehicle.resetUpright(RESET_LIFT);
   const headingAfterReset = yawOf(body.rotation());
-  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, 1);
+  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, FULL_GRIP);
   const before = body.translation();
   const nose = forwardAxisOf(body.rotation());
   const driveStart = car.time;
-  while (car.time - driveStart < 3) stepBenchCar(car, full, 1);
+  while (car.time - driveStart < 3) stepBenchCar(car, full, FULL_GRIP);
   const after = body.translation();
   const progressAlongNose = (after.x - before.x) * nose.x + (after.z - before.z) * nose.z;
 
@@ -258,6 +259,51 @@ export function runRollover(config: VehicleConfig, heading: number, slideSpeed: 
     headingAfterReset,
     progressAlongNose,
   };
+}
+
+export interface GroundStretch {
+  /** Metres of this ground along the line. */
+  length: number;
+  ground: GroundGrip;
+}
+
+export interface GroundLineResult {
+  /** Seconds to cover the whole line, or null when the time limit ran out first. */
+  seconds: number | null;
+  /** Forward speed at the end of each stretch, m/s (0 for a stretch never reached). */
+  speedAtEndOf: readonly number[];
+  topSpeed: number;
+}
+
+/**
+ * Full throttle from a standstill along a straight line whose ground changes stretch by stretch,
+ * like Die Myl: gravel first, then the salt.
+ */
+export function runGroundLine(config: VehicleConfig, stretches: readonly GroundStretch[], timeLimit: number): GroundLineResult {
+  if (stretches.length === 0) throw new Error('runGroundLine: no ground to drive on');
+  const car = createBenchCar(config);
+  const start = car.vehicle.body.translation();
+  const ends: number[] = [];
+  let total = 0;
+  for (const stretch of stretches) {
+    total += stretch.length;
+    ends.push(total);
+  }
+  const speedAtEndOf = stretches.map(() => 0);
+  let stretchIndex = 0;
+  let topSpeed = 0;
+  while (car.time < timeLimit) {
+    const position = car.vehicle.body.translation();
+    const travelled = Math.hypot(position.x - start.x, position.z - start.z);
+    while (stretchIndex < stretches.length && travelled >= ends[stretchIndex]) {
+      speedAtEndOf[stretchIndex] = car.vehicle.forwardSpeed();
+      stretchIndex++;
+    }
+    if (stretchIndex >= stretches.length) return { seconds: car.time, speedAtEndOf, topSpeed };
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, stretches[stretchIndex].ground);
+    topSpeed = Math.max(topSpeed, car.vehicle.forwardSpeed());
+  }
+  return { seconds: null, speedAtEndOf, topSpeed };
 }
 
 /** Holds a forward speed with full throttle below it and none above it. */
@@ -350,12 +396,12 @@ export function runCrest(config: VehicleConfig, crestRadius: number, speed: numb
   addProfileGround(world, profile.heightAt, -50, profile.endZ + 400);
   const vehicle = createVehiclePhysics(world, { x: 0, y: 2.5, z: 0 }, config);
   const car: BenchCar = { world, vehicle, time: 0 };
-  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, 1);
+  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, FULL_GRIP);
   while (vehicle.forwardSpeed() < speed) {
     if (car.time > 120 || vehicle.body.translation().z > CREST_START_Z) {
       throw new Error(`runCrest: the car did not reach ${speed} m/s before the crest`);
     }
-    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, 1);
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, FULL_GRIP);
   }
   let minWheelsInContact = config.wheel.positions.length;
   let airSeconds = 0;
@@ -363,7 +409,7 @@ export function runCrest(config: VehicleConfig, crestRadius: number, speed: numb
   const startTime = car.time;
   while (vehicle.body.translation().z < profile.endZ + 60) {
     if (car.time - startTime > 60) throw new Error('runCrest: the car did not cross the crest within 60 s');
-    stepBenchCar(car, { throttle: throttleToHold(car, speed), brake: 0, steer: 0 }, 1);
+    stepBenchCar(car, { throttle: throttleToHold(car, speed), brake: 0, steer: 0 }, FULL_GRIP);
     const z = vehicle.body.translation().z;
     const contacts = vehicle.wheelsInContact();
     if (z >= profile.convexStartZ && z <= profile.convexEndZ) minWheelsInContact = Math.min(minWheelsInContact, contacts);
@@ -387,11 +433,11 @@ export interface HillClimbResult {
  * Full throttle from a standstill up a straight slope of `slope` (rise over run, tan θ) that
  * climbs HILL_RISE metres, with the car's grip for that ground. The car starts on the slope.
  */
-export function runHillClimb(config: VehicleConfig, slope: number, grip: number): HillClimbResult {
+export function runHillClimb(config: VehicleConfig, slope: number, ground: GroundGrip): HillClimbResult {
   const angle = Math.atan(slope);
   const length = HILL_RISE / Math.sin(angle);
   const world = createBenchWorld();
-  const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  const slopeBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   const tilt = { x: -Math.sin(angle / 2), y: 0, z: 0, w: Math.cos(angle / 2) };
   const normal = { y: Math.cos(angle), z: -Math.sin(angle) };
   // The slope box's top face runs from (0, 0, 0) up to the top edge; its centre sits half a
@@ -400,14 +446,14 @@ export function runHillClimb(config: VehicleConfig, slope: number, grip: number)
     RAPIER.ColliderDesc.cuboid(HILL_HALF_WIDTH, 0.5, length / 2)
       .setRotation(tilt)
       .setTranslation(0, (length / 2) * Math.sin(angle) - 0.5 * normal.y, (length / 2) * Math.cos(angle) - 0.5 * normal.z),
-    ground,
+    slopeBody,
   );
   const topZ = length * Math.cos(angle);
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(HILL_HALF_WIDTH, 0.5, 100).setTranslation(0, HILL_RISE - 0.5, topZ + 100),
-    ground,
+    slopeBody,
   );
-  world.createCollider(RAPIER.ColliderDesc.cuboid(HILL_HALF_WIDTH, 0.5, 100).setTranslation(0, -0.5, -100), ground);
+  world.createCollider(RAPIER.ColliderDesc.cuboid(HILL_HALF_WIDTH, 0.5, 100).setTranslation(0, -0.5, -100), slopeBody);
 
   const startAlong = 4;
   const lift = 1.2;
@@ -421,7 +467,7 @@ export function runHillClimb(config: VehicleConfig, slope: number, grip: number)
   const footHeight = 0;
   let bestProgress = 0;
   while (car.time < HILL_SECONDS) {
-    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, grip);
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, ground);
     const position = vehicle.body.translation();
     // Height of the ground under the car's centre, so a car lying on the slope still counts.
     const groundHeight = Math.min(HILL_RISE, Math.max(footHeight, position.z * slope));
@@ -446,7 +492,7 @@ const DROP_RUN_SECONDS = 5;
 /** Lifts a settled car by `dropHeight`, lets it fall on flat ground and watches it come to rest. */
 export function runDropSettle(config: VehicleConfig, dropHeight: number): DropSettleResult {
   const car = createBenchCar(config);
-  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, 1);
+  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, FULL_GRIP);
   const body = car.vehicle.body;
   const restingY = body.translation().y;
   const start = body.translation();
@@ -459,7 +505,7 @@ export function runDropSettle(config: VehicleConfig, dropHeight: number): DropSe
   let maxBounce = 0;
   let minChassisClearance = chassisBottomOf(car.vehicle, config);
   while (car.time - releaseTime < DROP_RUN_SECONDS) {
-    stepBenchCar(car, IDLE, 1);
+    stepBenchCar(car, IDLE, FULL_GRIP);
     minChassisClearance = Math.min(minChassisClearance, chassisBottomOf(car.vehicle, config));
     const offset = body.translation().y - restingY;
     if (offset < 0) compressed = true;
@@ -500,16 +546,16 @@ export function runRidge(config: VehicleConfig, rampAngleDegrees: number, speed:
   const vehicle = createVehiclePhysics(world, { x: 0, y: 2.5, z: 0 }, config);
   const chassis = vehicle.body.collider(0);
   const car: BenchCar = { world, vehicle, time: 0 };
-  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, 1);
+  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, FULL_GRIP);
   while (vehicle.body.translation().z < RIDGE_START_Z - frontAxleOffset(config)) {
     if (car.time > 120) throw new Error('runRidge: the car did not reach the ridge within 120 s');
-    stepBenchCar(car, { throttle: throttleToHold(car, speed), brake: 0, steer: 0 }, 1);
+    stepBenchCar(car, { throttle: throttleToHold(car, speed), brake: 0, steer: 0 }, FULL_GRIP);
   }
   const startTime = car.time;
   let stuckSeconds = 0;
   let bellyContactSeconds = 0;
   while (car.time - startTime < RIDGE_SECONDS) {
-    stepBenchCar(car, { throttle: throttleToHold(car, speed), brake: 0, steer: 0 }, 1);
+    stepBenchCar(car, { throttle: throttleToHold(car, speed), brake: 0, steer: 0 }, FULL_GRIP);
     if (vehicle.forwardSpeed() < RIDGE_STUCK_SPEED) stuckSeconds += BENCH_STEP;
     let touching = false;
     world.contactPair(chassis, ground, (manifold) => {

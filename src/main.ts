@@ -11,21 +11,21 @@ import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, addFeatureColliders, addSolidPropColliders, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
 import { vehicleConfigFor, type VehicleConfig } from './vehicle/vehicleConfig';
-import { CAR_IDS, type CarId } from './vehicle/cars';
+import { CAR_IDS, DEFAULT_CAR_ID, type CarId } from './vehicle/cars';
 import { terrainSurfaceHeight } from './world/chunkGeometry';
 import { Keyboard } from './input/keyboard';
 import { controlsFromKeys } from './input/controls';
-import { CAMERA_MODE_LABELS, CameraRig, readSavedCameraMode, saveCameraMode } from './render/cameraModes';
+import { CameraRig, cameraModeLabelFor, readSavedCameraMode, saveCameraMode } from './render/cameraModes';
 import { connectToArena, type NetPlayer } from './net/connection';
 import { PlayerViews } from './net/playerViews';
 import { TireTracks } from './render/groundDecals';
 import { Knockables } from './render/knockables';
 import { AudioManager, type RemoteCarPose } from './audio/audio';
 import { POSE_HZ, sanitizeCarId, sanitizeInput, SERVER_PORT, type PoseMsg } from '../shared/protocol';
-import { terrainGripFor } from '../shared/terrainGrip';
+import { groundGripFor, type GroundGrip } from '../shared/terrainGrip';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { RESET_LIFT } from '../shared/vehiclePhysics';
-import { carDefinitionFor, FORESTER_MODEL_MISSING_MESSAGE } from './assets/carCatalog';
+import { carDefinitionFor } from './assets/carCatalog';
 import { assembleCar, fitCarToChassis } from './render/carModel';
 import { registerCarAsset, getCarMaterials } from './render/buggyMesh';
 import { setBrakeLights } from './render/carMaterials';
@@ -76,21 +76,25 @@ const biome = createBiome(conn.seed);
 const knockables = new Knockables(() => audio.knock());
 
 const carModelEntryId = (carId: CarId): string => `car:${carId}`;
+const carModelEntry = (carId: CarId): AssetManifestEntry => ({ id: carModelEntryId(carId), kind: 'model', url: carDefinitionFor(carId).modelUrl });
+// A car whose local model is not required loads on its own, so its missing file cannot stop the game.
+const optionalCars = CAR_IDS.flatMap((carId) => {
+  const localModel = carDefinitionFor(carId).localModel;
+  return localModel !== null && !localModel.requiredToPlay ? [{ carId, missingMessage: localModel.missingMessage }] : [];
+});
+const isOptionalCar = (carId: CarId): boolean => optionalCars.some((optionalCar) => optionalCar.carId === carId);
 
-// One manifest and one progress readout for the sky, the ground and prop textures, and the car.
+// One manifest and one progress readout for the sky, the ground and prop textures, and the cars.
 // Any failed file stops the game with its message in the start overlay: there is no fallback
-// sky or car, so a missing file cannot hide behind a look that almost works.
+// sky or car, so a missing file cannot hide behind a look that almost works. The one exception is
+// an optional car: it leaves the picker, and its message stays on the start screen.
 const SKY_HDR_URL = '/sky/goegap_2k.hdr';
 const SKY_BACKGROUND_URL = '/sky/goegap_sky_4k.webp';
 const SAND_SET_ID = 'Ground054';
 const manifest: AssetManifestEntry[] = [
   { id: 'sky-hdr', kind: 'hdr', url: SKY_HDR_URL },
   { id: 'sky-background', kind: 'texture', url: SKY_BACKGROUND_URL },
-  ...CAR_IDS.map((carId): AssetManifestEntry => ({
-    id: carModelEntryId(carId),
-    kind: 'model',
-    url: carDefinitionFor(carId).modelUrl,
-  })),
+  ...CAR_IDS.filter((carId) => !isOptionalCar(carId)).map(carModelEntry),
   ...[...POLY_PROP_IDS, GRASS_MODEL_ID].map((propId): AssetManifestEntry => ({
     id: `prop:${propId}`,
     kind: 'model',
@@ -113,6 +117,28 @@ const startGoEl = startEl.querySelector<HTMLElement>('.start-go');
 const startSubEl = startEl.querySelector<HTMLElement>('.start-sub');
 const startSubDefaultText = startSubEl?.textContent ?? '';
 if (startSubEl) startSubEl.textContent = 'Загрузка… 0%';
+const carsNoteEl = carsEl.querySelector<HTMLElement>('.start-cars-note');
+if (!carsNoteEl) throw new Error('Expected a .start-cars-note element in the car picker.');
+const missingCarMessages: string[] = [];
+/** Loads one optional car's model; a failed file withdraws only that car, with its message on screen. */
+const loadOptionalCar = async (carId: CarId, missingMessage: string): Promise<{ carId: CarId; model: Group } | null> => {
+  const entry = carModelEntry(carId);
+  try {
+    const loaded = await loadAssets([entry]);
+    const model = loaded.models.get(entry.id);
+    if (!model) throw new Error(`Expected the "${entry.id}" model to be present in the loaded assets.`);
+    return { carId, model };
+  } catch (error) {
+    if (!(error instanceof AssetLoadError) || error.url !== entry.url) throw error;
+    console.warn(`[car model] ${missingMessage} (${error.message}); the car is removed from the picker`);
+    missingCarMessages.push(missingMessage);
+    carsNoteEl.textContent = missingCarMessages.join(' · ');
+    carsNoteEl.hidden = false;
+    picker.withdraw(carId, DEFAULT_CAR_ID);
+    return null;
+  }
+};
+const optionalCarsLoading = Promise.all(optionalCars.map(({ carId, missingMessage }) => loadOptionalCar(carId, missingMessage)));
 let assets: LoadedAssets;
 try {
   assets = await loadAssets(manifest, (fraction) => {
@@ -120,13 +146,17 @@ try {
   });
 } catch (error) {
   const reason = error instanceof Error ? error.message : String(error);
-  // The Forester GLB is gitignored and built locally, so on a fresh clone it is expected to be missing.
-  const foresterMissing = error instanceof AssetLoadError && error.url === carDefinitionFor('forester').modelUrl;
+  // A gitignored model is expected to be missing on a fresh clone; its own message says how to build it.
+  const missingCar = CAR_IDS.find((carId) => error instanceof AssetLoadError && error.url === carDefinitionFor(carId).modelUrl);
+  const missingMessage = missingCar === undefined ? null : carDefinitionFor(missingCar).localModel?.missingMessage ?? null;
   if (startSubEl) {
-    startSubEl.textContent = foresterMissing ? FORESTER_MODEL_MISSING_MESSAGE : `Ошибка загрузки: ${reason}`;
+    startSubEl.textContent = missingMessage ?? `Ошибка загрузки: ${reason}`;
     startSubEl.style.color = '#ff6b5a';
   }
   throw error;
+}
+for (const optionalCar of await optionalCarsLoading) {
+  if (optionalCar) assets.models.set(carModelEntryId(optionalCar.carId), optionalCar.model);
 }
 
 function loadedTexture(id: string): Texture {
@@ -270,18 +300,33 @@ function openStartGateWhenReady(): void {
 
 // Fit every car's model to its own physics chassis and register it once, before any car mesh
 // (local or remote) is built.
+const drawableCars = new Set<CarId>();
 for (const carId of CAR_IDS) {
+  const model = assets.models.get(carModelEntryId(carId));
+  // Only an optional car can be absent here: a required model that failed has already stopped the game.
+  if (!model) continue;
   const car = carDefinitionFor(carId);
   const carFit = fitCarToChassis(car.measured, vehicleConfigFor(carId));
-  registerCarAsset(carId, assembleCar(loadedModel(carModelEntryId(carId)), carFit, car.rules));
+  registerCarAsset(carId, assembleCar(model, carFit, car.rules));
+  drawableCars.add(carId);
+}
+const reportedStandIns = new Set<CarId>();
+/** Another player's car whose model this machine does not have is drawn as the default car, and said so once. */
+function drawnCarFor(carId: CarId): CarId {
+  if (drawableCars.has(carId)) return carId;
+  if (!reportedStandIns.has(carId)) {
+    reportedStandIns.add(carId);
+    console.warn(`[car model] no "${carId}" model here; other players' ${carId} cars are drawn as the ${DEFAULT_CAR_ID}`);
+  }
+  return DEFAULT_CAR_ID;
 }
 
 interface LocalCar {
   buggy: Buggy;
   carId: CarId;
   config: VehicleConfig;
-  /** Grip under the car from the latest surface sample (the same one the tyre audio uses). */
-  grip: number;
+  /** Ground under the car from the latest surface sample (the same one the tyre audio uses). */
+  ground: GroundGrip;
   /** Surface cover under the car from that same sample. */
   cover: Cover;
 }
@@ -290,7 +335,7 @@ let localCar: LocalCar | null = null;
 
 // Remote players only. Past the collider ring there is no collider under a remote car, so its
 // wheels stand on the drawn ground instead.
-const views = new PlayerViews(ctx.scene, world, (x, z) => terrainSurfaceHeight(heightField, x, z));
+const views = new PlayerViews(ctx.scene, world, (x, z) => terrainSurfaceHeight(heightField, x, z), drawnCarFor);
 const keyboard = new Keyboard();
 // TEMP debug hook
 window.__dbg = () => {
@@ -330,7 +375,7 @@ if (!cameraBannerEl) throw new Error('Expected a #hud-camera element in the HUD.
 const cameraBanner = createCameraModeBanner(cameraBannerEl);
 const cameraRig = new CameraRig(ctx.camera, (x, z) => terrainSurfaceHeight(heightField, x, z), readSavedCameraMode(localStorage), (mode) => {
   saveCameraMode(localStorage, mode);
-  cameraBanner.show(CAMERA_MODE_LABELS[mode]);
+  cameraBanner.show(cameraModeLabelFor(mode, localCar === null || carDefinitionFor(localCar.carId).hasCabin));
 });
 cameraRig.bindInput(canvas);
 window.__orbit = cameraRig.chase.orbit;
@@ -367,7 +412,7 @@ let lastPoseSentAt = -Infinity;
 function poseOf(buggy: Buggy): PoseMsg {
   const position = buggy.position();
   const rotation = buggy.mesh.quaternion;
-  const velocity = buggy.debug().v;
+  const velocity = buggy.velocity();
   return {
     x: position.x, y: position.y, z: position.z,
     qx: rotation.x, qy: rotation.y, qz: rotation.z, qw: rotation.w,
@@ -387,8 +432,8 @@ function startDriving(carId: CarId): void {
   spawn = currentSpawnPose();
   const surface = surfaceSampleAt(heightField, spawn.x, spawn.z);
   const cover = biome.coverAt(spawn.x, spawn.z, surface.height, surface.slope);
-  const grip = terrainGripFor(cover, config);
-  localCar = { buggy: new Buggy(world, ctx.scene, spawn, carId), carId, config, grip, cover };
+  const ground = groundGripFor(cover, config);
+  localCar = { buggy: new Buggy(world, ctx.scene, spawn, carId), carId, config, ground, cover };
 }
 
 startEl.addEventListener('click', () => {
@@ -492,7 +537,7 @@ function frame() {
     guard.run('physics', () => {
       while (acc >= STEP) {
         acc -= STEP;
-        buggy.applyControls(controls, car.grip);
+        buggy.applyControls(controls, car.ground);
         world.step();
         buggy.update();
       }
@@ -508,7 +553,7 @@ function frame() {
     guard.run('terrain', () => {
       // The body's own velocity: above 60 fps some frames run no physics step, and a position
       // difference would make the look-ahead ring jump between the car and far ahead.
-      const velocity = buggy.debug().v;
+      const velocity = buggy.velocity();
       terrain.update(p.x, p.z, velocity.x, velocity.z);
     });
     guard.run('tyre tracks', () => {
@@ -531,7 +576,7 @@ function frame() {
       const surface = surfaceSampleAt(heightField, p.x, p.z);
       const cover = biome.coverAt(p.x, p.z, surface.height, surface.slope);
       car.cover = cover;
-      car.grip = terrainGripFor(cover, car.config);
+      car.ground = groundGripFor(cover, car.config);
       audio.updateLocal({
         carId: car.carId,
         spec: car.config.drivetrain,
@@ -561,7 +606,7 @@ function frame() {
         const streaming = terrain.stats();
         ctx.showDebugLines([
           ...formatDebugReadout({
-            x: p.x, y: p.y, z: p.z, headingDegrees, cover: car.cover, grip: car.grip,
+            x: p.x, y: p.y, z: p.z, headingDegrees, cover: car.cover, grip: car.ground.grip,
             chunk: worldToChunk(p.x, p.z), serverChunks: null,
           }),
           `terrain drawn ${streaming.drawnChunks}  colliders ${streaming.colliderChunks}  `

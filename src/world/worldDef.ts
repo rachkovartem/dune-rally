@@ -3,9 +3,17 @@
 // size, where cars start and which way they face, the border distance, where props may not stand,
 // and the placed features of a chunk. The numbers themselves live in mapLayout.
 import { CHUNK_SIZE } from './chunk';
-import { createFeatureIndex } from './featureIndex';
+import { createNearestSegmentIndex } from './featureIndex';
 import { nearestOnPolyline, type Point2 } from './polyline';
-import { FARM_GATE, MAP_SIZE, ROAD_SHOULDER_WIDTH, ROAD_WIDTH, SPAWN_GRID, SPAWN_RISE } from './mapLayout';
+import {
+  DIE_SPRONG, EERSTE_BULT, FARM_GATE, MAP_SIZE, NURSERY_WHOOPS, ROAD_SHOULDER_WIDTH, ROAD_WIDTH, SPAWN_GRID, SPAWN_RISE,
+} from './mapLayout';
+import { ROAD_LINES } from './terrain/roads';
+import { padAt } from './terrain/pads';
+import { panInsideDistance } from './terrain/pan';
+import { bedHalfWidthAt, DIE_SPRONG_FRAME, riverSampleAt } from './terrain/river';
+import { inDuneField } from './terrain/dunes';
+import { WHOOPS_END_X, WHOOPS_START_X } from './terrain/crests';
 
 export { smoothstep, lerp } from './blend';
 export { borderDistance, borderFaceDepth } from './terrain/border';
@@ -49,10 +57,43 @@ export function rotationForYaw(yaw: number): { x: number; y: number; z: number; 
 
 // ── prop keep-clear areas ─────────────────────────────────────────────
 const SPAWN_CLEARANCE = 4;
+/** The J1 landing zone: straight on along the spine past the crest, this wide each side. */
+const LANDING_HALF_WIDTH = 15;
 
-/** True where no natural prop may stand: the spawn top now; roads, pads, the pan and water later. */
+/** Room kept clear before the whoops and before Die Sprong's kicker, so a car can line up. */
+const RUN_IN = 100;
+
+function inEersteBultLanding(x: number, z: number): boolean {
+  // Cars reach J1 heading north (−z), so they land north of it.
+  return Math.abs(x - EERSTE_BULT.x) <= LANDING_HALF_WIDTH && z <= EERSTE_BULT.z && z >= EERSTE_BULT.z - EERSTE_BULT.landingLength;
+}
+
+function inWhoopsLane(x: number, z: number): boolean {
+  const lane = NURSERY_WHOOPS.lane;
+  return x >= WHOOPS_START_X - RUN_IN && x <= WHOOPS_END_X + LANDING_HALF_WIDTH
+    && z >= lane.minZ - LANDING_HALF_WIDTH && z <= lane.maxZ + LANDING_HALF_WIDTH;
+}
+
+function inDieSprongCorridor(x: number, z: number): boolean {
+  const frame = DIE_SPRONG_FRAME;
+  const dx = x - frame.centre.x;
+  const dz = z - frame.centre.z;
+  const across = dx * frame.across.x + dz * frame.across.z;
+  const sideways = Math.abs(dx * frame.along.x + dz * frame.along.z);
+  return sideways <= LANDING_HALF_WIDTH && across >= frame.approachStart - RUN_IN
+    && across <= frame.landingEdge + 3 * DIE_SPRONG.landingLength;
+}
+
+/**
+ * True where no natural prop may stand: the spawn top, pads, the salt, the river bed, the dune
+ * field (design: no solids there), and the run-ins and landings of J1, J4 and J6.
+ */
 export function isPropExcluded(x: number, z: number): boolean {
-  return Math.hypot(x - SPAWN_RISE.x, z - SPAWN_RISE.z) < SPAWN_RISE.top + SPAWN_CLEARANCE;
+  if (Math.hypot(x - SPAWN_RISE.x, z - SPAWN_RISE.z) < SPAWN_RISE.top + SPAWN_CLEARANCE) return true;
+  if (panInsideDistance(x, z) >= 0 || padAt(x, z) !== null || inEersteBultLanding(x, z)) return true;
+  if (inDuneField(x, z) || inWhoopsLane(x, z) || inDieSprongCorridor(x, z)) return true;
+  const river = riverSampleAt(x, z);
+  return river !== null && river.distance <= bedHalfWidthAt(river.along);
 }
 
 // ── roads ─────────────────────────────────────────────────────────────
@@ -61,45 +102,82 @@ export const ROAD_SHOULDER = ROAD_SHOULDER_WIDTH;
 /** The widest reach any road rule has around a centre line. */
 export const ROAD_INDEX_REACH = ROAD_HALF + ROAD_SHOULDER + 6;
 
-/** Road centre lines graded into the ground. Empty until the roads land (plan v3 step S2). */
-export const GRADED_ROADS: readonly (readonly Point2[])[] = [];
+/** Centre lines of the graded roads (plan v3 S2-1), smoothed and resampled. */
+export const GRADED_ROADS: readonly (readonly Point2[])[] = ROAD_LINES.map((line) => line.points);
 
-/** `x`, `z` is the closest point on the road's centre line. */
+/** `x`, `z` is the closest point on the road's centre line; `tangentX`, `tangentZ` its direction there. */
 export interface RoadHit {
   dist: number;
   t: number;
   x: number;
   z: number;
+  tangentX: number;
+  tangentZ: number;
 }
 
-interface RoadSegment {
-  roadIndex: number;
-  segmentIndex: number;
+const ROAD_INDEX_CELL = 8;
+const NEAREST_SEGMENTS = GRADED_ROADS.map((road) => createNearestSegmentIndex(road, ROAD_INDEX_REACH, ROAD_INDEX_CELL));
+
+// For a search far from every road: runs of segments with their bounding box, so whole runs that
+// cannot beat the best hit so far are skipped.
+const RUN_LENGTH = 16;
+interface SegmentRun {
+  segments: number[];
+  minX: number;
+  minZ: number;
+  maxX: number;
+  maxZ: number;
 }
 
-const ROAD_SEGMENTS: RoadSegment[] = GRADED_ROADS.flatMap((road, roadIndex) =>
-  road.slice(0, -1).map((_waypoint, segmentIndex) => ({ roadIndex, segmentIndex })));
+const RUNS_BY_ROAD: SegmentRun[][] = GRADED_ROADS.map((road) => {
+  const runs: SegmentRun[] = [];
+  for (let first = 0; first < road.length - 1; first += RUN_LENGTH) {
+    const segments: number[] = [];
+    for (let index = first; index < Math.min(first + RUN_LENGTH, road.length - 1); index++) segments.push(index);
+    const covered = road.slice(first, first + segments.length + 1);
+    runs.push({
+      segments,
+      minX: Math.min(...covered.map((point) => point.x)),
+      minZ: Math.min(...covered.map((point) => point.z)),
+      maxX: Math.max(...covered.map((point) => point.x)),
+      maxZ: Math.max(...covered.map((point) => point.z)),
+    });
+  }
+  return runs;
+});
 
-const ROAD_INDEX = createFeatureIndex(ROAD_SEGMENTS, ({ roadIndex, segmentIndex }) => {
-  const a = GRADED_ROADS[roadIndex][segmentIndex];
-  const b = GRADED_ROADS[roadIndex][segmentIndex + 1];
-  return {
-    minX: Math.min(a.x, b.x) - ROAD_INDEX_REACH,
-    minZ: Math.min(a.z, b.z) - ROAD_INDEX_REACH,
-    maxX: Math.max(a.x, b.x) + ROAD_INDEX_REACH,
-    maxZ: Math.max(a.z, b.z) + ROAD_INDEX_REACH,
-  };
-}, CHUNK_SIZE);
-
-const ALL_SEGMENTS_BY_ROAD: number[][] = GRADED_ROADS.map((road) => road.slice(0, -1).map((_waypoint, index) => index));
+function hitOn(roadIndex: number, segmentIndices: readonly number[], x: number, z: number): RoadHit | null {
+  const road = GRADED_ROADS[roadIndex];
+  const hit = nearestOnPolyline(road, segmentIndices, x, z);
+  if (!hit) return null;
+  const start = road[hit.segmentIndex];
+  const end = road[hit.segmentIndex + 1];
+  const length = Math.hypot(end.x - start.x, end.z - start.z);
+  return { dist: hit.distance, t: hit.t, x: hit.x, z: hit.z, tangentX: (end.x - start.x) / length, tangentZ: (end.z - start.z) / length };
+}
 
 // Roads in order, each with its segments in order, so ties resolve exactly as a full scan does.
-function nearestAmong(segmentsByRoad: readonly (readonly number[])[], x: number, z: number): RoadHit | null {
+function nearestIndexed(x: number, z: number): RoadHit | null {
   let best: RoadHit | null = null;
-  for (let roadIndex = 0; roadIndex < segmentsByRoad.length; roadIndex++) {
-    const hit = nearestOnPolyline(GRADED_ROADS[roadIndex], segmentsByRoad[roadIndex], x, z);
-    if (!hit || (best && hit.distance >= best.dist)) continue;
-    best = { dist: hit.distance, t: hit.t, x: hit.x, z: hit.z };
+  for (let roadIndex = 0; roadIndex < NEAREST_SEGMENTS.length; roadIndex++) {
+    const segments = NEAREST_SEGMENTS[roadIndex].query(x, z);
+    if (segments.length === 0) continue;
+    const hit = hitOn(roadIndex, segments, x, z);
+    if (!hit || (best && hit.dist >= best.dist)) continue;
+    best = hit;
+  }
+  return best;
+}
+
+function nearestByRuns(x: number, z: number): RoadHit | null {
+  let best: RoadHit | null = null;
+  for (let roadIndex = 0; roadIndex < RUNS_BY_ROAD.length; roadIndex++) {
+    for (const run of RUNS_BY_ROAD[roadIndex]) {
+      const gap = Math.hypot(Math.max(run.minX - x, 0, x - run.maxX), Math.max(run.minZ - z, 0, z - run.maxZ));
+      if (best && gap >= best.dist) continue;
+      const hit = hitOn(roadIndex, run.segments, x, z);
+      if (hit && (!best || hit.dist < best.dist)) best = hit;
+    }
   }
   return best;
 }
@@ -109,12 +187,10 @@ function nearestAmong(segmentsByRoad: readonly (readonly number[])[], x: number,
  * `maxDistance` at most ROAD_INDEX_REACH the answer comes from the index alone.
  */
 export function nearestRoad(x: number, z: number, maxDistance = Infinity): RoadHit | null {
-  const segmentsByRoad: number[][] = GRADED_ROADS.map(() => []);
-  for (const candidate of ROAD_INDEX.query(x, z)) segmentsByRoad[candidate.roadIndex].push(candidate.segmentIndex);
-  const near = nearestAmong(segmentsByRoad, x, z);
+  const near = nearestIndexed(x, z);
   if (near && near.dist <= ROAD_INDEX_REACH) return near.dist <= maxDistance ? near : null;
   if (maxDistance <= ROAD_INDEX_REACH) return null;
-  const far = nearestAmong(ALL_SEGMENTS_BY_ROAD, x, z);
+  const far = nearestByRuns(x, z);
   return far && far.dist <= maxDistance ? far : null;
 }
 

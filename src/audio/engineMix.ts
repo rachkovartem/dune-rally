@@ -102,6 +102,8 @@ export const TYRE_VOICE_BY_COVER: Readonly<Record<Cover, TyreVoice>> = {
   gravel: { baseHz: 420, hzPerSpeed: 32, gain: 0.4 },
   rock: { baseHz: 380, hzPerSpeed: 30, gain: 0.35 },
   road: { baseHz: 350, hzPerSpeed: 30, gain: 0.3 },
+  // A hard, smooth crust: close to the road, with a little more hiss from the loose salt grains.
+  salt: { baseHz: 330, hzPerSpeed: 28, gain: 0.32 },
 };
 
 /** Tyre noise cut-off and level: only the wheels on the ground make it, and it grows with speed. */

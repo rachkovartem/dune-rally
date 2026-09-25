@@ -16,7 +16,7 @@ import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
 import type { CarId } from '../src/vehicle/cars';
 import { createBiome, type Biome } from '../src/world/biome';
 import { surfaceSampleAt } from '../src/world/surfaceSample';
-import { terrainGripFor } from '../shared/terrainGrip';
+import { groundGripFor, type GroundGrip } from '../shared/terrainGrip';
 import type { MovingCar } from '../shared/chunkDemand';
 import { ColliderStreamer, type ColliderStreamerOptions } from './colliderStreamer';
 
@@ -207,7 +207,7 @@ export class ArenaSim {
     }
     // Before the physics step, so a car never stands over a chunk that has no collider yet.
     this.streamer.update([...this.players.values()].map((p) => movingCarOf(p.vehicle)));
-    for (const p of this.players.values()) p.vehicle.applyInput(p.input, this.gripUnder(p));
+    for (const p of this.players.values()) p.vehicle.applyInput(p.input, this.groundUnder(p));
     this.world.step();
     for (const p of this.players.values()) p.vehicle.update(this.world.timestep);
   }
@@ -220,10 +220,10 @@ export class ArenaSim {
     return { x: t.x, y: t.y, z: t.z, qx: r.x, qy: r.y, qz: r.z, qw: r.w };
   }
 
-  private gripUnder(p: Player): number {
+  private groundUnder(p: Player): GroundGrip {
     const { x, z } = p.vehicle.body.translation();
     const surface = surfaceSampleAt(this.height, x, z);
-    return terrainGripFor(this.biome.coverAt(x, z, surface.height, surface.slope), vehicleConfigFor(p.carId));
+    return groundGripFor(this.biome.coverAt(x, z, surface.height, surface.slope), vehicleConfigFor(p.carId));
   }
 
   playerIds(): string[] {

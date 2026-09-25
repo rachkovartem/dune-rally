@@ -15,6 +15,7 @@ export const BASE_GRIP_BY_COVER: Record<Cover, number> = {
   snow: 0.6,
   mud: 0.5,
   water: 0.5,
+  salt: 0.9,
 };
 
 /** Rolling resistance coefficient on a paved road. */
@@ -27,12 +28,25 @@ export interface GripOverrides {
   gripOverrides: Partial<Record<Cover, number>>;
 }
 
-/** Grip of a car on a cover: the car's own override when it has one, else the base value. */
-export function terrainGripFor(cover: Cover, config: GripOverrides): number {
-  return config.gripOverrides[cover] ?? BASE_GRIP_BY_COVER[cover];
+/** What the ground under a car gives its tyres: how well they hold, and how hard they roll. */
+export interface GroundGrip {
+  grip: number;
+  rollingResistance: number;
 }
 
 /** Rolling resistance coefficient for a terrain grip value in (0, 1]. */
 export function rollingResistanceFor(grip: number): number {
   return ROAD_ROLLING_RESISTANCE + (1 - Math.min(1, grip)) * ROLLING_RESISTANCE_PER_LOST_GRIP;
 }
+
+// A hard salt crust rolls like a road while it grips like gravel, so both cars are fastest on it.
+const HARD_COVERS: ReadonlySet<Cover> = new Set<Cover>(['salt']);
+
+/** The ground a car meets on a cover: its own grip override when it has one, else the base grip. */
+export function groundGripFor(cover: Cover, config: GripOverrides): GroundGrip {
+  const grip = config.gripOverrides[cover] ?? BASE_GRIP_BY_COVER[cover];
+  return { grip, rollingResistance: HARD_COVERS.has(cover) ? ROAD_ROLLING_RESISTANCE : rollingResistanceFor(grip) };
+}
+
+/** Full grip on a paved road: the ground of the flat test bench. */
+export const FULL_GRIP: GroundGrip = { grip: 1, rollingResistance: ROAD_ROLLING_RESISTANCE };

@@ -98,6 +98,7 @@
       }
       #start .car-option:hover { background: rgba(0,0,0,0.6); }
       #start .car-option.is-selected { border-color: #ffd23d; color: #ffd23d; }
+      #start .start-cars-note { margin-top: 10px; font: 13px monospace; color: #ff6b5a; }
       #hud-camera {
         position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%);
         font-size: 15px; font-weight: 700; color: #ffd23d;
@@ -136,6 +137,8 @@
           <div class="start-cars-label">Выбери машину</div>
           <button type="button" class="car-option" data-car-id="forester">Subaru Forester</button>
           <button type="button" class="car-option" data-car-id="pajero">Mitsubishi Pajero Sport</button>
+          <button type="button" class="car-option" data-car-id="elantra">Hyundai Elantra</button>
+          <div class="start-cars-note" hidden></div>
         </div>
         <div class="start-go" style="display: none">▶ Нажми, чтобы ехать</div>
       </div>

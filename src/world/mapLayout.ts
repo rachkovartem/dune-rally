@@ -150,19 +150,37 @@ export const SANDRIVIER = {
   outsideBankSlope: { min: 0.6, max: 0.8 },
   insideBankSlope: { min: 0.15, max: 0.25 },
   drifts: [{ x: 830, z: 1120 }, { x: 800, z: 2180 }] satisfies Point2[],
+  /** The first metres of the bed, inside the NW gorge, where it deepens from the gorge floor. */
+  headLength: 90,
+  /** The last metres of the bed, where it grows shallow and opens onto the pan. */
+  deltaLength: 350,
+  /** A drift is a road ramp down the banks: its width, and its slope. */
+  drift: { width: 12, rampSlope: 0.15 },
 } as const;
 
 export const SOUTPAN: Ellipse = { x: 1050, z: 2560, radiusX: 700, radiusZ: 260 };
+/** Metres inside the ellipse over which the flat salt blends into the ground around it. */
 export const SOUTPAN_BLEND = 80;
+/**
+ * Metres outside the ellipse over which the ground already leans down toward the pan. The plain
+ * stands up to 9 m above the salt at the east end, and a short blend there would be a lip that
+ * throws a car off Die Myl.
+ */
+export const SOUTPAN_OUTER_BLEND = 170;
+/** The pan is the lowest ground: within `reach` metres of it the valley stays `base` above the salt. */
+export const SOUTPAN_FLOOR = { base: 0.3, reach: 300 } as const;
 
 export const WIT_DUINE = {
   area: { minX: 2150, minZ: 900, maxX: 2850, maxZ: 1900 } satisfies Box,
   feather: 80,
   spacing: { west: 60, east: 120 },
   amplitude: { west: 4, east: 20 },
-  bigDaddy: { x: 2650, z: 1360, height: 25 },
+  bigDaddy: { x: 2650, z: 1360, height: 25, radius: 100 },
   whoops: { minX: 2170, minZ: 1230, maxX: 2450, maxZ: 1280 } satisfies Box,
+  /** Design 0.55–0.65; capped so the Pajero can still climb one at real gravity (plan v3). */
   slipFaceMax: 0.58,
+  /** The brink between the windward side and the slip face is rounded to this radius. */
+  brinkRadius: 12,
 } as const;
 
 export const GRUISGAT = { x: 1820, z: 1060, width: 140, depth: 100, pitDepth: 6 } as const;
@@ -201,7 +219,10 @@ export const ROUTES: readonly Route[] = [
     ],
   },
   { name: 'Panpad', kind: 'road', points: [{ x: 1560, z: 2020 }, { x: 1650, z: 2300 }, { x: 1800, z: 2560 }] },
-  { name: 'Die Myl', kind: 'road', points: [{ x: 2650, z: 2560 }, { x: 1750, z: 2560 }, { x: 400, z: 2560 }] },
+  // The gravel part is graded down the pan's edge to where the flat salt starts; the rest of the
+  // mile is the pan itself.
+  { name: 'Die Myl', kind: 'road', points: [{ x: 2650, z: 2560 }, { x: 1750, z: 2560 }, { x: 1670, z: 2560 }] },
+  { name: 'Die Myl on the salt', kind: 'line', points: [{ x: 1670, z: 2560 }, { x: 400, z: 2560 }] },
   {
     name: 'Klipspringer Poort', kind: 'track', points: [
       { x: 2060, z: 1600 }, { x: 2410, z: 1920 }, { x: 2340, z: 2050 }, { x: 2400, z: 2180 },
@@ -224,6 +245,90 @@ export const ROUTES: readonly Route[] = [
 
 /** The flat-out line across the pan (design §4, AC1). */
 export const DIE_MYL = { from: { x: 2650, z: 2560 }, panEdge: { x: 1750, z: 2560 }, to: { x: 400, z: 2560 } } as const;
+
+// ── road grading (design §12.4, plan v3 S2-1) ──────────────────────────────────────────
+export const ROAD_GRADING = {
+  /** Centre lines are smoothed and resampled at this step, metres. */
+  spacing: 4,
+  /** The profile starts from the ground averaged over a disc of this radius. */
+  averageRadius: 60,
+  maxGrade: 0.08,
+  /** The road is never more than this far below the ground `sideProbe` metres to either side. */
+  maxBelowGround: 1.0,
+  sideProbe: 5.5,
+  /** Every road sits this much above its graded line (the design's crown). */
+  crownRise: 0.25,
+  /** The running surface falls this much from the centre to its edge, then the shoulder this much more. */
+  crownDrop: 0.05,
+  shoulderDrop: 0.04,
+  /** Crests of the graded line are no sharper than this, so a car stays planted at top speed. */
+  minCrestRadius: 300,
+  /** Beside the shoulder the ground blends back over max(min, factor × height difference), at most max. */
+  batter: { factor: 3, min: 6, max: 24 },
+} as const;
+
+// ── pads: flats that are level whatever the ground does (design §12.4) ────────────────
+export type PadShape =
+  | { kind: 'circle'; x: number; z: number; radius: number }
+  | { kind: 'rectangle'; x: number; z: number; width: number; depth: number };
+
+export interface PadDef {
+  name: string;
+  shape: PadShape;
+  /** Metres over which the pad blends back into the ground around it. */
+  blend: number;
+  /** Height of the pad above max(mean, 80th percentile) of the ground under it. */
+  rise: number;
+}
+
+/** A pad stands on this share of the ground under it, so it is never a pit. */
+export const PAD_PERCENTILE = 0.8;
+
+export const PADS: readonly PadDef[] = [
+  { name: 'Spawn top', shape: { kind: 'circle', x: SPAWN_RISE.x, z: SPAWN_RISE.z, radius: SPAWN_RISE.top }, blend: 12, rise: 0.3 },
+  {
+    name: 'Dorp yard',
+    shape: { kind: 'rectangle', x: DORP_YARD.x, z: DORP_YARD.z, width: DORP_YARD.width, depth: DORP_YARD.depth },
+    blend: 30,
+    rise: DORP_YARD.rise,
+  },
+  { name: 'Tafelkop overlook', shape: { kind: 'circle', x: 2370, z: 600, radius: 12 }, blend: 10, rise: 0.3 },
+  // The pan start line (M5) has no pad: it lies on Die Myl where the road leans down to the salt,
+  // and a level pad there would put a sharp crest in the flat-out line. The graded road is its flat.
+];
+
+// ── authored jumps (design §9 with the real-gravity numbers of plan v3 S2-1) ─────────
+/** J1 "Eerste Bult": a crest in the spine's graded line, circular over the top. */
+export const EERSTE_BULT = { x: 1560, z: 1800, height: 1.5, radius: 100, maxGrade: 0.07, landingLength: 100 } as const;
+
+/** J4: six swells across the lane at the west edge of the dunes. */
+export const NURSERY_WHOOPS = {
+  lane: WIT_DUINE.whoops,
+  count: 6,
+  height: 3,
+  spacing: 60,
+  firstCrestX: 2190,
+  /** Below 1 this flattens the tops: 0.9 gives a crest radius of about 67 m. */
+  topExponent: 0.9,
+  /** Metres over which the lane blends into the dunes beside it. */
+  laneFeather: 20,
+  /** The dunes around the lane are this much lower, fading over `nurseryReach` metres. */
+  nurseryLowering: 0.8,
+  nurseryReach: 120,
+} as const;
+
+/** J6 "Die Sprong": a kicker on the inside bank of the river bend, a landing on the far bank. */
+export const DIE_SPRONG = {
+  x: 740,
+  z: 1470,
+  rampSlope: 0.25,
+  rampHeight: 3,
+  gap: 30,
+  /** The landing stands this much lower than the lip. */
+  farBankDrop: 1,
+  landingLength: 40,
+  halfWidth: 5,
+} as const;
 
 // ── jumps (design §9; the numbers for real gravity live in plan v3 S2-1) ───────────────
 export type JumpId = 'J1' | 'J2' | 'J3' | 'J4' | 'J5' | 'J6' | 'J7' | 'J8';

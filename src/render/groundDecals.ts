@@ -3,11 +3,12 @@
 // in the fragment shader (groove, berms, tread, sun-facing walls), faded out by distance driven.
 import * as THREE from 'three';
 import type { Height2D } from '../world/noise';
-import type { Biome } from '../world/biome';
+import { surfaceTintAt, type Biome } from '../world/biome';
 import { terrainSurfaceHeight } from '../world/chunkGeometry';
 import { surfaceSampleAt } from '../world/surfaceSample';
 import { coverTint, TERRAIN_UV_REPEATS_PER_METRE } from './terrainMesh';
 import type { TerrainTextureSet } from './terrainMaterial';
+import { SURFACE_TINT_GLSL, surfaceTintFor, type SurfaceTint } from './surfaceTints';
 
 const TRACK_SEGMENTS = 1600;
 const TRACK_STEP = 0.3;
@@ -40,6 +41,7 @@ interface TrackPoint {
   odometer: number;
   along: number;
   tint: number;
+  surfaceTint: SurfaceTint;
 }
 
 interface RibbonAttributes {
@@ -51,6 +53,8 @@ interface RibbonAttributes {
   aAcross: THREE.BufferAttribute;
   aDist: THREE.BufferAttribute;
   aAlong: THREE.BufferAttribute;
+  aSurfaceTint: THREE.BufferAttribute;
+  aSurfaceDetail: THREE.BufferAttribute;
 }
 
 interface Ribbon {
@@ -69,11 +73,13 @@ function createTrackMaterial(sand: TerrainTextureSet, odometer: { value: number 
     shader.uniforms.uOdometer = odometer;
     shader.uniforms.uFadeStart = { value: TRACK_FADE_START };
     shader.uniforms.uFadeEnd = { value: TRACK_FADE_END };
-    shader.vertexShader = 'attribute float aAcross; attribute float aDist; attribute float aAlong; attribute vec3 aSide;\nvarying float vAcross; varying float vDist; varying float vAlong; varying vec3 vSideView;\n'
-      + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvAcross = aAcross; vDist = aDist; vAlong = aAlong; vSideView = normalize((viewMatrix * vec4(aSide, 0.0)).xyz);');
-    shader.fragmentShader = 'uniform float uOdometer; uniform float uFadeStart; uniform float uFadeEnd;\nvarying float vAcross; varying float vDist; varying float vAlong; varying vec3 vSideView;\n'
+    shader.vertexShader = 'attribute float aAcross; attribute float aDist; attribute float aAlong; attribute vec3 aSide; attribute vec4 aSurfaceTint; attribute vec2 aSurfaceDetail;\nvarying float vAcross; varying float vDist; varying float vAlong; varying vec3 vSideView; varying vec4 vSurfaceTint; varying vec2 vSurfaceDetail;\n'
+      + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvAcross = aAcross; vDist = aDist; vAlong = aAlong; vSideView = normalize((viewMatrix * vec4(aSide, 0.0)).xyz); vSurfaceTint = aSurfaceTint; vSurfaceDetail = aSurfaceDetail;');
+    shader.fragmentShader = 'uniform float uOdometer; uniform float uFadeStart; uniform float uFadeEnd;\nvarying float vAcross; varying float vDist; varying float vAlong; varying vec3 vSideView; varying vec4 vSurfaceTint; varying vec2 vSurfaceDetail;\n'
+      + SURFACE_TINT_GLSL
       + shader.fragmentShader
         .replace('#include <map_fragment>', `#include <map_fragment>
+          diffuseColor.rgb = applySurfaceTint(diffuseColor.rgb, vSurfaceTint);
           float trackAcross = vAcross;
           float trackGroove = smoothstep(0.1, 0.2, trackAcross) * (1.0 - smoothstep(0.8, 0.9, trackAcross));
           float trackBerm = smoothstep(0.0, 0.1, trackAcross) * (1.0 - smoothstep(0.1, 0.2, trackAcross)) + smoothstep(0.8, 0.9, trackAcross) * (1.0 - smoothstep(0.9, 1.0, trackAcross));
@@ -81,14 +87,15 @@ function createTrackMaterial(sand: TerrainTextureSet, odometer: { value: number 
           diffuseColor.rgb *= mix(1.0, 0.52 + 0.12 * trackTread, trackGroove) * (1.0 + 0.12 * trackBerm);
           float trackEdgeAlpha = smoothstep(0.0, 0.14, trackAcross) * (1.0 - smoothstep(0.86, 1.0, trackAcross)) * 0.92;
           diffuseColor.a *= trackEdgeAlpha * (1.0 - smoothstep(uFadeStart, uFadeEnd, uOdometer - vDist));`)
-        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor *= mix(1.0, 0.8, trackGroove);')
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor *= mix(1.0, 0.8, trackGroove) * vSurfaceDetail.y;')
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          normal = normalize(mix(nonPerturbedNormal, normal, vSurfaceDetail.x));
           // aSide points to the ribbon's left edge (across = 0): groove walls face the centre and berm outsides face away, so the sun shades a rut.
           float trackWall = smoothstep(0.08, 0.13, trackAcross) * (1.0 - smoothstep(0.18, 0.24, trackAcross)) - smoothstep(0.76, 0.82, trackAcross) * (1.0 - smoothstep(0.87, 0.92, trackAcross));
           float trackOuter = -(1.0 - smoothstep(0.0, 0.1, trackAcross)) + smoothstep(0.9, 1.0, trackAcross);
           normal = normalize(normal - vSideView * (trackWall * 0.55 + trackOuter * 0.2));`);
   };
-  material.customProgramCacheKey = () => 'tyre-track-rut';
+  material.customProgramCacheKey = () => 'tyre-track-rut-surface-tint';
   return material;
 }
 
@@ -119,6 +126,7 @@ export class TireTracks {
     const attributes: RibbonAttributes = {
       position: attribute(3), normal: attribute(3), uv: attribute(2), color: attribute(3),
       aSide: attribute(3), aAcross: attribute(1), aDist: attribute(1), aAlong: attribute(1),
+      aSurfaceTint: attribute(4), aSurfaceDetail: attribute(2),
     };
     for (const [name, value] of Object.entries(attributes)) geometry.setAttribute(name, value);
     const index = new Uint32Array(TRACK_SEGMENTS * 6);
@@ -150,12 +158,14 @@ export class TireTracks {
     const rightX = x - sideX * halfWidth;
     const rightZ = z - sideZ * halfWidth;
     const surface = surfaceSampleAt(this.heightField, x, z);
+    const cover = this.biome.coverAt(x, z, surface.height, surface.slope);
     return {
       x, z, leftX, leftZ, rightX, rightZ, sideX, sideZ, along,
       leftY: terrainSurfaceHeight(this.heightField, leftX, leftZ) + TRACK_LIFT,
       rightY: terrainSurfaceHeight(this.heightField, rightX, rightZ) + TRACK_LIFT,
       odometer: this.odometer.value,
-      tint: coverTint(this.biome.coverAt(x, z, surface.height, surface.slope)),
+      tint: coverTint(cover),
+      surfaceTint: surfaceTintFor(surfaceTintAt(x, z, cover)),
     };
   }
 
@@ -173,6 +183,9 @@ export class TireTracks {
     attributes.aAcross.setX(vertex, across);
     attributes.aDist.setX(vertex, point.odometer);
     attributes.aAlong.setX(vertex, point.along);
+    const surfaceTint = point.surfaceTint;
+    attributes.aSurfaceTint.setXYZW(vertex, surfaceTint.red, surfaceTint.green, surfaceTint.blue, surfaceTint.desaturate);
+    attributes.aSurfaceDetail.setXY(vertex, surfaceTint.normalStrength, surfaceTint.roughness);
   }
 
   /**

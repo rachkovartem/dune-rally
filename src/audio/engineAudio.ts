@@ -9,8 +9,8 @@ import {
 import { EngineVoice, type EngineVoiceSnapshot, type LoopLoader, type SoundErrorReport } from './engineVoice';
 import type { LayerName, SoundEntry } from './soundManifest';
 
-/** The diesel of the Pajero whistles under boost; the Forester's FB25 breathes without a turbo. */
-export const ENGINE_HAS_TURBO: Readonly<Record<CarId, boolean>> = { forester: false, pajero: true };
+/** The diesel of the Pajero whistles under boost; the Forester's FB25 and the Elantra's Nu 2.0 breathe without a turbo. */
+export const ENGINE_HAS_TURBO: Readonly<Record<CarId, boolean>> = { forester: false, pajero: true, elantra: false };
 
 // How fast the heard load follows the pedal, per second.
 const LOAD_RATE = 6;

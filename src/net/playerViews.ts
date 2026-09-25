@@ -50,10 +50,17 @@ export class PlayerViews {
    * The client builds colliders only near its own car, so a remote car farther away finds no
    * collider under it; `groundHeight` then gives the ground its wheels stand on.
    */
-  constructor(private scene: THREE.Scene, private world: RAPIER.World, private groundHeight?: GroundHeight) {}
+  constructor(
+    private scene: THREE.Scene,
+    private world: RAPIER.World,
+    private groundHeight?: GroundHeight,
+    /** The car a player's pick is drawn as: another one when this machine has no model for it. */
+    private drawnCarFor: (carId: CarId) => CarId = (carId) => carId,
+  ) {}
 
-  add(id: string, carId: CarId): void {
+  add(id: string, pickedCarId: CarId): void {
     if (this.views.has(id)) return;
+    const carId = this.drawnCarFor(pickedCarId);
     const group = buildBuggyMesh(carId);
     this.scene.add(group);
     const config = vehicleConfigFor(carId);
@@ -79,7 +86,7 @@ export class PlayerViews {
   pushState(id: string, p: NetPlayer, t: number): void {
     const v = this.views.get(id);
     if (!v) return;
-    const carId = sanitizeCarId(p.carId);
+    const carId = this.drawnCarFor(sanitizeCarId(p.carId));
     if (carId !== v.carId) this.rebuild(v, carId);
     v.buffer.push({ t, x: p.x, y: p.y, z: p.z, qx: p.qx, qy: p.qy, qz: p.qz, qw: p.qw });
   }

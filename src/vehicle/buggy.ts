@@ -7,6 +7,7 @@ import { restingSuspensionLength, vehicleConfigFor, type VehicleConfig } from '.
 import type { CarId } from './cars';
 import type { InputMsg } from '../../shared/protocol';
 import type { DrivetrainState } from '../../shared/drivetrain';
+import type { GroundGrip } from '../../shared/terrainGrip';
 import { rotationForYaw, type SpawnPose } from '../world/worldDef';
 
 /** Where a car is put: a spawn or reset pose plus the height of its body. */
@@ -47,8 +48,8 @@ export class Buggy {
     scene.add(this.mesh);
   }
 
-  applyControls(controls: InputMsg, grip: number) {
-    this.vehicle.applyInput(controls, grip);
+  applyControls(controls: InputMsg, ground: GroundGrip) {
+    this.vehicle.applyInput(controls, ground);
   }
 
   update() {
@@ -128,6 +129,12 @@ export class Buggy {
 
   tyreWidth(): number {
     return this.config.wheel.width;
+  }
+
+  /** Velocity of the body, m/s. */
+  velocity(): { x: number; y: number; z: number } {
+    const velocity = this.vehicle.body.linvel();
+    return { x: velocity.x, y: velocity.y, z: velocity.z };
   }
 
   /** Horizontal speed in world units per second. */
