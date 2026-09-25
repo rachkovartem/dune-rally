@@ -4,7 +4,6 @@ import { DEFAULT_CAR_ID, isCarId, type CarId } from '../src/vehicle/cars';
 export const SERVER_PORT = 2567;
 export const TICK_HZ = 30;
 export const PATCH_HZ = 20;
-export const ARENA_CHUNKS = 8; // 8 × CHUNK_SIZE(64) = 512 → the bounded authored world
 
 export interface InputMsg {
   throttle: number;

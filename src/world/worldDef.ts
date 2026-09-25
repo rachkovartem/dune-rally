@@ -10,6 +10,7 @@
 import { CHUNK_SIZE } from './chunk';
 
 export const WORLD_SIZE = 512;
+export const WORLD_CHUNKS = WORLD_SIZE / CHUNK_SIZE;
 export const WORLD_BORDER = 28;        // rocky-slope margin around the playable rectangle
 /** Level of the open basin floor; flattened places (roads, plaza) sit at the terrain's local average. */
 export const BASIN_LEVEL = 3;

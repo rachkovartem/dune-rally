@@ -3,11 +3,11 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { createHeightField, type Height2D } from '../src/world/noise';
 import { generateChunkHeights } from '../src/world/heightfieldData';
 import { chunkOrigin } from '../src/world/chunk';
-import { featuresInChunk, SPAWN } from '../src/world/worldDef';
+import { featuresInChunk, SPAWN, WORLD_CHUNKS } from '../src/world/worldDef';
 import { addChunkCollider, addFeatureColliders } from '../src/physics/physicsWorld';
 import { createVehiclePhysics, RESET_LIFT, type VehiclePhysics } from '../shared/vehiclePhysics';
 import { WORLD_GRAVITY } from '../shared/drivetrain';
-import { ARENA_CHUNKS, type InputMsg } from '../shared/protocol';
+import type { InputMsg } from '../shared/protocol';
 import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
 import type { CarId } from '../src/vehicle/cars';
 import { createBiome, type Biome } from '../src/world/biome';
@@ -44,8 +44,8 @@ export class ArenaSim {
     world.timestep = SIM_STEP_SECONDS;
     const height = createHeightField(seed);
 
-    for (let cz = 0; cz < ARENA_CHUNKS; cz++) {
-      for (let cx = 0; cx < ARENA_CHUNKS; cx++) {
+    for (let cz = 0; cz < WORLD_CHUNKS; cz++) {
+      for (let cx = 0; cx < WORLD_CHUNKS; cx++) {
         const heights = generateChunkHeights(height, { cx, cz });
         const origin = chunkOrigin({ cx, cz });
         addChunkCollider(world, heights, origin.x, origin.z);
