@@ -56,6 +56,12 @@ export function upAxisOf(rotation: Quaternion): { x: number; y: number; z: numbe
   return { x: 2 * (x * y - w * z), y: 1 - 2 * (x * x + z * z), z: 2 * (y * z + w * x) };
 }
 
+/** The chassis's own +X in world space; a wheel steered by angle a heads along sin(a) * this + cos(a) * nose. */
+function rightAxisOf(rotation: Quaternion): { x: number; y: number; z: number } {
+  const { x, y, z, w } = rotation;
+  return { x: 1 - 2 * (y * y + z * z), y: 2 * (x * y + w * z), z: 2 * (x * z - w * y) };
+}
+
 /**
  * Upright rotation (yaw only) that keeps the direction the car was heading. A car standing on its
  * nose or tail has no flat heading; its roof then points along the way it was going.
@@ -104,7 +110,7 @@ export function createVehiclePhysics(
       .setTranslation(spawn.x, spawn.y, spawn.z)
       .setLinearDamping(config.linearDamping)
       .setAngularDamping(config.angularDamping)
-      .setCanSleep(false) // a sleeping body ignores the controller's engine force
+      .setCanSleep(false) // a sleeping body would ignore the tyre impulses and the suspension
       .setAdditionalMassProperties(
         config.chassis.mass,
         config.com,
@@ -216,10 +222,36 @@ export function createVehiclePhysics(
         mass: config.chassis.mass,
         dt,
       }), aeroAlongNose + gravityAlongNose, intent);
-      // Negative engine force drives the chassis toward its own front (+Z, away from the chase camera).
-      const perWheel = forceWheels.length === 0 ? 0 : -tyreForce / forceWheels.length;
+      // Rapier caps its engine impulse together with the side grip, so a lower side grip would also
+      // cut the drive. The tyre force is applied here instead, at each contact point, along the
+      // wheel's heading in the ground plane; Rapier's engine force stays 0.
+      const perWheel = forceWheels.length === 0 ? 0 : tyreForce / forceWheels.length;
+      const rotation = body.rotation();
+      const right = rightAxisOf(rotation);
       for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
-        controller.setWheelEngineForce(wheelIndex, forceWheels.includes(wheelIndex) ? perWheel : 0);
+        controller.setWheelEngineForce(wheelIndex, 0);
+        if (perWheel === 0 || !forceWheels.includes(wheelIndex)) continue;
+        const contactPoint = controller.wheelContactPoint(wheelIndex);
+        const contactNormal = controller.wheelContactNormal(wheelIndex);
+        if (contactPoint === null || contactNormal === null) continue;
+        const steer = config.steeredWheels.includes(wheelIndex) ? currentSteer : 0;
+        const sine = Math.sin(steer);
+        const cosine = Math.cos(steer);
+        const heading = {
+          x: sine * right.x + cosine * nose.x,
+          y: sine * right.y + cosine * nose.y,
+          z: sine * right.z + cosine * nose.z,
+        };
+        const intoNormal = heading.x * contactNormal.x + heading.y * contactNormal.y + heading.z * contactNormal.z;
+        const along = {
+          x: heading.x - contactNormal.x * intoNormal,
+          y: heading.y - contactNormal.y * intoNormal,
+          z: heading.z - contactNormal.z * intoNormal,
+        };
+        const length = Math.hypot(along.x, along.y, along.z);
+        if (length < 1e-6) continue;
+        const impulse = (perWheel * dt) / length;
+        body.applyImpulseAtPoint({ x: along.x * impulse, y: along.y * impulse, z: along.z * impulse }, contactPoint, true);
       }
       for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
         // Set every step so the ground under the car can change the grip; grip 1 keeps the base value.
