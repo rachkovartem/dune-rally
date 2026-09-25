@@ -8,7 +8,7 @@ import type { Biome } from '../world/biome';
 import type { PolyPropId } from '../world/propIds';
 import { propPlacementsInChunk, type PropPlacement } from '../world/propPlacement';
 import type { PropMaterials } from './propMaterials';
-import { placePolyProp, type SolidProp } from './polyProps';
+import { placePolyProp } from './polyProps';
 import { visualTerrainHeight } from './horizonShape';
 
 function standardMaterial(color: number): THREE.MeshStandardMaterial {
@@ -25,7 +25,6 @@ let M_WALL: THREE.Material[] = [
   standardMaterial(0x9c8466),
 ];
 let M_ROOF: THREE.Material = standardMaterial(0x6b4f3a);
-let M_RAMP: THREE.Material = (() => { const m = standardMaterial(0xb05a2e); m.side = THREE.DoubleSide; return m; })();
 let M_BEACON: THREE.Material = standardMaterial(0xb6bcc4);
 let M_WIND_TOWER: THREE.Material = standardMaterial(0xcdb9a0);
 let M_WIND_BLADE: THREE.Material = standardMaterial(0x3a3a3a);
@@ -37,8 +36,6 @@ const M_BEACON_LIGHT: THREE.Material = standardMaterial(0xff5a3c); // emissive-i
 export function setPropMaterials(materials: PropMaterials): void {
   M_WALL = materials.wall;
   M_ROOF = materials.roof;
-  materials.ramp.side = THREE.DoubleSide;
-  M_RAMP = materials.ramp;
   M_BEACON = materials.beaconMetal;
   M_WIND_TOWER = materials.windmillTower;
   M_WIND_BLADE = materials.blade;
@@ -59,39 +56,6 @@ function building(b: W.BuildingBox, rng: () => number): THREE.Object3D {
   roof.position.y = b.h + roofH / 2 - 0.05;
   g.add(roof);
   return g;
-}
-
-// ── Stunt ramps (one shared unit wedge, scaled per ramp) ───────────────
-const G_WEDGE = makeUnitWedge();
-
-function makeUnitWedge(): THREE.BufferGeometry {
-  // Unit wedge: x,z ∈ [-0.5,0.5], base y=0, rising to y=1 at the front (z=+0.5).
-  const A = [-0.5, 0, -0.5], B = [0.5, 0, -0.5], C = [-0.5, 0, 0.5];
-  const D = [0.5, 0, 0.5], E = [-0.5, 1, 0.5], F = [0.5, 1, 0.5];
-  const tris = [
-    A, C, D, A, D, B,   // bottom
-    A, B, F, A, F, E,   // slope (drive surface)
-    C, D, F, C, F, E,   // front vertical
-    A, C, E,            // left end
-    B, D, F,            // right end
-  ];
-  const pos = new Float32Array(tris.flat());
-  const uv = new Float32Array(tris.length * 2);
-  for (let vertex = 0; vertex < tris.length; vertex++) {
-    uv[vertex * 2] = tris[vertex][0] + 0.5;
-    uv[vertex * 2 + 1] = tris[vertex][2] + 0.5;
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  geo.computeVertexNormals();
-  return geo;
-}
-
-function ramp(r: W.Ramp): THREE.Object3D {
-  const m = new THREE.Mesh(G_WEDGE, M_RAMP);
-  m.scale.set(r.width, r.rise, r.len);
-  return m;
 }
 
 // ── Landmarks ──────────────────────────────────────────────────────────
@@ -131,7 +95,7 @@ function landmark(l: W.Landmark): THREE.Object3D {
 }
 
 /** Beyond these distances a prop is a few pixels in the fog; hiding it saves most of the draw
- * calls, since every bush is fifteen meshes. Border boulders are the skyline and always drawn. */
+ * calls, since every bush is fifteen meshes. Skyline props (the border face, the koppie heaps) are always drawn. */
 const DRAW_DISTANCE: Record<PolyPropId, number> = {
   namaqualand_boulder_02: 260,
   namaqualand_boulder_03: 260,
@@ -182,7 +146,8 @@ export interface ChunkScatter {
   /** Child of `group` holding the props only the high tier draws. */
   highTier: THREE.Group;
   knockables: THREE.Object3D[]; // bushes that fold over when the car ploughs through
-  solids: SolidProp[];
+  /** Every placement drawn here; the physics hook builds the colliders of the solid ones from the same list. */
+  placements: readonly PropPlacement[];
   culled: DistanceCulledProp[];
 }
 
@@ -201,21 +166,19 @@ export function createChunkScatter(
   highTier.matrixAutoUpdate = false;
   highTierGroups.add(highTier);
   const knockables: THREE.Object3D[] = [];
-  const solids: SolidProp[] = [];
   const culled: DistanceCulledProp[] = [];
   const feats = W.featuresInChunk(cx, cz);
 
   const add = (placement: PropPlacement): void => {
-    const placed = placePolyProp(placement.modelId, placement.x, placement.groundY, placement.z, placement.yaw, placement.scale);
-    (placement.layer === 'highTier' ? highTier : g).add(placed.object);
+    const object = placePolyProp(placement);
+    (placement.layer === 'highTier' ? highTier : g).add(object);
     if (!placement.skyline) {
-      const prop = { object: placed.object, maxDistance: DRAW_DISTANCE[placement.modelId] };
+      const prop = { object, maxDistance: DRAW_DISTANCE[placement.modelId] };
       culled.push(prop);
       culledProps.add(prop);
     }
-    if (placed.solid) solids.push(placed.solid);
-    if (placement.knockable) knockables.push(placed.object);
-    else freezeInPlace(placed.object);
+    if (placement.knockable) knockables.push(object);
+    else freezeInPlace(object);
   };
 
   const placements = propPlacementsInChunk({ cx, cz, seed, height, biome, drawnHeight: visualTerrainHeight });
@@ -231,8 +194,7 @@ export function createChunkScatter(
     freezeInPlace(obj);
   };
   for (const b of feats.buildings) place(building(b, brng), b.x, b.z, b.yaw);
-  for (const r of feats.ramps) place(ramp(r), r.x, r.z, r.yaw);
   for (const l of feats.landmarks) place(landmark(l), l.x, l.z, l.yaw);
 
-  return { group: g, highTier, knockables, solids, culled };
+  return { group: g, highTier, knockables, placements, culled };
 }

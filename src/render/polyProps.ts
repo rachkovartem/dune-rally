@@ -3,7 +3,10 @@
 // Clones share geometry and materials, so a chunk that unloads disposes nothing.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { POLY_PROP_IDS, type PolyPropId } from '../world/propIds';
+import { BOULDER_IDS, POLY_PROP_IDS, type PolyPropId } from '../world/propIds';
+import type { RockKind } from '../world/worldDef';
+import { ROCK_LOOK_GLSL } from './rockLook';
+import { SURFACE_TINT_GLSL, surfaceTintFor, type SurfaceTint } from './surfaceTints';
 
 export { POLY_PROP_IDS } from '../world/propIds';
 
@@ -13,30 +16,10 @@ export function polyPropUrl(id: string): string {
   return `/props/${id}.glb`;
 }
 
-/** Boulders and the log stop the car; the bush folds over and the stones are pebbles. */
-const SOLID_PROPS: Record<PolyPropId, boolean> = {
-  namaqualand_boulder_02: true,
-  namaqualand_boulder_03: true,
-  namaqualand_boulder_05: true,
-  dead_tree_trunk_02: true,
-  namaqualand_stones_01: false,
-  wild_rooibos_bush: false,
-};
-
-/** A box collider in world space, from the model's own bounds times its placed scale. */
-export interface SolidProp {
-  x: number;
-  y: number;
-  z: number;
-  yaw: number;
-  halfX: number;
-  halfY: number;
-  halfZ: number;
-}
-
+/** A registered prop: one flattened root per rock kind for the boulders, one root for the rest. */
 interface PropTemplate {
   root: THREE.Object3D;
-  bounds: THREE.Box3;
+  byRock: Readonly<Record<RockKind, THREE.Object3D>> | null;
 }
 
 const templates = new Map<PolyPropId, PropTemplate>();
@@ -119,10 +102,43 @@ export function registerPolyProps(loaded: (id: PolyPropId) => THREE.Object3D): v
         prepareMaterial(material, id);
       }
     });
-    root.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(root);
-    templates.set(id, { root: flattenByMaterial(root), bounds });
+    const flat = flattenByMaterial(root);
+    const byRock = BOULDER_IDS.includes(id) ? { granite: withRockLook(flat, null), dolerite: withRockLook(flat, surfaceTintFor('dolerite')) } : null;
+    templates.set(id, { root: flat, byRock });
   }
+}
+
+const rockMaterials = new Map<string, THREE.Material>();
+
+/**
+ * A boulder material that shades its scan the way the terrain shades its rock layer, then applies
+ * the ground's surface tint, so a boulder matches the rock face or the dolerite ridge it lies on.
+ */
+function rockMaterialFor(source: THREE.Material, tint: SurfaceTint | null): THREE.Material {
+  const key = `${source.uuid}:${tint === null ? 'granite' : 'dolerite'}`;
+  const cached = rockMaterials.get(key);
+  if (cached) return cached;
+  const material = source.clone();
+  const tintVector = tint === null ? 'vec4(1.0, 1.0, 1.0, 0.0)' : `vec4(${tint.red}, ${tint.green}, ${tint.blue}, ${tint.desaturate})`;
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = 'varying vec3 vBoulderWorld;\nvarying vec3 vBoulderNormal;\n' + shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+      vBoulderWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
+      vBoulderNormal = normalize(mat3(modelMatrix) * objectNormal);`);
+    shader.fragmentShader = 'varying vec3 vBoulderWorld;\nvarying vec3 vBoulderNormal;\n' + ROCK_LOOK_GLSL + SURFACE_TINT_GLSL
+      + shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+        diffuseColor.rgb = applySurfaceTint(rockLook(diffuseColor.rgb * (0.55 + 0.9 * diffuseColor.rgb), vBoulderWorld, normalize(vBoulderNormal)), ${tintVector});`);
+  };
+  material.customProgramCacheKey = () => key.endsWith('granite') ? 'boulder-rock-granite' : 'boulder-rock-dolerite';
+  rockMaterials.set(key, material);
+  return material;
+}
+
+function withRockLook(flat: THREE.Group, tint: SurfaceTint | null): THREE.Object3D {
+  const root = flat.clone(true);
+  root.traverse((object) => {
+    if (object instanceof THREE.Mesh && object.material instanceof THREE.Material) object.material = rockMaterialFor(object.material, tint);
+  });
+  return root;
 }
 
 function templateOf(id: PolyPropId): PropTemplate {
@@ -131,43 +147,26 @@ function templateOf(id: PolyPropId): PropTemplate {
   return template;
 }
 
-export interface PlacedProp {
-  object: THREE.Object3D;
-  solid: SolidProp | null;
+/** Where and how one prop is drawn; `rock` picks the granite or dolerite look of a boulder. */
+export interface PolyPropPlacement {
+  modelId: PolyPropId;
+  x: number;
+  groundY: number;
+  z: number;
+  yaw: number;
+  scale: number;
+  rock: RockKind | null;
 }
 
-export function placePolyProp(
-  id: PolyPropId,
-  x: number,
-  groundY: number,
-  z: number,
-  yaw: number,
-  scale: number,
-): PlacedProp {
-  const template = templateOf(id);
-  const object = template.root.clone(true);
-  object.rotation.y = yaw;
-  object.scale.setScalar(scale);
-  object.position.set(x, groundY, z);
-  if (!SOLID_PROPS[id]) return { object, solid: null };
-
-  const { min, max } = template.bounds;
-  const centreX = ((min.x + max.x) / 2) * scale;
-  const centreZ = ((min.z + max.z) / 2) * scale;
-  const cos = Math.cos(yaw);
-  const sin = Math.sin(yaw);
-  return {
-    object,
-    solid: {
-      x: x + centreX * cos + centreZ * sin,
-      y: groundY + ((min.y + max.y) / 2) * scale,
-      z: z - centreX * sin + centreZ * cos,
-      yaw,
-      halfX: ((max.x - min.x) / 2) * scale,
-      halfY: ((max.y - min.y) / 2) * scale,
-      halfZ: ((max.z - min.z) / 2) * scale,
-    },
-  };
+export function placePolyProp(placement: PolyPropPlacement): THREE.Object3D {
+  const template = templateOf(placement.modelId);
+  if (template.byRock !== null && placement.rock === null) throw new Error(`polyProps: boulder "${placement.modelId}" was placed without a rock kind`);
+  const source = template.byRock !== null && placement.rock !== null ? template.byRock[placement.rock] : template.root;
+  const object = source.clone(true);
+  object.rotation.y = placement.yaw;
+  object.scale.setScalar(placement.scale);
+  object.position.set(placement.x, placement.groundY, placement.z);
+  return object;
 }
 
 /** The colour scan of a boulder, reused as the tiled rock layer of the cliff ring. */

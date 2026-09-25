@@ -89,7 +89,7 @@ export class ArenaSim {
   private buildChunk(chunk: ChunkCoord): void {
     const origin = chunkOrigin(chunk);
     addChunkCollider(this.world, generateChunkHeights(this.height, chunk), origin.x, origin.z);
-    // Solid placed features (buildings, ramps, landmarks) — same deterministic placement as the client.
+    // Solid placed features (buildings, landmarks) — same deterministic placement as the client.
     addFeatureColliders(this.world, featuresInChunk(chunk.cx, chunk.cz), this.height);
     const placements = propPlacementsInChunk({ ...chunk, seed: this.seed, height: this.height, biome: this.biome, drawnHeight: colliderGround });
     addPropColliders(this.world, placements);

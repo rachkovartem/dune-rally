@@ -2,13 +2,16 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { buildBuggyMesh } from '../render/buggyMesh';
-import { createVehiclePhysics, RESET_LIFT, type VehiclePhysics } from '../../shared/vehiclePhysics';
+import {
+  createVehiclePhysics, RESET_LIFT, type DriveState, type SurfaceState, type VehiclePhysics, type WheelSurface,
+} from '../../shared/vehiclePhysics';
 import { restingSuspensionLength, vehicleConfigFor, type VehicleConfig } from './vehicleConfig';
 import type { CarId } from './cars';
 import type { InputMsg } from '../../shared/protocol';
 import type { DrivetrainState } from '../../shared/drivetrain';
 import type { GroundGrip } from '../../shared/terrainGrip';
 import { rotationForYaw, type SpawnPose } from '../world/worldDef';
+import { advanceRollAngle } from './wheelRoll';
 
 /** Where a car is put: a spawn or reset pose plus the height of its body. */
 export type StandingPose = SpawnPose & { y: number };
@@ -19,12 +22,31 @@ export type StandingPose = SpawnPose & { y: number };
 const IN_AIR_DROOP = 0.04;
 const DROOP_SPEED = 0.8;
 
+/** What the tyres do on the ground as a whole, for the tyre sound. */
+export interface TyreSlip {
+  /** Fastest wheelspin of a driven wheel on the ground, m/s. */
+  wheelSpin: number;
+  /** Mean sideways slide of the wheels on the ground, m/s. */
+  lateralSlip: number;
+}
+
+/** A wheel's contact with how deep it sits and how fast it spins, for the ruts and the roost. */
+export interface WheelGroundContact {
+  x: number;
+  y: number;
+  z: number;
+  /** Sinkage, m. */
+  sink: number;
+  /** Wheelspin, m/s. */
+  spin: number;
+}
+
 export class Buggy {
   readonly mesh: THREE.Group;
   private readonly vehicle: VehiclePhysics;
   private readonly config: VehicleConfig;
   private wheelPivots: THREE.Group[] = [];
-  private rollAngle = 0;
+  private readonly rollAngles: number[];
   private readonly restingLength: number;
   private readonly shownSuspension: number[];
 
@@ -39,6 +61,7 @@ export class Buggy {
     this.vehicle.body.setRotation(rotationForYaw(pose.yaw), true);
     this.restingLength = restingSuspensionLength(this.config.wheel);
     this.shownSuspension = this.config.wheel.positions.map(() => this.restingLength);
+    this.rollAngles = this.config.wheel.positions.map(() => 0);
 
     this.mesh = buildBuggyMesh(carId);
     this.wheelPivots = this.mesh.children.slice(1).map((child) => {
@@ -55,32 +78,38 @@ export class Buggy {
   update() {
     this.vehicle.update(this.world.timestep);
 
-    const t = this.vehicle.body.translation();
-    const r = this.vehicle.body.rotation();
-    this.mesh.position.set(t.x, t.y, t.z);
-    this.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    const translation = this.vehicle.body.translation();
+    const rotation = this.vehicle.body.rotation();
+    this.mesh.position.set(translation.x, translation.y, translation.z);
+    this.mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
 
-    // Roll the wheels based on forward speed (local +Z projected from world velocity).
-    const lv = this.vehicle.body.linvel();
-    const fwdX = 2 * (r.x * r.z + r.w * r.y);
-    const fwdY = 2 * (r.y * r.z - r.w * r.x);
-    const fwdZ = 1 - 2 * (r.x * r.x + r.y * r.y);
-    const fwdSpeed = lv.x * fwdX + lv.y * fwdY + lv.z * fwdZ;
-    this.rollAngle += (fwdSpeed * this.world.timestep) / this.config.wheel.radius;
+    // A spinning driven wheel turns at its tread speed, so wheelspin is seen; the others roll with the car.
+    const groundSpeed = this.vehicle.forwardSpeed();
+    const spinningSpeed = this.vehicle.wheelSurfaceSpeed();
+    const wheels = this.vehicle.wheelSurface();
+    for (let wheelIndex = 0; wheelIndex < this.rollAngles.length; wheelIndex++) {
+      const treadSpeed = wheels[wheelIndex].spinSpeed > 0 ? spinningSpeed : groundSpeed;
+      this.rollAngles[wheelIndex] = advanceRollAngle(
+        this.rollAngles[wheelIndex], groundSpeed, treadSpeed, this.world.timestep, this.config.wheel.radius,
+      );
+    }
 
     const steerAngle = this.vehicle.steerAngle();
-    for (let i = 0; i < this.wheelPivots.length; i++) {
-      const pivot = this.wheelPivots[i];
-      const connection = this.vehicle.controller.wheelChassisConnectionPointCs(i);
-      const suspension = this.suspensionToShow(i);
+    for (let wheelIndex = 0; wheelIndex < this.wheelPivots.length; wheelIndex++) {
+      const pivot = this.wheelPivots[wheelIndex];
+      const connection = this.vehicle.controller.wheelChassisConnectionPointCs(wheelIndex);
+      const suspension = this.suspensionToShow(wheelIndex);
       if (connection) pivot.position.set(connection.x, connection.y - suspension, connection.z);
-      pivot.rotation.y = this.config.steeredWheels.includes(i) ? steerAngle : 0;
+      pivot.rotation.y = this.config.steeredWheels.includes(wheelIndex) ? steerAngle : 0;
       const spinner = pivot.children[0];
-      spinner.rotation.x = this.rollAngle;
+      spinner.rotation.x = this.rollAngles[wheelIndex];
     }
   }
 
-  /** On the ground the drawn wheel follows the physics one exactly, so it never floats or sinks. */
+  /**
+   * On the ground the drawn wheel follows the physics one exactly, so it never floats. A sunk wheel
+   * has a smaller physics radius, so the drawn tyre (full radius) reaches into the sand by the sinkage.
+   */
   private suspensionToShow(wheelIndex: number): number {
     const controller = this.vehicle.controller;
     const length = controller.wheelSuspensionLength(wheelIndex);
@@ -107,6 +136,7 @@ export class Buggy {
     this.vehicle.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
     this.vehicle.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.vehicle.resetSurface();
   }
 
   /** TEMP debug snapshot. */
@@ -118,13 +148,55 @@ export class Buggy {
   }
 
   /** Where each wheel touches the ground, in wheel order (FL, FR, RL, RR); null for a wheel in the air. */
-  wheelContacts(): ({ x: number; y: number; z: number } | null)[] {
+  wheelContacts(): (WheelGroundContact | null)[] {
     const controller = this.vehicle.controller;
+    const wheels = this.vehicle.wheelSurface();
     return this.config.wheel.positions.map((_position, wheelIndex) => {
       if (!controller.wheelIsInContact(wheelIndex)) return null;
       const contact = controller.wheelContactPoint(wheelIndex);
-      return contact ? { x: contact.x, y: contact.y, z: contact.z } : null;
+      if (!contact) return null;
+      const wheel = wheels[wheelIndex];
+      return { x: contact.x, y: contact.y, z: contact.z, sink: wheel.sink, spin: wheel.spinSpeed };
     });
+  }
+
+  /** Per wheel (FL, FR, RL, RR): sinkage, slip angle, wheelspin and sideways slide. */
+  wheelSurface(): readonly WheelSurface[] {
+    return this.vehicle.wheelSurface();
+  }
+
+  /** Wheelspin and sinkage, as the pose message carries them. */
+  surfaceState(): SurfaceState {
+    return this.vehicle.surfaceState();
+  }
+
+  /** Wheelspin of the driven wheels, m/s. */
+  spin(): number {
+    return this.vehicle.spin();
+  }
+
+  /** Share of the weight on the wheels; the rest sits on the belly. */
+  wheelLoadShare(): number {
+    return this.vehicle.wheelLoadShare();
+  }
+
+  /** The drive mode (fixed or the one selected) and whether traction control is on, after the last step. */
+  driveState(): DriveState {
+    return this.vehicle.driveState();
+  }
+
+  tyreSlip(): TyreSlip {
+    const controller = this.vehicle.controller;
+    let wheelSpin = 0;
+    let lateralSlip = 0;
+    let onGround = 0;
+    this.vehicle.wheelSurface().forEach((wheel, wheelIndex) => {
+      if (!controller.wheelIsInContact(wheelIndex)) return;
+      onGround++;
+      wheelSpin = Math.max(wheelSpin, wheel.spinSpeed);
+      lateralSlip += wheel.lateralSlip;
+    });
+    return { wheelSpin, lateralSlip: onGround > 0 ? lateralSlip / onGround : 0 };
   }
 
   tyreWidth(): number {
@@ -166,6 +238,7 @@ export class Buggy {
     this.vehicle.body.setRotation(rotationForYaw(pose.yaw), true);
     this.vehicle.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.vehicle.resetSurface();
   }
 
   /** Move the car to a point, upright, at rest, facing where its nose pointed. */

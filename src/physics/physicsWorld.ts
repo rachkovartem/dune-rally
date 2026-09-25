@@ -5,7 +5,7 @@ import { VERTS_PER_SIDE } from '../world/heightfieldData';
 import { WORLD_GRAVITY } from '../../shared/drivetrain';
 import {
   landmarkBox,
-  type BuildingBox, type Ramp, type ChunkFeatures,
+  type BuildingBox, type ChunkFeatures,
 } from '../world/worldDef';
 import type { PropPlacement } from '../world/propPlacement';
 import { propColliderBox } from '../world/propColliders';
@@ -79,32 +79,7 @@ export function addBuildingCollider(
 }
 
 /**
- * Add a static wedge (triangular-prism) collider for a stunt ramp: flat on the ground at the back,
- * rising to `rise` over `len`, so the car climbs the slope and launches off the front lip. `baseY`
- * is the ground height under the ramp; the wedge's base sits on it. Same deterministic placement on
- * client and server.
- */
-export function addRampCollider(world: RAPIER.World, r: Ramp, baseY: number): RAPIER.Collider {
-  const hw = r.width / 2;
-  const hl = r.len / 2;
-  // local: drive up +Z; triangle (z=-hl,y=0) → (z=+hl,y=0) → (z=+hl,y=rise), extruded along x.
-  const pts = new Float32Array([
-    -hw, 0, -hl, hw, 0, -hl, // back-bottom edge
-    -hw, 0, hl, hw, 0, hl,   // front-bottom edge
-    -hw, r.rise, hl, hw, r.rise, hl, // front-top edge
-  ]);
-  const half = r.yaw / 2;
-  const body = world.createRigidBody(
-    RAPIER.RigidBodyDesc.fixed()
-      .setTranslation(r.x, baseY, r.z)
-      .setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }),
-  );
-  const desc = RAPIER.ColliderDesc.convexHull(pts) ?? RAPIER.ColliderDesc.cuboid(hw, r.rise / 2, hl);
-  return world.createCollider(desc, body);
-}
-
-/**
- * Add solid colliders for all placed features (town buildings, stunt ramps, landmarks) in a chunk.
+ * Add solid colliders for all placed features (town buildings, landmarks) in a chunk.
  * `heightAt` gives the (flattened) ground height under each feature. Returns every created collider
  * so the client can remove them on chunk unload.
  */
@@ -115,7 +90,6 @@ export function addFeatureColliders(
 ): RAPIER.Collider[] {
   const out: RAPIER.Collider[] = [];
   for (const b of f.buildings) out.push(addBuildingCollider(world, b, heightAt(b.x, b.z)));
-  for (const r of f.ramps) out.push(addRampCollider(world, r, heightAt(r.x, r.z)));
   for (const l of f.landmarks) out.push(addBuildingCollider(world, landmarkBox(l), heightAt(l.x, l.z)));
   return out;
 }
@@ -145,22 +119,6 @@ export function addPropColliders(world: RAPIER.World, placements: readonly PropP
     colliders.push(world.createCollider(desc, body));
   }
   return colliders;
-}
-
-/** Static box colliders for the solid scattered props (boulders, logs) of one chunk. */
-export function addSolidPropColliders(
-  world: RAPIER.World,
-  props: readonly { x: number; y: number; z: number; yaw: number; halfX: number; halfY: number; halfZ: number }[],
-): RAPIER.Collider[] {
-  return props.map((prop) => {
-    const half = prop.yaw / 2;
-    const body = world.createRigidBody(
-      RAPIER.RigidBodyDesc.fixed()
-        .setTranslation(prop.x, prop.y, prop.z)
-        .setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }),
-    );
-    return world.createCollider(RAPIER.ColliderDesc.cuboid(prop.halfX, prop.halfY, prop.halfZ), body);
-  });
 }
 
 export function removeCollider(world: RAPIER.World, collider: RAPIER.Collider) {

@@ -4,7 +4,8 @@ import type { CarId } from '../vehicle/cars';
 import { pedalIntent, type DrivetrainSpec, type DrivetrainState } from '../../shared/drivetrain';
 import { upAxisOf, type Quaternion } from '../../shared/vehiclePhysics';
 import {
-  bodyScrapeSpeed, boostTarget, engineLoadTarget, scrapeGain, smoothToward, stepBoost, tyreSound, whistleFrequency, windSound,
+  bodyScrapeSpeed, boostTarget, engineLoadTarget, scrapeGain, smoothToward, stepBoost, tyreSlipSound, tyreSound, whistleFrequency,
+  windSound,
 } from './engineMix';
 import { EngineVoice, type EngineVoiceSnapshot, type LoopLoader, type SoundErrorReport } from './engineVoice';
 import type { LayerName, SoundEntry } from './soundManifest';
@@ -42,6 +43,10 @@ export interface LocalEngineFrame {
   rotation: Quaternion;
   /** Height of the body centre above the drawn ground, m. */
   groundClearance: number;
+  /** Fastest wheelspin of a driven wheel on the ground, m/s. */
+  wheelSpin: number;
+  /** Mean sideways slide of the wheels on the ground, m/s. */
+  lateralSlip: number;
   dt: number;
 }
 
@@ -51,6 +56,7 @@ export function assertFiniteFrame(frame: LocalEngineFrame): void {
     ['rpm', frame.drivetrain.rpm], ['gear', frame.drivetrain.gear], ['shiftTimer', frame.drivetrain.shiftTimer],
     ['throttle', frame.throttle], ['brake', frame.brake], ['forwardSpeed', frame.forwardSpeed], ['speed', frame.speed],
     ['wheelsInContact', frame.wheelsInContact], ['wheelCount', frame.wheelCount], ['groundClearance', frame.groundClearance],
+    ['wheelSpin', frame.wheelSpin], ['lateralSlip', frame.lateralSlip],
     ['dt', frame.dt], ['rotation.x', frame.rotation.x], ['rotation.y', frame.rotation.y], ['rotation.z', frame.rotation.z],
     ['rotation.w', frame.rotation.w],
   ];
@@ -75,6 +81,8 @@ export interface LocalEngineSnapshot extends EngineVoiceSnapshot {
   turboGain: number;
   breathGain: number;
   tyreGain: number;
+  tyreScrubGain: number;
+  tyreSpinGain: number;
   windGain: number;
   scrapeGain: number;
   scrapeSpeed: number;
@@ -91,6 +99,8 @@ export class EngineAudio {
   private readonly turboTone: OscillatorNode;
   private readonly turboToneGain: GainNode;
   private readonly tyres: NoiseLayer;
+  private readonly tyreScrub: NoiseLayer;
+  private readonly tyreSpin: NoiseLayer;
   private readonly wind: NoiseLayer;
   private readonly scrape: NoiseLayer;
   private readonly outputGains: GainNode[] = [];
@@ -133,6 +143,8 @@ export class EngineAudio {
     this.turboTone.start();
     this.outputGains.push(this.turboToneGain);
     this.tyres = noiseLayer('lowpass', 400, 0.7);
+    this.tyreScrub = noiseLayer('bandpass', 900, 0.8);
+    this.tyreSpin = noiseLayer('bandpass', 220, 0.7);
     this.wind = noiseLayer('bandpass', 600, 0.5);
     this.scrape = noiseLayer('bandpass', 1400, 1.2);
   }
@@ -168,6 +180,12 @@ export class EngineAudio {
     const tyre = tyreSound(frame.cover, frame.speed, frame.wheelsInContact, frame.wheelCount);
     ramp(this.tyres.filter.frequency, tyre.frequency);
     ramp(this.tyres.gain.gain, previewing ? 0 : tyre.gain);
+    const slip = tyreSlipSound(frame.cover, frame.lateralSlip, frame.wheelSpin, frame.wheelsInContact, frame.wheelCount);
+    for (const [layer, voice] of [[this.tyreScrub, slip.scrub], [this.tyreSpin, slip.spin]] as const) {
+      ramp(layer.filter.frequency, voice.frequency);
+      ramp(layer.filter.Q, voice.q);
+      ramp(layer.gain.gain, previewing ? 0 : voice.gain);
+    }
     const wind = windSound(frame.speed);
     ramp(this.wind.filter.frequency, wind.frequency);
     ramp(this.wind.gain.gain, previewing ? 0 : wind.gain);
@@ -190,6 +208,8 @@ export class EngineAudio {
       turboGain: this.turboHiss.gain.gain.value,
       breathGain: this.breath.gain.gain.value,
       tyreGain: this.tyres.gain.gain.value,
+      tyreScrubGain: this.tyreScrub.gain.gain.value,
+      tyreSpinGain: this.tyreSpin.gain.gain.value,
       windGain: this.wind.gain.gain.value,
       scrapeGain: this.scrape.gain.gain.value,
       scrapeSpeed: this.scrapeSpeed,
@@ -200,7 +220,7 @@ export class EngineAudio {
     this.voice.stop();
     const now = this.context.currentTime;
     for (const gain of this.outputGains) gain.gain.setTargetAtTime(0, now, 0.03);
-    for (const layer of [this.breath, this.turboHiss, this.tyres, this.wind, this.scrape]) layer.source.stop(now + 0.3);
+    for (const layer of [this.breath, this.turboHiss, this.tyres, this.tyreScrub, this.tyreSpin, this.wind, this.scrape]) layer.source.stop(now + 0.3);
     this.turboTone.stop(now + 0.3);
   }
 }

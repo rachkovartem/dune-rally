@@ -8,7 +8,7 @@ import { CHUNK_SIZE, chunkKey, chunkOrigin, chunksInRadius, worldToChunk, type C
 import { featuresInChunk, spawnPoseFor, SPAWN_LIFT, type SpawnPose } from './world/worldDef';
 import { borderEscapeTarget } from './world/borderSafety';
 import { TerrainManager } from './world/terrainManager';
-import { initPhysics, addChunkCollider, addFeatureColliders, addSolidPropColliders, removeCollider } from './physics/physicsWorld';
+import { initPhysics, addChunkCollider, addFeatureColliders, addPropColliders, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
 import { vehicleConfigFor, type VehicleConfig } from './vehicle/vehicleConfig';
 import { CAR_IDS, DEFAULT_CAR_ID, type CarId } from './vehicle/cars';
@@ -19,12 +19,15 @@ import { CameraRig, cameraModeLabelFor, readSavedCameraMode, saveCameraMode } fr
 import { connectToArena, type NetPlayer } from './net/connection';
 import { PlayerViews } from './net/playerViews';
 import { TireTracks } from './render/groundDecals';
+import { SandRoost } from './render/sandRoost';
+import { surfaceTintFor, tintColor } from './render/surfaceTints';
 import { Knockables } from './render/knockables';
 import { AudioManager, type RemoteCarPose } from './audio/audio';
-import { POSE_HZ, sanitizeCarId, sanitizeInput, type PoseMsg } from '../shared/protocol';
+import { POSE_HZ, sanitizeCarId, sanitizeInput, type InputMsg, type PoseMsg } from '../shared/protocol';
+import type { DriveMode } from '../shared/driveModes';
 import type { GroundGrip } from '../shared/terrainGrip';
 import type RAPIER from '@dimforge/rapier3d-compat';
-import { RESET_LIFT } from '../shared/vehiclePhysics';
+import { RESET_LIFT, type DriveModeState } from '../shared/vehiclePhysics';
 import { carDefinitionFor } from './assets/carCatalog';
 import { assembleCar, fitCarToChassis } from './render/carModel';
 import { registerCarAsset, getCarMaterials } from './render/buggyMesh';
@@ -35,7 +38,8 @@ import { gameServerUrl } from './net/serverUrl';
 import { SERVER_RETRY_DELAYS_MS, waitForServer } from './net/waitForServer';
 import { PROP_TEXTURE_SETS, type PropKind } from './assets/textureManifest';
 import { createTerrainMaterial } from './render/terrainMaterial';
-import { setTerrainMaterial } from './render/terrainMesh';
+import { rockLookMean } from './render/rockLook';
+import { coverTint, setTerrainMaterial } from './render/terrainMesh';
 import { createPropMaterials } from './render/propMaterials';
 import { setHighTierPropsVisible, setPropMaterials, updatePropVisibility } from './render/scatter';
 import { boulderRockTexture, GRASS_MODEL_ID, POLY_PROP_IDS, polyPropUrl, registerPolyProps } from './render/polyProps';
@@ -47,10 +51,11 @@ import { readSavedCarId, saveCarId } from './ui/carChoice';
 import { createCarPicker } from './ui/carPicker';
 import { createFrameGuard } from './debug/frameGuard';
 import { debugModeEnabled } from './render/devOverlay';
-import { formatDebugReadout } from './ui/debugReadout';
+import { formatDebugReadout, formatSurfaceReadout } from './ui/debugReadout';
+import { createDriveHud, driveKeyHints, FIXED_DRIVE_LABELS, nextDriveModeInCycle, TRACTION_OFF_LABEL, TRACTION_ON_LABEL } from './ui/driveHud';
 import { createCompass } from './ui/compass';
 import { createCameraModeBanner } from './ui/cameraModeBanner';
-import type { Cover } from './world/biome';
+import { surfaceTintAt, type Cover } from './world/biome';
 
 const canvas = document.getElementById('app');
 if (!(canvas instanceof HTMLCanvasElement)) {
@@ -265,12 +270,12 @@ const colliders = new Map<string, RAPIER.Collider>();
 const featureColliders = new Map<string, RAPIER.Collider[]>();
 const solidChunks = new Map<string, ChunkCoord>();
 const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, knockables, {
-  onLoad: (key, heights, ox, oz, solidProps) => {
+  onLoad: (key, heights, ox, oz, placements) => {
     colliders.set(key, addChunkCollider(world, heights, ox, oz));
     const cx = Math.round(ox / CHUNK_SIZE);
     const cz = Math.round(oz / CHUNK_SIZE);
     solidChunks.set(key, { cx, cz });
-    const cols = [...addFeatureColliders(world, featuresInChunk(cx, cz), heightField), ...addSolidPropColliders(world, solidProps)];
+    const cols = [...addFeatureColliders(world, featuresInChunk(cx, cz), heightField), ...addPropColliders(world, placements)];
     if (cols.length) featureColliders.set(key, cols);
   },
   onUnload: (key) => {
@@ -291,10 +296,10 @@ const FAR_GRID_MARGIN = 128;
 const FAR_SAND_SHADING = 0.96;
 const sandImageMean = meanTextureColor(sandSet.color);
 const sandMean: LinearColor = { r: sandImageMean.r * FAR_SAND_SHADING, g: sandImageMean.g * FAR_SAND_SHADING, b: sandImageMean.b * FAR_SAND_SHADING };
-// The near rock layer is the rock image times (0.55 + 0.9 × a second sample of it); this is its mean.
+// The near rock layer is the rock image times (0.55 + 0.9 × a second sample of it), then the granite look; this is its mean.
 const rockImageMean = meanTextureColor(rockTexture);
 const rockLayerMean = (channel: number): number => channel * (0.55 + 0.9 * channel);
-const rockMean: LinearColor = { r: rockLayerMean(rockImageMean.r), g: rockLayerMean(rockImageMean.g), b: rockLayerMean(rockImageMean.b) };
+const rockMean: LinearColor = rockLookMean({ r: rockLayerMean(rockImageMean.r), g: rockLayerMean(rockImageMean.g), b: rockLayerMean(rockImageMean.b) });
 let farTerrain: FarTerrain | null = null;
 window.__farTerrain = null;
 const farGridRequestedAt = performance.now();
@@ -374,6 +379,10 @@ interface LocalCar {
   ground: GroundGrip;
   /** Surface cover under the car from that same sample. */
   cover: Cover;
+  /** How soft the ground is there, 0..1, from that same sample. */
+  softness: number;
+  /** The drive mode sent with every input; undefined for a car whose drive cannot be changed. */
+  requestedDriveMode: DriveMode | undefined;
 }
 // Built on the start click, so the car the player picked is the one that drives.
 let localCar: LocalCar | null = null;
@@ -386,12 +395,25 @@ const keyboard = new Keyboard();
 window.__dbg = () => {
   if (!localCar) return null;
   const buggy = localCar.buggy;
+  const wheelRadius = localCar.config.wheel.radius;
   const p = buggy.position();
   return {
     carId: localCar.carId,
     pos: { x: +p.x.toFixed(1), y: +p.y.toFixed(2), z: +p.z.toFixed(1) },
     speed: +buggy.speed().toFixed(2),
     ...buggy.debug(),
+    surface: buggy.surfaceState(),
+    wheels: buggy.wheelSurface(),
+    drive: buggy.driveState(),
+    softness: localCar.softness,
+    cover: localCar.cover,
+    roostGrains: roost.liveCount(),
+    // How far each drawn tyre reaches below its physics contact point: the sinkage when it reads as sunk.
+    tyreBelowContact: buggy.wheelContacts().map((contact, wheelIndex) => {
+      const pivot = buggy.mesh.children[wheelIndex + 1];
+      if (!contact || !pivot) return null;
+      return +(contact.y - (pivot.getWorldPosition(new Vector3()).y - wheelRadius)).toFixed(3);
+    }),
     keys: [...keyboard.keys],
     remoteCars: [...conn.players().keys()].filter((id) => id !== conn.sessionId).map((id) => views.carIdOf(id)),
     remotes: [...conn.players().keys()].filter((id) => id !== conn.sessionId).map((id) => {
@@ -432,6 +454,8 @@ function aimSpawnView(): void {
 }
 aimSpawnView();
 const tracks = new TireTracks(ctx.scene, heightField, biome, sandSet, 4);
+const roost = new SandRoost(ctx.scene);
+ctx.onQualityChange((_tier, name) => roost.setQuality(name));
 const grass = new Grass(ctx.scene, loadedModel(`prop:${GRASS_MODEL_ID}`), heightField, biome);
 ctx.onQualityChange((tier) => {
   grass.setTier(tier);
@@ -446,6 +470,12 @@ const hudErrorEl = document.getElementById('hud-error');
 const compassEl = document.getElementById('hud-compass');
 if (!compassEl) throw new Error('Expected a #hud-compass element in the HUD.');
 const compass = createCompass(compassEl);
+const driveHudEl = document.getElementById('hud-drive');
+const driveKeysFound = document.getElementById('hud-controls-drive');
+if (!driveHudEl || !driveKeysFound) throw new Error('Expected #hud-drive and #hud-controls-drive elements in the HUD.');
+// Typed apart from the lookup, because the function that fills it is hoisted above the check.
+const driveKeysEl: HTMLElement = driveKeysFound;
+const driveHud = createDriveHud(driveHudEl);
 const cameraForward = new Vector3();
 const showErrorsInHud = debugModeEnabled();
 const showDebugReadout = debugModeEnabled();
@@ -458,10 +488,12 @@ function poseOf(buggy: Buggy): PoseMsg {
   const position = buggy.position();
   const rotation = buggy.mesh.quaternion;
   const velocity = buggy.velocity();
+  const surface = buggy.surfaceState();
   return {
     x: position.x, y: position.y, z: position.z,
     qx: rotation.x, qy: rotation.y, qz: rotation.z, qw: rotation.w,
     vx: velocity.x, vy: velocity.y, vz: velocity.z,
+    surface: { spin: surface.spin, sink: [...surface.sink], digDirection: [...surface.digDirection] },
   };
 }
 
@@ -475,8 +507,21 @@ conn.onRemove((id) => views.remove(id));
 function startDriving(carId: CarId): void {
   const config = vehicleConfigFor(carId);
   spawn = currentSpawnPose();
-  const { cover, ground } = groundAt(biome, heightField, spawn.x, spawn.z, config);
-  localCar = { buggy: new Buggy(world, ctx.scene, spawn, carId), carId, config, ground, cover };
+  const { cover, ground, softness } = groundAt(biome, heightField, spawn.x, spawn.z, config);
+  const buggy = new Buggy(world, ctx.scene, spawn, carId);
+  const drive = buggy.driveState().drive;
+  const requestedDriveMode = drive.kind === 'selectable' ? drive.requested : undefined;
+  localCar = { buggy, carId, config, ground, cover, softness, requestedDriveMode };
+  showDriveKeyHints(drive);
+}
+
+function showDriveKeyHints(drive: DriveModeState): void {
+  driveKeysEl.replaceChildren();
+  for (const hint of driveKeyHints(drive)) {
+    const key = document.createElement('kbd');
+    key.textContent = hint.key;
+    driveKeysEl.append(' \u00a0·\u00a0 ', key, ` — ${hint.label}`);
+  }
 }
 
 startEl.addEventListener('click', () => {
@@ -494,6 +539,27 @@ window.addEventListener('keydown', (e) => {
   localCar.buggy.reset();
   tracks.breakChains();
   conn.sendResetCar();
+});
+
+// T switches traction control; X steps through the drive modes of a car that has them. Both are sent
+// with every input, so the server copy drives the same way.
+let tractionControl = true;
+window.addEventListener('keydown', (event) => {
+  if (event.repeat || !localCar) return;
+  if (event.code === 'KeyT') {
+    tractionControl = !tractionControl;
+    cameraBanner.show(tractionControl ? TRACTION_ON_LABEL : TRACTION_OFF_LABEL);
+    return;
+  }
+  if (event.code !== 'KeyX') return;
+  const drive = localCar.buggy.driveState().drive;
+  if (drive.kind === 'fixed') {
+    cameraBanner.show(FIXED_DRIVE_LABELS[drive.layout]);
+    return;
+  }
+  const next = nextDriveModeInCycle(drive.requested);
+  localCar.requestedDriveMode = next;
+  cameraBanner.show(`привод ${next}`);
 });
 
 // Below the drawn ground by this much, the car can only have fallen through a missing collider.
@@ -574,13 +640,15 @@ function frame() {
     const buggy = car.buggy;
     acc += dt;
     const controls = controlsFromKeys(keyboard.keys);
-    guard.run('network input', () => conn.sendInput(sanitizeInput(controls))); // server (for other players)
+    const input: InputMsg = { ...controls, tractionControl };
+    if (car.requestedDriveMode !== undefined) input.driveMode = car.requestedDriveMode;
+    guard.run('network input', () => conn.sendInput(sanitizeInput(input))); // server (for other players)
     guard.run('brake lights', () => setBrakeLights(getCarMaterials(buggy.mesh), controls.brake > 0.1)); // this car's own tail lights only
 
     guard.run('physics', () => {
       while (acc >= STEP) {
         acc -= STEP;
-        buggy.applyControls(controls, car.ground);
+        buggy.applyControls(input, car.ground);
         world.step();
         buggy.update();
       }
@@ -603,6 +671,24 @@ function frame() {
       const forward = new Vector3(0, 0, 1).applyQuaternion(buggy.mesh.quaternion);
       tracks.update(buggy.wheelContacts(), p.x, p.z, Math.atan2(forward.x, forward.z), buggy.tyreWidth());
     });
+    guard.run('roost', () => {
+      const contacts = buggy.wheelContacts();
+      const tint = tintColor(sandMean, surfaceTintFor(surfaceTintAt(p.x, p.z, car.cover)));
+      const shade = coverTint(car.cover);
+      roost.update({
+        wheels: buggy.wheelSurface().map((wheel, wheelIndex) => ({
+          contact: contacts[wheelIndex], spinSpeed: wheel.spinSpeed, lateralSlip: wheel.lateralSlip,
+        })),
+        spinDirection: buggy.surfaceState().spinDirection,
+        forward: new Vector3(0, 0, 1).applyQuaternion(buggy.mesh.quaternion),
+        left: new Vector3(1, 0, 0).applyQuaternion(buggy.mesh.quaternion),
+        velocity: buggy.velocity(),
+        cover: car.cover,
+        groundColor: { r: tint.r * shade, g: tint.g * shade, b: tint.b * shade },
+        cameraRotation: ctx.camera.quaternion,
+        dt,
+      });
+    });
     guard.run('sun', () => ctx.focusSun(p.x, p.y, p.z));
     guard.run('camera', () => cameraRig.update(buggy.mesh, dt, car.carId));
 
@@ -616,9 +702,11 @@ function frame() {
 
     // tyre sound and grip matched to the surface under the car
     guard.run('audio', () => {
-      const { cover, ground } = groundAt(biome, heightField, p.x, p.z, car.config);
+      const { cover, ground, softness } = groundAt(biome, heightField, p.x, p.z, car.config);
       car.cover = cover;
       car.ground = ground;
+      car.softness = softness;
+      const slip = buggy.tyreSlip();
       audio.updateLocal({
         carId: car.carId,
         spec: car.config.drivetrain,
@@ -632,11 +720,14 @@ function frame() {
         cover,
         rotation: buggy.mesh.quaternion,
         groundClearance: p.y - terrainSurfaceHeight(heightField, p.x, p.z),
+        wheelSpin: slip.wheelSpin,
+        lateralSlip: slip.lateralSlip,
         dt,
       });
     });
     guard.run('hud', () => {
       if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));
+      driveHud.update(buggy.driveState());
     });
     if (showDebugReadout && now - lastReadoutAt >= READOUT_INTERVAL_MS) {
       lastReadoutAt = now;
@@ -650,6 +741,10 @@ function frame() {
           ...formatDebugReadout({
             x: p.x, y: p.y, z: p.z, headingDegrees, cover: car.cover, grip: car.ground.grip,
             chunk: worldToChunk(p.x, p.z), serverChunks: null,
+          }),
+          ...formatSurfaceReadout({
+            softness: car.softness, spin: buggy.spin(), sink: buggy.surfaceState().sink,
+            wheelLoadShare: buggy.wheelLoadShare(), drive: buggy.driveState(),
           }),
           `terrain drawn ${streaming.drawnChunks}  colliders ${streaming.colliderChunks}  `
             + `build p95 ${streaming.meshBuildMs.p95.toFixed(1)} ms  max ${streaming.meshBuildMs.max.toFixed(1)} ms`,

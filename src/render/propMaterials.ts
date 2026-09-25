@@ -26,7 +26,6 @@ export interface PropMaterials {
   cactus: THREE.MeshStandardMaterial;
   wall: THREE.MeshStandardMaterial[];
   roof: THREE.MeshStandardMaterial;
-  ramp: THREE.MeshStandardMaterial;
   beaconMetal: THREE.MeshStandardMaterial;
   windmillTower: THREE.MeshStandardMaterial;
   blade: THREE.MeshStandardMaterial;
@@ -59,7 +58,6 @@ export function createPropMaterials(sets: PropTextureSets): PropMaterials {
       texturedMaterial(sets.stucco, 0x9c8466, 0.9),
     ],
     roof: texturedMaterial(sets.roof, 0xffffff, 0.8),
-    ramp: texturedMaterial(sets.wood, 0xffffff, 0.75),
     beaconMetal: texturedMaterial(sets.metal, 0xb6bcc4, 0.35),
     windmillTower: texturedMaterial(sets.stucco, 0xcdb9a0, 0.85),
     blade: texturedMaterial(sets.metal, 0x3a3a3a, 0.4),

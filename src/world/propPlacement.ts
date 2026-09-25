@@ -73,11 +73,6 @@ const PROP_SCALE = { min: 0.8, max: 1.7 };
 // ones around the foot of the face, big ones up the face, measured past the face foot.
 const CLIFF_FOOT = { from: -4, to: 4, scaleMin: 2.5, scaleMax: 5 };
 const CLIFF_FACE = { from: 4, to: 26, scaleMin: 3, scaleMax: 7 };
-/**
- * Up to this face depth the drawn border ground is the collider, so a foot boulder here is solid
- * and stands on the collider; higher up the face a car cannot reach, and the boulder is drawn only.
- */
-const SOLID_FOOT_DEPTH = 1.5;
 const CLIFF_ATTEMPTS = 120;
 const EXTRA_ATTEMPTS = 10;
 // Sinks a boulder's flat base into a slope so no edge of it hangs in the air.
@@ -115,8 +110,8 @@ const MAX_SINK_SHARE = 0.6;
  * gather at its foot. Metres from the crest; the face is the part between crest and foot.
  */
 const BAND_HEAPS = {
-  crest: { scale: { min: 2.2, max: 4.5 } },
-  face: { scale: { min: 1.8, max: 3.6 } },
+  crest: { scale: { min: 3.2, max: 6.5 } },
+  face: { scale: { min: 2.2, max: 4.5 } },
   foot: { scale: { min: 1, max: 2.8 } },
   /** The crest part reaches this far onto the shoulder, and the foot part this far out onto the apron. */
   crestReach: 6,
@@ -311,7 +306,7 @@ export function propPlacementsInChunk(input: PlacementInput): PropPlacement[] {
     const yaw = cliffRng() * Math.PI * 2;
     const sink = SLOPE_SINK * scale;
     const colliderGround = terrainSurfaceHeight(height, x, z);
-    const solid = faceDepth <= SOLID_FOOT_DEPTH;
+    const solid = faceDepth <= W.SOLID_FOOT_DEPTH;
     if (solid && footprintKeepsClear(id, scale, x, z)) continue;
     const ground = solid ? colliderGround : input.drawnHeight(colliderGround, x, z);
     placements.push({

@@ -4,6 +4,7 @@
 // per-layer splat blend replaces it in Step B.
 import * as THREE from 'three';
 import { SURFACE_TINT_GLSL } from './surfaceTints';
+import { BOULDER_CELL_METRES, ROCK_LOOK_GLSL } from './rockLook';
 
 export interface TerrainTextureSet {
   color: THREE.Texture;
@@ -53,9 +54,16 @@ const ROCK_DETAIL_TILE_METRES = 47;
 // tile into a honeycomb across a big face.
 const ROCK_MIP_BIAS = 1.5;
 
+// How far the boulder domes tilt the normal at their rim, and how dark the cracks between them get.
+const BOULDER_BULGE = 0.9;
+const CRACK_SHADE = 0.35;
+/** Metres from the camera over which the boulder shading fades out. */
+const BOULDER_FADE = { from: 450, to: 650 };
+
 /** Projects the rock image along all three axes, so a steep cliff face is not smeared the way the
- * planar sand UV is, and mixes it over the sand by the mesh's `rockWeight`. The surface tint comes
- * after the rock mix, so the dolerite ridge darkens its rock faces too. */
+ * planar sand UV is, and mixes it over the sand by the mesh's `rockWeight`. The face is drawn as
+ * packed rounded boulders with sand in the cracks near its edge, so a band never reads as one flat
+ * wall. The surface tint comes after the rock mix, so the dolerite ridge darkens its rock faces too. */
 function addRockLayer(material: THREE.MeshStandardMaterial, rock: THREE.Texture): void {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.rockMap = { value: rock };
@@ -68,27 +76,51 @@ function addRockLayer(material: THREE.MeshStandardMaterial, rock: THREE.Texture)
         vRockWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
         vRockNormal = normalize(mat3(modelMatrix) * objectNormal);`);
     shader.fragmentShader = `#define ROCK_MIP_BIAS ${ROCK_MIP_BIAS.toFixed(1)}\n` + 'uniform sampler2D rockMap;\nvarying float vRockWeight;\nvarying vec3 vRockWorld;\nvarying vec3 vRockNormal;\n'
-      + 'varying vec4 vSurfaceTint;\nvarying vec2 vSurfaceDetail;\n' + SURFACE_TINT_GLSL
+      + 'varying vec4 vSurfaceTint;\nvarying vec2 vSurfaceDetail;\nfloat rockCover;\nvec3 rockWorldNormal;\n' + SURFACE_TINT_GLSL + ROCK_LOOK_GLSL
       + `vec3 rockSample(vec3 world, vec3 blend, float tile) {
           vec3 p = world / tile;
           return texture(rockMap, p.zy, ROCK_MIP_BIAS).rgb * blend.x + texture(rockMap, p.xz, ROCK_MIP_BIAS).rgb * blend.y + texture(rockMap, p.xy, ROCK_MIP_BIAS).rgb * blend.z;
         }\n`
       + shader.fragmentShader
         .replace('#include <color_fragment>', `#include <color_fragment>
+          rockCover = 0.0;
+          rockWorldNormal = normalize(vRockNormal);
           if (vRockWeight > 0.001) {
-            vec3 rockBlend = pow(abs(normalize(vRockNormal)), vec3(4.0));
+            vec3 rockBlend = pow(abs(rockWorldNormal), vec3(4.0));
             rockBlend /= dot(rockBlend, vec3(1.0));
             vec3 rock = rockSample(vRockWorld, rockBlend, ${ROCK_TILE_METRES.toFixed(1)}) * (0.55 + 0.9 * rockSample(vRockWorld.zyx, rockBlend.zyx, ${ROCK_DETAIL_TILE_METRES.toFixed(1)}));
-            diffuseColor.rgb = mix(diffuseColor.rgb, rock, vRockWeight);
+            float crack = 1.0;
+            float cellTone = 0.5;
+            vec3 fromCentre = vec3(0.0);
+            // The boulders are shading detail: past this distance they are a few pixels and cost the most screen.
+            float boulderFade = 1.0 - smoothstep(${BOULDER_FADE.from.toFixed(1)}, ${BOULDER_FADE.to.toFixed(1)}, length(vViewPosition));
+            if (boulderFade > 0.0) {
+              vec3 cellSize = vec3(${BOULDER_CELL_METRES.across.toFixed(1)}, ${BOULDER_CELL_METRES.up.toFixed(1)}, ${BOULDER_CELL_METRES.across.toFixed(1)});
+              // A warp bends the cell rows, so the boulders do not line up like cobbles.
+              vec3 warped = vRockWorld + vec3(rockNoise(vRockWorld * 0.09) - 0.5, rockNoise(vRockWorld * 0.07 + 11.0) - 0.5, 0.0).xyx * vec3(6.0, 3.0, -6.0);
+              vec4 cells = boulderCells(warped / cellSize, cellTone);
+              fromCentre = (cells.xyz - rockWorldNormal * dot(cells.xyz, rockWorldNormal)) * boulderFade;
+              // Some joints are deep dark gaps, others close up, as between the stacked boulders of a real koppie.
+              float gap = smoothstep(0.3, 0.7, rockNoise(warped * 0.21 + 5.0));
+              crack = mix(1.0, smoothstep(0.0, mix(0.03, 0.16, gap), cells.w), mix(0.3, 1.0, gap) * boulderFade);
+              cellTone = mix(0.5, cellTone, boulderFade);
+            }
+            // The edge wanders with noise and sand fills the cracks first, so the rock fades into the talus.
+            float edge = vRockWeight + (rockNoise(vRockWorld * 0.18) - 0.5) * 0.6 - (1.0 - crack) * 0.35 * (1.0 - vRockWeight);
+            rockCover = smoothstep(0.3, 0.6, edge);
+            rockWorldNormal = normalize(rockWorldNormal + fromCentre * ${BOULDER_BULGE.toFixed(2)} * rockCover);
+            rock = rockLook(rock, vRockWorld, rockWorldNormal) * mix(${CRACK_SHADE.toFixed(2)}, 1.0, crack) * (0.85 + 0.3 * cellTone);
+            diffuseColor.rgb = mix(diffuseColor.rgb, rock, rockCover);
           }
           diffuseColor.rgb = applySurfaceTint(diffuseColor.rgb, vSurfaceTint);`)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-          roughnessFactor *= vSurfaceDetail.y;`)
+          roughnessFactor *= vSurfaceDetail.y;
+          roughnessFactor = mix(roughnessFactor, 0.92, rockCover);`)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-          normal = normalize(mix(normal, nonPerturbedNormal, vRockWeight * 0.8));
+          normal = normalize(mix(normal, normalize((viewMatrix * vec4(rockWorldNormal, 0.0)).xyz), rockCover));
           normal = normalize(mix(nonPerturbedNormal, normal, vSurfaceDetail.x));`);
   };
-  material.customProgramCacheKey = () => 'terrain-rock-layer-surface-tint';
+  material.customProgramCacheKey = () => 'terrain-rock-boulders-surface-tint';
 }
 
 /** Shared terrain material; the mesh supplies a planar `uv`, a per-vertex `color` tint, a

@@ -4,7 +4,7 @@ import { CHUNK_SIZE, worldToChunk, chunkKey, chunkOrigin, chunksInRadius, type C
 import { diffChunks, orderChunkRequests } from './terrainSelection';
 import { buildTerrainMesh } from '../render/terrainMesh';
 import { createChunkScatter, releaseChunkScatter, type ChunkScatter } from '../render/scatter';
-import type { SolidProp } from '../render/polyProps';
+import type { PropPlacement } from './propPlacement';
 import type { Knockables } from '../render/knockables';
 import type { Biome } from './biome';
 import type { Height2D } from './noise';
@@ -13,7 +13,7 @@ import type { FarGrid } from './farGrid';
 import type { MovingCar } from '../../shared/chunkDemand';
 
 export interface TerrainPhysicsHooks {
-  onLoad(key: string, heights: Float32Array, originX: number, originZ: number, solidProps: readonly SolidProp[]): void;
+  onLoad(key: string, heights: Float32Array, originX: number, originZ: number, placements: readonly PropPlacement[]): void;
   onUnload(key: string): void;
 }
 
@@ -211,7 +211,7 @@ export class TerrainManager {
     if (!heights || !scatter) return;
     const started = performance.now();
     const origin = chunkOrigin(chunk);
-    this.physics?.onLoad(key, heights, origin.x, origin.z, scatter.solids);
+    this.physics?.onLoad(key, heights, origin.x, origin.z, scatter.placements);
     this.colliders.add(key);
     this.colliderTimings.add(performance.now() - started);
   }

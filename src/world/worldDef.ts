@@ -19,7 +19,7 @@ import { inQuarryLane, poortSampleAt } from './terrain/cuts';
 import { applyLandforms } from './terrain/landforms';
 
 export { smoothstep, lerp } from './blend';
-export { borderDistance, borderFaceDepth } from './terrain/border';
+export { borderDistance, borderFaceDepth, SOLID_FOOT_DEPTH } from './terrain/border';
 export { rockKindAt, type RockKind } from './terrain/landforms';
 
 export const WORLD_SIZE = MAP_SIZE;
@@ -224,7 +224,6 @@ export function nearestRoad(x: number, z: number, maxDistance = Infinity): RoadH
 
 // ── placed features (meshes + solid colliders) ────────────────────────
 export interface BuildingBox { x: number; z: number; w: number; d: number; h: number; yaw: number; }
-export interface Ramp { x: number; z: number; yaw: number; len: number; width: number; rise: number; }
 export interface Landmark { kind: 'beacon' | 'windmill'; x: number; z: number; yaw: number; }
 
 /** Solid-collider footprint of a landmark (matches its mesh base). */
@@ -236,11 +235,10 @@ export function landmarkBox(landmark: Landmark): BuildingBox {
 
 export interface ChunkFeatures {
   buildings: BuildingBox[];
-  ramps: Ramp[];
   landmarks: Landmark[];
 }
 
 /** Features whose centre lies in chunk (cx, cz). Klipfontein has none until the dorp lands (S4). */
 export function featuresInChunk(_cx: number, _cz: number): ChunkFeatures {
-  return { buildings: [], ramps: [], landmarks: [] };
+  return { buildings: [], landmarks: [] };
 }

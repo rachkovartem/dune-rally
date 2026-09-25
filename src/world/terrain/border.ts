@@ -211,6 +211,12 @@ export function borderAt(x: number, z: number): BorderSample {
   return surface === null ? VALLEY : { surface, basis, faceDepth, inApron };
 }
 
+/**
+ * Up to this face depth the drawn border ground is the collider, so a boulder there may be solid;
+ * past it the drawn face gets lumps a car can never touch.
+ */
+export const SOLID_FOOT_DEPTH = 1.5;
+
 /** Metres past the inner foot of the border face (the design's safety rule); negative in the valley. */
 export function borderFaceDepth(x: number, z: number): number {
   let depth = -Infinity;

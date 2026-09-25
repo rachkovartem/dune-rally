@@ -55,6 +55,20 @@
         font-weight: 800; line-height: 1;
       }
       #hud-speed #speed { font-size: 44px; color: #ffd23d; }
+      #hud-drive {
+        position: absolute; bottom: 74px; right: 24px; text-align: right;
+        display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+        font-size: 15px; font-weight: 800;
+      }
+      #hud-drive[hidden], #hud-drive [hidden] { display: none; }
+      #hud-drive .drive-mode, #hud-drive .drive-traction {
+        background: rgba(0,0,0,0.35); padding: 3px 10px; border-radius: 8px;
+      }
+      #hud-drive .drive-mode { color: #ffd23d; letter-spacing: 1px; }
+      #hud-drive .drive-traction { color: #ff9d4a; }
+      #hud-drive .drive-warning {
+        background: rgba(120,20,10,0.7); color: #fff; padding: 3px 10px; border-radius: 8px;
+      }
       #hud-speed .unit { font-size: 16px; opacity: 0.85; margin-left: 4px; }
       #hud-controls {
         position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -127,9 +141,14 @@
       <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b></div>
       <div id="hud-compass"></div>
       <div id="hud-speed"><span id="speed">0</span><span class="unit">км/ч</span></div>
+      <div id="hud-drive" hidden>
+        <div class="drive-warning" hidden></div>
+        <div class="drive-mode" hidden></div>
+        <div class="drive-traction" hidden></div>
+      </div>
       <div id="hud-controls">
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> — рулить &nbsp;·&nbsp; <kbd>R</kbd> — сброс &nbsp;·&nbsp;
-        мышь — осмотреться &nbsp;·&nbsp; колесо — зум &nbsp;·&nbsp; <kbd>C</kbd> — камера (режим)
+        мышь — осмотреться &nbsp;·&nbsp; колесо — зум &nbsp;·&nbsp; <kbd>C</kbd> — камера (режим)<span id="hud-controls-drive"></span>
       </div>
       <div id="hud-camera"></div>
       <div id="hud-error" hidden></div>

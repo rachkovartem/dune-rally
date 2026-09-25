@@ -3,7 +3,7 @@
 // collider; the steep face above its foot gets drawn-only lumps, and past the map edge the drawn
 // ground falls away, so the HDRI mountains show above the crest.
 import { createNoise2D } from 'simplex-noise';
-import { borderDistance, borderFaceDepth, lerp, smoothstep } from '../world/worldDef';
+import { borderDistance, borderFaceDepth, lerp, smoothstep, SOLID_FOOT_DEPTH } from '../world/worldDef';
 import { BASE_PLAIN } from '../world/mapLayout';
 import { mulberry32 } from '../world/rng';
 
@@ -14,7 +14,7 @@ const FAR_FLOOR = BASE_PLAIN.level - 50;
 // Lumps on the face and the crest, so the range reads as broken rock and its skyline is not a
 // smooth line. They start above the foot, where a car can no longer touch the face, and grow slowly,
 // so a car that slides a few metres up the face still sits on nearly the collider shape.
-const ROUGH_FROM = 1.5;
+const ROUGH_FROM = SOLID_FOOT_DEPTH;
 const ROUGH_FULL = 12;
 const ROUGH_AMPLITUDE = 2.2;
 const CREST_AMPLITUDE = 4;

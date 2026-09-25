@@ -7,6 +7,9 @@ import { SURFACE_TINT_TABLE } from './surfaceTints';
 import { borderFaceDepth, smoothstep } from '../world/worldDef';
 import { visualTerrainHeight } from './horizonShape';
 import { VERTS_PER_SIDE } from '../world/heightfieldData';
+import { koppieBandAt } from '../world/terrain/landforms';
+import { createNoise2D } from 'simplex-noise';
+import { mulberry32 } from '../world/rng';
 
 // Until setTerrainMaterial runs, chunks render with this plain material.
 let terrainMaterial: THREE.Material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
@@ -136,9 +139,25 @@ export function gridNormals(positions: Float32Array, verticesPerSide: number): F
   return normals;
 }
 
-/** How much of the rock layer a vertex shows: the border face from its foot outward, and steep faces anywhere. */
+const outcropNoise = createNoise2D(mulberry32(0x0c4a7e));
+/** Right behind a koppie band's crest the rock is bare; this far in, it breaks up into outcrops. */
+const OUTCROP_REACH = 12;
+
+/**
+ * Bare rock on a koppie above its band: whole at the crest, then outcrops with gravel between them
+ * up to the tor, so the band reads as part of one rocky hill and not as a wall around a sand heap.
+ */
+function koppieOutcropAt(x: number, z: number): number {
+  const band = koppieBandAt(x, z);
+  if (!band || band.fromCrest >= 0) return 0;
+  const nearCrest = 1 - smoothstep(0, OUTCROP_REACH, -band.fromCrest);
+  const patches = outcropNoise(x * 0.035, z * 0.035) * 0.65 + outcropNoise(x * 0.11 + 9, z * 0.11 - 4) * 0.35;
+  return smoothstep(-0.15, 0.25, patches + nearCrest * 0.8);
+}
+
+/** How much of the rock layer a vertex shows: the border face from its foot outward, steep faces anywhere, koppie outcrops. */
 export function rockWeightAt(x: number, z: number, slope: number): number {
-  return Math.max(smoothstep(0.5, 4, borderFaceDepth(x, z)), smoothstep(0.45, 0.9, slope));
+  return Math.max(smoothstep(0.5, 4, borderFaceDepth(x, z)), smoothstep(0.45, 0.9, slope), koppieOutcropAt(x, z));
 }
 
 /**

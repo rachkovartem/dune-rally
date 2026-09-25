@@ -4,6 +4,7 @@
 import type { Cover } from '../world/biome';
 import type { DrivetrainSpec, DrivetrainState, PedalIntent } from '../../shared/drivetrain';
 import { LAYER_NAMES, type LayerName } from './soundManifest';
+import { SURFACE_BY_COVER } from '../../shared/terrainGrip';
 
 export const PLAYBACK_RATE_MIN = 0.7;
 export const PLAYBACK_RATE_MAX = 1.35;
@@ -113,6 +114,61 @@ export function tyreSound(cover: Cover, speed: number, wheelsInContact: number, 
   return {
     frequency: voice.baseHz + speed * voice.hzPerSpeed,
     gain: traction * Math.min(1, speed / 25) * voice.gain,
+  };
+}
+
+export interface FilteredNoise {
+  frequency: number;
+  q: number;
+  gain: number;
+}
+
+// Loose ground hisses as soon as a tyre slides or spins; a firm tyre only squeals once it is past
+// its grip peak, so a normal road turn stays quiet. Values are by ear, blended by the looseness.
+const SLIP_SOUND = {
+  scrub: {
+    firm: { onset: 2.5, fullAt: 6, gain: 0.22, baseHz: 1700, hzPerSlip: 70, q: 4 },
+    loose: { onset: 0.6, fullAt: 5, gain: 0.4, baseHz: 900, hzPerSlip: 60, q: 0.8 },
+  },
+  spin: {
+    firm: { onset: 1, fullAt: 8, gain: 0.25, baseHz: 1300, hzPerSlip: 60, q: 3 },
+    loose: { onset: 0.5, fullAt: 8, gain: 0.45, baseHz: 220, hzPerSlip: 35, q: 0.7 },
+  },
+} as const;
+
+interface SlipVoice {
+  onset: number;
+  fullAt: number;
+  gain: number;
+  baseHz: number;
+  hzPerSlip: number;
+  q: number;
+}
+
+function slipVoice(firm: SlipVoice, loose: SlipVoice, looseness: number, slip: number, contactShare: number): FilteredNoise {
+  const blend = (firmValue: number, looseValue: number): number => firmValue + (looseValue - firmValue) * looseness;
+  const onset = blend(firm.onset, loose.onset);
+  const fullAt = blend(firm.fullAt, loose.fullAt);
+  const level = Math.min(1, Math.max(0, (slip - onset) / (fullAt - onset)));
+  return {
+    frequency: blend(firm.baseHz, loose.baseHz) + slip * blend(firm.hzPerSlip, loose.hzPerSlip),
+    q: blend(firm.q, loose.q),
+    gain: contactShare * level * blend(firm.gain, loose.gain),
+  };
+}
+
+/**
+ * The tyres' slip heard on top of their rolling noise: a scrub for the sideways slide (m/s) and a
+ * spin layer for the wheelspin (m/s). Both are silent with no slip, so the rolling noise is unchanged.
+ */
+export function tyreSlipSound(
+  cover: Cover, lateralSlip: number, wheelSpin: number, wheelsInContact: number, wheelCount: number,
+): { scrub: FilteredNoise; spin: FilteredNoise } {
+  const looseness = Math.min(1, Math.max(0, SURFACE_BY_COVER[cover].looseness));
+  const contactShare = wheelCount > 0 ? wheelsInContact / wheelCount : 0;
+  return {
+    scrub: slipVoice(SLIP_SOUND.scrub.firm, SLIP_SOUND.scrub.loose, looseness, lateralSlip, contactShare),
+    spin: slipVoice(SLIP_SOUND.spin.firm, SLIP_SOUND.spin.loose, looseness, wheelSpin, contactShare),
   };
 }
 
