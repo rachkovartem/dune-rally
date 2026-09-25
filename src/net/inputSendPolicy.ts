@@ -2,7 +2,13 @@
 import { INPUT_TIMEOUT_SECONDS, TICK_HZ, type InputMsg } from '../../shared/protocol';
 
 /** The server reads input once per tick, so sending faster only fills the socket. */
-export const MIN_INPUT_INTERVAL_MS = 1000 / TICK_HZ;
+const TICK_INTERVAL_MS = 1000 / TICK_HZ;
+
+// A frame that lands just under the tick period must still count as due, or the client
+// falls behind one tick per such frame; the margin absorbs that jitter.
+const INPUT_SEND_MARGIN_MS = 4;
+
+export const MIN_INPUT_INTERVAL_MS = TICK_INTERVAL_MS - INPUT_SEND_MARGIN_MS;
 
 // Well under the server timeout: the send waits for the next frame, and even two late or lost
 // heartbeats in a row still arrive before the server releases the pedals.
