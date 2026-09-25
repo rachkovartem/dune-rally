@@ -1,6 +1,9 @@
 // shared/protocol.test.ts
 import { describe, it, expect } from 'vitest';
-import { POSE_MAX_SINK, POSE_MAX_SPIN, sanitizeCarId, sanitizeInput, sanitizePose } from './protocol';
+import {
+  DEFAULT_PLAYER_NAME, PLAYER_NAME_MAX_LENGTH, POSE_MAX_SINK, POSE_MAX_SPIN, sanitizeCarId, sanitizeInput, sanitizeJoinOptions,
+  sanitizePlayerName, sanitizePose,
+} from './protocol';
 import { DEFAULT_CAR_ID } from '../src/vehicle/cars';
 
 describe('sanitizeInput', () => {
@@ -130,5 +133,87 @@ describe('sanitizePose — the surface state of the driver\'s car (SH-5)', () =>
     const pose = sanitizePose({ ...VALID, surface });
     expect(pose).not.toBeNull();
     expect(pose?.surface).toBeUndefined();
+  });
+});
+
+describe('sanitizeInput — a message that is not an object (release review)', () => {
+  it.each<[string, unknown]>([['null', null], ['a string', 'throttle'], ['an array', [1, 0, 0]], ['a number', 1]])(
+    'gives the neutral input for %s: no pedals, no steering',
+    (_name, raw) => {
+      expect(sanitizeInput(raw)).toStrictEqual({ throttle: 0, brake: 0, steer: 0 });
+    },
+  );
+
+  it('zeros a pedal sent as text instead of a number', () => {
+    expect(sanitizeInput({ throttle: '1', brake: 0, steer: 0 })).toStrictEqual({ throttle: 0, brake: 0, steer: 0 });
+  });
+});
+
+describe('sanitizePlayerName — the name other players see (release review)', () => {
+  it.each<[string, unknown]>([['undefined', undefined], ['null', null], ['a number', 42], ['an object', { name: 'Ann' }], ['an array', ['Ann']]])(
+    'gives the default name for %s',
+    (_name, raw) => {
+      expect(sanitizePlayerName(raw)).toBe(DEFAULT_PLAYER_NAME);
+    },
+  );
+
+  it.each<[string, string]>([['an empty string', ''], ['spaces only', '    '], ['tabs and new lines only', '\t\n\r'], ['control characters only', '\u0000\u0007\u001b']])(
+    'gives the default name for %s',
+    (_name, raw) => {
+      expect(sanitizePlayerName(raw)).toBe(DEFAULT_PLAYER_NAME);
+    },
+  );
+
+  it.each<[string, string, string]>([
+    ['a NUL byte', 'Al\u0000ice', 'Alice'],
+    ['a new line', 'Bob\nSmith', 'BobSmith'],
+    ['an escape sequence', '\u001b[31mRed', '[31mRed'],
+    ['a DEL and a C1 control', 'Ka\u007fte\u009b', 'Kate'],
+  ])('removes %s from the name', (_name, raw, expected) => {
+    expect(sanitizePlayerName(raw)).toBe(expected);
+  });
+
+  it('trims spaces around the name but keeps the ones inside', () => {
+    expect(sanitizePlayerName('  Dune Rider  ')).toBe('Dune Rider');
+  });
+
+  it('keeps a name of exactly the maximum length', () => {
+    const name = 'a'.repeat(PLAYER_NAME_MAX_LENGTH);
+    expect(sanitizePlayerName(name)).toBe(name);
+  });
+
+  it('cuts a name one character over the maximum', () => {
+    expect(sanitizePlayerName('a'.repeat(PLAYER_NAME_MAX_LENGTH) + 'b')).toBe('a'.repeat(PLAYER_NAME_MAX_LENGTH));
+  });
+
+  it('keeps an emoji whole when it is the last character that fits', () => {
+    const name = sanitizePlayerName(`${'a'.repeat(PLAYER_NAME_MAX_LENGTH - 1)}😀b`);
+    expect(name).toBe(`${'a'.repeat(PLAYER_NAME_MAX_LENGTH - 1)}😀`);
+  });
+
+  it('counts an emoji as one character, so a name of emoji only is not cut at half the limit', () => {
+    const name = '😀'.repeat(PLAYER_NAME_MAX_LENGTH);
+    expect(sanitizePlayerName(name)).toBe(name);
+  });
+
+  it('drops a space left at the end by the cut', () => {
+    expect(sanitizePlayerName(`${'a'.repeat(PLAYER_NAME_MAX_LENGTH - 1)} b`)).toBe('a'.repeat(PLAYER_NAME_MAX_LENGTH - 1));
+  });
+});
+
+describe('sanitizeJoinOptions — what a join may choose (release review)', () => {
+  it('keeps only the name and the car, whatever else the join carries', () => {
+    expect(sanitizeJoinOptions({ name: 'Ann', carId: 'pajero', seed: 7, maxClients: 999 })).toStrictEqual({ name: 'Ann', carId: 'pajero' });
+  });
+
+  it.each<[string, unknown]>([['no options', undefined], ['null', null], ['a string', 'Ann'], ['an array', ['Ann', 'pajero']]])(
+    'gives the default name and car for %s',
+    (_name, raw) => {
+      expect(sanitizeJoinOptions(raw)).toStrictEqual({ name: DEFAULT_PLAYER_NAME, carId: DEFAULT_CAR_ID });
+    },
+  );
+
+  it('cleans the name and the car of a join the same way as on their own', () => {
+    expect(sanitizeJoinOptions({ name: ' \u0000Ann ', carId: 'FORESTER' })).toStrictEqual({ name: 'Ann', carId: DEFAULT_CAR_ID });
   });
 });

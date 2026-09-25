@@ -1,6 +1,8 @@
 // server/arenaSim.test.ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ArenaSim, lowestFreeSlot, POSE_SNAP_ANGLE, POSE_SNAP_DISTANCE, type PlayerTransform } from './arenaSim';
+import {
+  ArenaSim, INPUT_TIMEOUT_SECONDS, lowestFreeSlot, POSE_SNAP_ANGLE, POSE_SNAP_DISTANCE, releasedInput, SIM_STEP_SECONDS, type PlayerTransform,
+} from './arenaSim';
 import { forwardAxisOf, RESET_LIFT, upAxisOf } from '../shared/vehiclePhysics';
 import type { InputMsg, PoseMsg } from '../shared/protocol';
 import { SPAWN_SLOT_COUNT, spawnPoseFor } from '../src/world/worldDef';
@@ -359,5 +361,97 @@ describe('ArenaSim — the server sees the shared boulders (S3-2)', () => {
     // Facing north (−z), the car's centre stays south of the boulder's far side, and got close to it.
     expect(closest).toBeGreaterThan(southReach);
     expect(closest).toBeLessThan(southReach + 6);
+  });
+});
+
+describe('releasedInput — the pedals of a client that went silent (release review)', () => {
+  it('lets go of the pedals and the steering but keeps traction control and the drive mode', () => {
+    const last: InputMsg = { throttle: 1, brake: 0.5, steer: -0.7, tractionControl: false, driveMode: '4LLc' };
+    expect(releasedInput(last)).toStrictEqual({ throttle: 0, brake: 0, steer: 0, tractionControl: false, driveMode: '4LLc' });
+  });
+
+  it('leaves traction control and the drive mode unset when the last input had none', () => {
+    expect(releasedInput({ throttle: 1, brake: 0, steer: 1 })).toStrictEqual({ throttle: 0, brake: 0, steer: 0 });
+  });
+
+  it('does not change the input it was given', () => {
+    const last: InputMsg = { throttle: 1, brake: 0, steer: 1 };
+    releasedInput(last);
+    expect(last).toStrictEqual({ throttle: 1, brake: 0, steer: 1 });
+  });
+});
+
+describe('ArenaSim — a client that stops sending input (release review)', () => {
+  const FULL_THROTTLE: InputMsg = { throttle: 1, brake: 0, steer: 0 };
+  // The steps a copy still drives on its last input; from the next one on its pedals are released.
+  const TIMEOUT_STEPS = Math.round(INPUT_TIMEOUT_SECONDS / SIM_STEP_SECONDS);
+  const WINDOW_STEPS = 30;
+
+  function silentSteps(sim: ArenaSim, steps: number): void {
+    for (let step = 0; step < steps; step++) sim.step();
+  }
+
+  /** Flat speed over the next `steps` steps: with `input` sent every step, or with no input at all when it is null. */
+  function flatSpeedOver(sim: ArenaSim, steps: number, input: InputMsg | null): number {
+    const from = transformOf(sim, 'driver');
+    if (input === null) silentSteps(sim, steps);
+    else stepFor(sim, 'driver', input, steps);
+    const to = transformOf(sim, 'driver');
+    return Math.hypot(to.x - from.x, to.z - from.z) / (steps * SIM_STEP_SECONDS);
+  }
+
+  /** A car that drove 2 s at full throttle, and whose client then sent its last input. */
+  async function movingCar(): Promise<ArenaSim> {
+    const sim = await ArenaSim.create(123);
+    sim.addPlayer('driver', 'forester', 0);
+    stepFor(sim, 'driver', IDLE, 60);
+    stepFor(sim, 'driver', FULL_THROTTLE, 120);
+    return sim;
+  }
+
+  it('keeps driving on the last input until the timeout, exactly like a client that keeps sending it', async () => {
+    const silent = await movingCar();
+    const sending = await movingCar();
+    silentSteps(silent, TIMEOUT_STEPS - 1);
+    stepFor(sending, 'driver', FULL_THROTTLE, TIMEOUT_STEPS - 1);
+    expect(transformOf(silent, 'driver')).toEqual(transformOf(sending, 'driver'));
+  });
+
+  it('lets go of the pedals on the first step past the timeout', async () => {
+    const silent = await movingCar();
+    const sending = await movingCar();
+    silentSteps(silent, TIMEOUT_STEPS);
+    stepFor(sending, 'driver', FULL_THROTTLE, TIMEOUT_STEPS);
+    expect(transformOf(silent, 'driver')).not.toEqual(transformOf(sending, 'driver'));
+  });
+
+  it('stops gaining speed after the timeout and slows down, while a car still getting input speeds on', async () => {
+    const silent = await movingCar();
+    const sending = await movingCar();
+    silentSteps(silent, TIMEOUT_STEPS);
+    stepFor(sending, 'driver', FULL_THROTTLE, TIMEOUT_STEPS);
+
+    const silentFirst = flatSpeedOver(silent, WINDOW_STEPS, null);
+    silentSteps(silent, WINDOW_STEPS);
+    const silentLater = flatSpeedOver(silent, WINDOW_STEPS, null);
+
+    const sendingFirst = flatSpeedOver(sending, WINDOW_STEPS, FULL_THROTTLE);
+    stepFor(sending, 'driver', FULL_THROTTLE, WINDOW_STEPS);
+    const sendingLater = flatSpeedOver(sending, WINDOW_STEPS, FULL_THROTTLE);
+
+    expect(silentLater).toBeLessThan(silentFirst);
+    expect(sendingLater).toBeGreaterThan(sendingFirst);
+    expect(silentLater).toBeLessThan(sendingLater);
+  });
+
+  it('starts the timeout again with a fresh input: the car speeds up again on it', async () => {
+    const sim = await movingCar();
+    silentSteps(sim, TIMEOUT_STEPS + 60);
+    const coasting = flatSpeedOver(sim, WINDOW_STEPS, null);
+
+    sim.setInput('driver', FULL_THROTTLE);
+    const afterFreshInput = flatSpeedOver(sim, TIMEOUT_STEPS - 1, null);
+
+    expect(afterFreshInput).toBeGreaterThan(coasting);
   });
 });

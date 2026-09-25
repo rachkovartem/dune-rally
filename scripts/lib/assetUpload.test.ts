@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   IMMUTABLE_CACHE_CONTROL, MANIFEST_CACHE_CONTROL, buildManifest, contentTypeFor, hashedKey, isPublishable, planUpload,
-  readHttpsUrl, readPublishedManifest, uploadSet, verifyPublished,
+  readHttpsUrl, readPublishedManifest, uploadSet, verifyPublished, withManifestText,
   type AssetFile, type FetchedJson, type LocalModel, type ObjectHeaders, type ObjectStore,
 } from './assetUpload';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../../src/assets/assetUrls';
@@ -268,6 +268,52 @@ describe('verifyPublished — the release gate in CI (deploy T5)', () => {
     expect(result.errors.join('\n')).toContain(foresterKey);
     expect(result.errors.join('\n')).not.toContain(elantraKey);
     expect(result.warnings.join('\n')).toContain(elantraKey);
+  });
+});
+
+describe('withManifestText — the release checks the manifest baked into its image (release review)', () => {
+  const PAGE = 'https://rally.example';
+  const committed = [file('sky/b.hdr', HASH_B)];
+  const skyKey = hashedKey('sky/b.hdr', HASH_B);
+  const oldSkyKey = hashedKey('sky/b.hdr', HASH_A);
+  const foresterKey = 'models/forester-2019.1111111111.glb';
+  const bakedManifest = buildManifest({ 'sky/b.hdr': skyKey, [FORESTER.path]: foresterKey });
+  const cdnManifest = buildManifest({ 'sky/b.hdr': oldSkyKey, [FORESTER.path]: foresterKey });
+  const verify = (store: Parameters<typeof withManifestText>[0]) =>
+    verifyPublished({ store, committedFiles: committed, localModels: [FORESTER], pageOrigin: PAGE, concurrency: 2 });
+
+  it('reads the manifest from the text, not the one on the CDN', async () => {
+    const store = withManifestText(publishedCdn({ manifest: cdnManifest, objects: [] }), JSON.stringify(bakedManifest));
+    expect(await readPublishedManifest(store)).toEqual(bakedManifest);
+  });
+
+  it('passes the release when the baked manifest matches the files and every object it lists is on the CDN', async () => {
+    const store = withManifestText(publishedCdn({ manifest: cdnManifest, objects: [skyKey, foresterKey] }), JSON.stringify(bakedManifest));
+    expect(await verify(store)).toEqual({ errors: [], warnings: [] });
+  });
+
+  it('still asks the CDN whether each object exists: a listed object that is missing fails', async () => {
+    const store = withManifestText(publishedCdn({ manifest: cdnManifest, objects: [skyKey] }), JSON.stringify(bakedManifest));
+    expect((await verify(store)).errors.join('\n')).toContain(foresterKey);
+  });
+
+  it('takes the CORS answer from the CDN: no manifest there means no CORS header, and the check fails', async () => {
+    const store = withManifestText(publishedCdn({ manifest: null, objects: [skyKey, foresterKey] }), JSON.stringify(bakedManifest));
+    expect((await verify(store)).errors.join('\n')).toContain('CORS');
+  });
+
+  it('answers any other key from the CDN as it is', async () => {
+    const otherAnswer: FetchedJson = { found: true, body: { note: 'from the CDN' }, allowOrigin: PAGE };
+    const cdn = {
+      exists: async () => false,
+      getJson: async (key: string): Promise<FetchedJson> => (key === 'other.json' ? otherAnswer : { found: false }),
+    };
+    expect(await withManifestText(cdn, JSON.stringify(bakedManifest)).getJson('other.json')).toEqual(otherAnswer);
+  });
+
+  it('throws when the baked text is not JSON', async () => {
+    const store = withManifestText(publishedCdn({ manifest: cdnManifest, objects: [] }), '<!doctype html>');
+    await expect(readPublishedManifest(store)).rejects.toThrow(SyntaxError);
   });
 });
 

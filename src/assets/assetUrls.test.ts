@@ -92,6 +92,14 @@ describe('loadAssetManifest — the manifest from the CDN (deploy T1)', () => {
     await expect(loading).rejects.toThrow('network down');
   });
 
+  it('throws an AssetLoadError naming the URL for a 200 answer whose body is not JSON (an HTML page served in its place)', async () => {
+    const htmlPage: FetchJson = async () => ({ status: 200, json: async () => JSON.parse('<!doctype html><title>shell</title>') });
+    const loading = loadAssetManifest({ url: MANIFEST_URL, fetchJson: htmlPage });
+    await expect(loading).rejects.toBeInstanceOf(AssetLoadError);
+    await expect(loading).rejects.toThrow(MANIFEST_URL);
+    await expect(loading).rejects.toThrow('not JSON');
+  });
+
   it('throws the manifest error for a 200 answer with a broken body', async () => {
     await expect(loadAssetManifest({ url: MANIFEST_URL, fetchJson: fakeFetch({ [MANIFEST_URL]: { status: 200, body: { version: 1, files: {} } } }) })).rejects.toThrow(AssetManifestError);
   });

@@ -499,3 +499,89 @@ describe('drivenLoadShare — share of the weight on the driven wheels (E2)', ()
     expect(drivenLoadShare(FWD, WHEELBASE, 0, upright)).toBe(0);
   });
 });
+
+describe('longitudinalForce — no drive: the resistance stops the car and holds it (release blocker)', () => {
+  const base: LongitudinalInput = {
+    driveForce: 0,
+    intent: COASTING,
+    forwardSpeed: 0,
+    grip: 1,
+    rollingResistance: 0.015,
+    normalForce: 15000,
+    drivenNormalForce: 15000,
+    brakeForce: 20000,
+    mass: 1500,
+    dt: DT,
+  };
+  // With no pedal pressed the car is held by rolling resistance and engine braking only.
+  const holdLimit = base.rollingResistance * base.normalForce + CVT_SPEC.engineBrakeForce;
+  /** Speed along the nose after one step under the tyre force and the outside pull. */
+  const speedAfterStep = (input: LongitudinalInput): number =>
+    input.forwardSpeed + ((longitudinalForce(CVT_SPEC, input) + (input.externalAlongNose ?? 0)) / input.mass) * input.dt;
+
+  /** Speeds step by step with no drive, for `seconds`. */
+  const coast = (forwardSpeed: number, seconds: number): number[] => {
+    const speeds: number[] = [];
+    let speed = forwardSpeed;
+    for (let step = 0; step < Math.round(seconds / DT); step++) {
+      speed = speedAfterStep({ ...base, forwardSpeed: speed });
+      speeds.push(speed);
+    }
+    return speeds;
+  };
+
+  it.each([0.049, 0.03, 0.001, -0.001, -0.03, -0.049])('brings a car creeping at %s m/s (below the standstill speed) to a real stop and keeps it there', (forwardSpeed) => {
+    const speeds = coast(forwardSpeed, 1);
+    const firstStop = speeds.findIndex((speed) => speed === 0);
+    expect(firstStop).toBeGreaterThanOrEqual(0);
+    expect(speeds.slice(firstStop).every((speed) => speed === 0)).toBe(true);
+  });
+
+  it.each([0.049, -0.049])('never overshoots the stop: a car creeping at %s m/s does not roll the other way', (forwardSpeed) => {
+    expect(coast(forwardSpeed, 1).every((speed) => speed * forwardSpeed >= 0)).toBe(true);
+  });
+
+  it.each([0.05, 0.5, 5])('slows a car rolling at %s m/s without ever pushing it backwards', (forwardSpeed) => {
+    const next = speedAfterStep({ ...base, forwardSpeed });
+    expect(next).toBeLessThan(forwardSpeed);
+    expect(next).toBeGreaterThanOrEqual(0);
+  });
+
+  it('gives no force to a car that stands still with nothing pulling it', () => {
+    expect(longitudinalForce(CVT_SPEC, { ...base, externalAlongNose: 0 })).toBe(0);
+    expect(longitudinalForce(CVT_SPEC, base)).toBe(0);
+  });
+
+  it.each([0.5, 0.99, 1])('holds a standing car against a slope pull of %s of its limit', (share) => {
+    const externalAlongNose = -holdLimit * share;
+    expect(speedAfterStep({ ...base, externalAlongNose })).toBeCloseTo(0, 12);
+  });
+
+  it('holds a standing car against a pull toward its nose too', () => {
+    expect(speedAfterStep({ ...base, externalAlongNose: holdLimit * 0.5 })).toBeCloseTo(0, 12);
+  });
+
+  it('lets a pull stronger than its limit roll the car, resisting with the full limit', () => {
+    const extra = 300;
+    const input: LongitudinalInput = { ...base, externalAlongNose: -(holdLimit + extra) };
+    expect(longitudinalForce(CVT_SPEC, input)).toBeCloseTo(holdLimit, 9);
+    expect(speedAfterStep(input)).toBeCloseTo((-extra / base.mass) * DT, 12);
+  });
+
+  it('holds against a stronger pull when the brake is pressed', () => {
+    const externalAlongNose = -(holdLimit + 300);
+    const braked: LongitudinalInput = { ...base, intent: { drive: 0, brake: 1, direction: 1 }, externalAlongNose };
+    expect(speedAfterStep(braked)).toBeCloseTo(0, 12);
+  });
+
+  it.each([
+    ['standing, pulled toward the nose', 0, 2000],
+    ['rolling forward, pulled toward the nose', 1, 2000],
+    ['rolling forward, pulled back', 0.02, -2000],
+    ['standing, pulled back', 0, -2000],
+  ])('never pushes the car along with the motion when %s', (_name, forwardSpeed, externalAlongNose) => {
+    const force = longitudinalForce(CVT_SPEC, { ...base, forwardSpeed, externalAlongNose });
+    const motion = (base.mass * forwardSpeed) / base.dt + externalAlongNose;
+    expect(Math.sign(force)).not.toBe(Math.sign(motion));
+  });
+});

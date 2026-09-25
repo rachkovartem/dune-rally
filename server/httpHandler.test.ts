@@ -133,3 +133,21 @@ describe('createRequestHandler — the built client (deploy T3)', () => {
     expect(JSON.parse(reply.body)).toEqual({ error: 'METHOD_NOT_ALLOWED' });
   });
 });
+
+describe('createRequestHandler — a request line with no valid URL (release review)', () => {
+  // "//[bad/" reads as a host part with a broken IPv6 address, which the URL parser cannot take.
+  const MALFORMED_PATH = '//[bad/';
+
+  it.each([['production', () => production], ['dev', () => development]])('answers a malformed URL with a JSON 400 in %s', async (_name, server) => {
+    const reply = await send(server(), 'GET', MALFORMED_PATH);
+    expect(reply.status).toBe(400);
+    expect(JSON.parse(reply.body)).toEqual({ error: 'BAD_REQUEST' });
+  });
+
+  it('keeps serving after a malformed URL: the next request still gets its answer', async () => {
+    await send(production, 'GET', MALFORMED_PATH);
+    const reply = await send(production, 'GET', HEALTH_PATH);
+    expect(reply.status).toBe(200);
+    expect(JSON.parse(reply.body)).toEqual({ ok: true, rooms: 3, clients: 7 });
+  });
+});
