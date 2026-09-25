@@ -33,7 +33,7 @@ import { assembleCar, fitCarToChassis } from './render/carModel';
 import { registerCarAsset, getCarMaterials } from './render/buggyMesh';
 import { setBrakeLights } from './render/carMaterials';
 import { AssetLoadError, type AssetManifestEntry, type LoadedAssets } from './assets/loadAssets';
-import { ASSET_MANIFEST_FILE, assetRootFor, createAssetResolver, loadAssetManifest, type AssetResolver } from './assets/assetUrls';
+import { assetRootFor, createAssetResolver, loadAssetManifest, SERVED_MANIFEST_PATH, type AssetResolver } from './assets/assetUrls';
 import { gameServerUrl } from './net/serverUrl';
 import { SERVER_RETRY_DELAYS_MS, waitForServer } from './net/waitForServer';
 import { PROP_TEXTURE_SETS, type PropKind } from './assets/textureManifest';
@@ -73,8 +73,8 @@ const showStartError = (message: string): void => {
   startSubEl.style.color = '#ff6b5a';
 };
 
-// In dev the files come from public/; a production build reads the CDN manifest first, because
-// every asset URL (sounds included) is a hashed name listed there.
+// In dev the files come from public/. A production build reads the manifest baked into its own
+// image, not the shared one on the CDN, so a rollback image keeps the asset list it was released with.
 const assetBaseUrl = import.meta.env.VITE_ASSET_BASE_URL;
 let resolveAsset: AssetResolver;
 if (assetBaseUrl === undefined || assetBaseUrl === '') {
@@ -83,7 +83,7 @@ if (assetBaseUrl === undefined || assetBaseUrl === '') {
   const assetRoot = assetRootFor(assetBaseUrl);
   try {
     const assetManifest = await loadAssetManifest({
-      url: `${assetRoot}/${ASSET_MANIFEST_FILE}`,
+      url: SERVED_MANIFEST_PATH,
       fetchJson: (url) => fetch(url, { cache: 'no-cache' }),
     });
     resolveAsset = createAssetResolver({ baseUrl: assetRoot, files: assetManifest.files });

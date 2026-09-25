@@ -12,6 +12,8 @@ export const ASSET_MANIFEST_VERSION = 1;
 /** Folder of this game inside the shared asset bucket. */
 export const ASSET_PREFIX = 'dune-rally';
 export const ASSET_MANIFEST_FILE = 'assets-manifest.json';
+/** Page-origin path of the manifest baked into the release image, so each image reads its own asset list. */
+export const SERVED_MANIFEST_PATH = `/${ASSET_MANIFEST_FILE}`;
 
 export type AssetResolver = (path: string) => string;
 
@@ -79,5 +81,11 @@ export async function loadAssetManifest(options: { url: string; fetchJson: Fetch
     throw new AssetLoadError(url, error instanceof Error ? error.message : String(error), error);
   }
   if (response.status !== 200) throw new AssetLoadError(url, `HTTP ${response.status}`, null);
-  return parseAssetManifest(await response.json());
+  let json: unknown;
+  try {
+    json = await response.json();
+  } catch (error) {
+    throw new AssetLoadError(url, `not JSON: ${error instanceof Error ? error.message : String(error)}`, error);
+  }
+  return parseAssetManifest(json);
 }
