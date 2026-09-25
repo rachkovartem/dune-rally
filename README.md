@@ -82,7 +82,12 @@ git tag v0.1.0 && git push origin v0.1.0
 the image `ghcr.io/rachkovartem/dune-rally:<tag>` and deploys it over SSH.
 
 **Rollback:** Actions → Deploy → Run workflow, `image_tag` = an older tag (for example `v0.1.0`).
-On the server, `~/dune-rally/.previous-image-tag` holds the tag that ran before the last deploy.
+The run uploads `docker-compose.prod.yml` from the branch or tag it runs from, and once the image is
+healthy that file becomes the kept one. To go back to the older compose file too, pick the older tag
+in "Use workflow from" as well.
+
+On the server, `~/dune-rally/.previous-image-tag` holds the tag that ran before the running one. It
+changes only after a healthy deploy, so a failed deploy that rolled back leaves it as it was.
 
 Local production check: `npm run build && CLIENT_DIST_DIR=dist npm run server:prod`
 (`/health` answers on port 2567).

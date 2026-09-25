@@ -6,8 +6,8 @@ export const SERVER_PORT = 2567;
 export const TICK_HZ = 30;
 export const PATCH_HZ = 20;
 
-// The server releases the pedals after this long without input; the client heartbeat interval
-// is derived from it (src/net/inputSendPolicy.ts), so both sides share one number.
+// The server releases the pedals after this long without input; the client derives its heartbeat
+// interval from it, so both sides share one number.
 export const INPUT_TIMEOUT_SECONDS = 0.5;
 
 export interface InputMsg {
@@ -47,14 +47,18 @@ export function sanitizeInput(raw: unknown): InputMsg {
 export const PLAYER_NAME_MAX_LENGTH = 24;
 export const DEFAULT_PLAYER_NAME = 'rider';
 
+// Control, bidi and invisible characters. Not all of \p{Cf}: the zero-width joiner (U+200D) is
+// left in, because it holds emoji sequences together.
+const HIDDEN_CHARACTERS = /[\p{Cc}\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/gu;
+
 /**
  * The name other players see. A non-string in the state breaks the encoder for the whole room, so
- * only a string gets through: no control or format (bidi) characters, trimmed, and at most
+ * only a string gets through: no control, bidi or invisible characters, trimmed, and at most
  * PLAYER_NAME_MAX_LENGTH characters (counted by code point, so an emoji is never cut in half).
  */
 export function sanitizePlayerName(raw: unknown): string {
   if (typeof raw !== 'string') return DEFAULT_PLAYER_NAME;
-  const printable = raw.replace(/[\p{Cc}\p{Cf}]/gu, '').trim();
+  const printable = raw.replace(HIDDEN_CHARACTERS, '').trim();
   const name = Array.from(printable).slice(0, PLAYER_NAME_MAX_LENGTH).join('').trimEnd();
   return name === '' ? DEFAULT_PLAYER_NAME : name;
 }

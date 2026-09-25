@@ -9,7 +9,7 @@ import { RoomSlots } from './roomSlots';
 import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
 import {
   MESSAGE_FLOOD_CLOSE_CODE, POSE_MESSAGE, RESET_CAR_MESSAGE, ROOM_BROKEN_CLOSE_CODE, sanitizeCarId, sanitizeInput,
-  sanitizeJoinOptions, sanitizePose, TICK_HZ, PATCH_HZ, type PoseMsg,
+  sanitizeJoinOptions, sanitizePose, TICK_HZ, PATCH_HZ, type InputMsg, type PoseMsg,
 } from '../shared/protocol';
 
 // The world steps at a fixed 1/60 s, so each 1/30 s tick runs two steps to keep real time.
@@ -27,7 +27,7 @@ interface ClientGuard {
   /** The socket closes a little later: messages already on the way are ignored, not logged again. */
   kicked: boolean;
   /** The newest `input` the budget dropped. The tick applies it, so a burst of queued inputs ends on the latest one. */
-  droppedInput: { message: unknown } | null;
+  droppedInput: InputMsg | null;
 }
 
 export class ArenaRoom extends Room<ArenaState> {
@@ -59,7 +59,7 @@ export class ArenaRoom extends Room<ArenaState> {
       this.guardOf(client).droppedInput = null;
       this.readySim().setInput(client.sessionId, sanitizeInput(message));
     }, (client, message) => {
-      this.guardOf(client).droppedInput = { message };
+      this.guardOf(client).droppedInput = sanitizeInput(message);
     });
 
     // The payload is never read: a player can only reset its own car.
@@ -97,12 +97,16 @@ export class ArenaRoom extends Room<ArenaState> {
 
   onLeave(client: Client) {
     this.guards.delete(client.sessionId);
-    this.sim?.removePlayer(client.sessionId);
+    // A broken world throws on every call; its cars are freed with the whole world in onDispose.
+    if (!this.broken) this.sim?.removePlayer(client.sessionId);
     this.state.players.delete(client.sessionId);
   }
 
   onDispose() {
     this.releaseRoomSlot();
+    if (this.sim?.dispose() === false) {
+      console.warn(`[arena ${this.roomId}] could not free the physics world, its memory stays taken`);
+    }
   }
 
   private releaseRoomSlot(): void {
@@ -224,7 +228,7 @@ export class ArenaRoom extends Room<ArenaState> {
     const sim = this.readySim();
     for (const [sessionId, guard] of this.guards) {
       if (guard.droppedInput === null) continue;
-      sim.setInput(sessionId, sanitizeInput(guard.droppedInput.message));
+      sim.setInput(sessionId, guard.droppedInput);
       guard.droppedInput = null;
     }
     for (let step = 0; step < STEPS_PER_TICK; step++) sim.step();

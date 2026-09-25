@@ -3,7 +3,9 @@ name: Deploy
 # A release is a tag vX.Y.Z. A rollback is a manual run with the tag of an older image:
 # it skips the checks and the image build and only redeploys that image. Each image carries the
 # asset manifest it was verified with (dist/assets-manifest.json, served by the game server), so a
-# rollback also goes back to that release's asset list.
+# rollback also goes back to that release's asset list. A manual run uploads docker-compose.prod.yml
+# from the ref it runs from, and that file becomes the kept one once the image is healthy. To go back
+# to an older compose file as well, run the workflow from the older tag ("Use workflow from").
 on:
   push:
     tags: ['v*.*.*']

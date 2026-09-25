@@ -50,9 +50,9 @@ interface Player {
   spawnSlot: number;
 }
 
-// A client sends its input at most once per tick, plus a 150 ms heartbeat when it is unchanged.
-// A hidden or frozen tab sends nothing, and the copy must not keep driving on the pedals it last
-// saw: after INPUT_TIMEOUT_SECONDS (shared/protocol.ts) it gets pedals and steering released.
+// A client sends its input when it changes, plus a heartbeat while it stays the same. A hidden or
+// frozen tab sends nothing, and the copy must not keep driving on the pedals it last saw: after
+// INPUT_TIMEOUT_SECONDS it gets pedals and steering released.
 const INPUT_TIMEOUT_STEPS = Math.round(INPUT_TIMEOUT_SECONDS / SIM_STEP_SECONDS);
 
 /** The last input with the pedals and steering released; the traction control and drive mode stay. */
@@ -77,6 +77,8 @@ export class ArenaSim {
   private players = new Map<string, Player>();
 
   private readonly streamer: ColliderStreamer;
+
+  private disposed = false;
 
   private constructor(
     private world: RAPIER.World,
@@ -123,6 +125,7 @@ export class ArenaSim {
 
   /** Adds a car standing in its spawn slot, facing north; the client builds its own car there too. */
   addPlayer(id: string, carId: CarId, spawnSlot: number): void {
+    if (this.disposed) throw new Error(`addPlayer: the arena world of player ${id} is already freed`);
     if (this.players.has(id)) throw new Error(`addPlayer: player ${id} is already in the arena`);
     const pose = spawnPoseFor(spawnSlot);
     const vehicle = createVehiclePhysics(this.world, { x: pose.x, y: this.standingHeight(pose), z: pose.z }, vehicleConfigFor(carId));
@@ -228,6 +231,7 @@ export class ArenaSim {
   }
 
   step(): void {
+    if (this.disposed) return;
     // The same net the client runs on its own car, so both put a car that got over a crest back
     // at the same safe spot.
     for (const p of this.players.values()) {
@@ -261,6 +265,23 @@ export class ArenaSim {
 
   playerIds(): string[] {
     return [...this.players.keys()];
+  }
+
+  /**
+   * Frees the WASM memory of the world, with every body and vehicle controller in it. Returns false
+   * when the world could not be freed: a world that panicked in Rapier throws on every call, free too.
+   */
+  dispose(): boolean {
+    if (this.disposed) return true;
+    // Marked first and the players dropped, so no other method reaches the world after this, even when free throws.
+    this.disposed = true;
+    this.players.clear();
+    try {
+      this.world.free();
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 

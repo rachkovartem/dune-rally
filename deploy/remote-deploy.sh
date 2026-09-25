@@ -82,13 +82,14 @@ unset GHCR_TOKEN
 compose_with "$NEW_COMPOSE_FILE" "$IMAGE_TAG" pull
 docker logout ghcr.io >/dev/null
 
-if [[ -n "$previous_tag" && "$previous_tag" != "$IMAGE_TAG" ]]; then
-  printf '%s\n' "$previous_tag" > .previous-image-tag
-fi
 printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG" > .env
 
 if compose_with "$NEW_COMPOSE_FILE" "$IMAGE_TAG" up -d --remove-orphans && wait_until_healthy; then
   mv -f "$NEW_COMPOSE_FILE" "$COMPOSE_FILE"
+  # Written only here, so after a failed deploy and its rollback it still names the tag before the running one.
+  if [[ -n "$previous_tag" && "$previous_tag" != "$IMAGE_TAG" ]]; then
+    printf '%s\n' "$previous_tag" > .previous-image-tag
+  fi
   # Only dangling layers go; tagged images stay on disk for a fast rollback.
   docker image prune -f >/dev/null
   echo "deployed ghcr.io/rachkovartem/dune-rally:$IMAGE_TAG"
