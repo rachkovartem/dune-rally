@@ -21,6 +21,27 @@ export const COVER = {
 
 export type Cover = keyof typeof COVER;
 
+function isCover(value: string): value is Cover {
+  return Object.hasOwn(COVER, value);
+}
+
+/** Every cover in a fixed order, so a cover can travel as a small number (a worker buffer). */
+export const COVER_IDS: readonly Cover[] = Object.keys(COVER).filter(isCover);
+
+const INDEX_BY_COVER = new Map<Cover, number>(COVER_IDS.map((cover, index) => [cover, index]));
+
+export function coverIndex(cover: Cover): number {
+  const index = INDEX_BY_COVER.get(cover);
+  if (index === undefined) throw new Error(`biome: cover "${cover}" has no index`);
+  return index;
+}
+
+export function coverFromIndex(index: number): Cover {
+  const cover = COVER_IDS[index];
+  if (cover === undefined) throw new Error(`biome: no cover has index ${index}`);
+  return cover;
+}
+
 export interface Biome {
   waterLevel: number;
   /** Coverage TYPE at a world point (authored zones + height/slope). */
