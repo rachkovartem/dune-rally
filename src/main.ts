@@ -3,7 +3,7 @@ import { createRenderer } from './render/renderer';
 import { loadAssets } from './assets/loadAssets';
 import { createHeightField } from './world/noise';
 import { createBiome } from './world/biome';
-import { surfaceSampleAt } from './world/surfaceSample';
+import { groundAt } from './world/groundAt';
 import { CHUNK_SIZE, chunkKey, chunkOrigin, chunksInRadius, worldToChunk, type ChunkCoord } from './world/chunk';
 import { featuresInChunk, spawnPoseFor, SPAWN_LIFT, type SpawnPose } from './world/worldDef';
 import { borderEscapeTarget } from './world/borderSafety';
@@ -22,7 +22,7 @@ import { TireTracks } from './render/groundDecals';
 import { Knockables } from './render/knockables';
 import { AudioManager, type RemoteCarPose } from './audio/audio';
 import { POSE_HZ, sanitizeCarId, sanitizeInput, SERVER_PORT, type PoseMsg } from '../shared/protocol';
-import { groundGripFor, type GroundGrip } from '../shared/terrainGrip';
+import type { GroundGrip } from '../shared/terrainGrip';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { RESET_LIFT } from '../shared/vehiclePhysics';
 import { carDefinitionFor } from './assets/carCatalog';
@@ -430,9 +430,7 @@ conn.onRemove((id) => views.remove(id));
 function startDriving(carId: CarId): void {
   const config = vehicleConfigFor(carId);
   spawn = currentSpawnPose();
-  const surface = surfaceSampleAt(heightField, spawn.x, spawn.z);
-  const cover = biome.coverAt(spawn.x, spawn.z, surface.height, surface.slope);
-  const ground = groundGripFor(cover, config);
+  const { cover, ground } = groundAt(biome, heightField, spawn.x, spawn.z, config);
   localCar = { buggy: new Buggy(world, ctx.scene, spawn, carId), carId, config, ground, cover };
 }
 
@@ -573,10 +571,9 @@ function frame() {
 
     // tyre sound and grip matched to the surface under the car
     guard.run('audio', () => {
-      const surface = surfaceSampleAt(heightField, p.x, p.z);
-      const cover = biome.coverAt(p.x, p.z, surface.height, surface.slope);
+      const { cover, ground } = groundAt(biome, heightField, p.x, p.z, car.config);
       car.cover = cover;
-      car.ground = groundGripFor(cover, car.config);
+      car.ground = ground;
       audio.updateLocal({
         carId: car.carId,
         spec: car.config.drivetrain,

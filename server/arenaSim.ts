@@ -15,8 +15,8 @@ import type { InputMsg, PoseMsg } from '../shared/protocol';
 import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
 import type { CarId } from '../src/vehicle/cars';
 import { createBiome, type Biome } from '../src/world/biome';
-import { surfaceSampleAt } from '../src/world/surfaceSample';
-import { groundGripFor, type GroundGrip } from '../shared/terrainGrip';
+import { groundAt } from '../src/world/groundAt';
+import type { GroundGrip } from '../shared/terrainGrip';
 import type { MovingCar } from '../shared/chunkDemand';
 import { ColliderStreamer, type ColliderStreamerOptions } from './colliderStreamer';
 
@@ -222,8 +222,7 @@ export class ArenaSim {
 
   private groundUnder(p: Player): GroundGrip {
     const { x, z } = p.vehicle.body.translation();
-    const surface = surfaceSampleAt(this.height, x, z);
-    return groundGripFor(this.biome.coverAt(x, z, surface.height, surface.slope), vehicleConfigFor(p.carId));
+    return groundAt(this.biome, this.height, x, z, vehicleConfigFor(p.carId)).ground;
   }
 
   playerIds(): string[] {
