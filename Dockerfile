@@ -1,6 +1,10 @@
+# node:22-slim, pinned by digest so a rebuild of an old tag gets the same base. To update:
+# docker buildx imagetools inspect node:22-slim, then change both FROM lines.
+ARG NODE_IMAGE=node:22-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
+
 # Stage 1: build the client shell. The big files (models, sky, textures, sound) live on the
 # asset CDN, so public/ is not in the build context and dist/ must hold only index.html + JS.
-FROM node:22-slim AS builder
+FROM $NODE_IMAGE AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -10,10 +14,16 @@ RUN test -n "$VITE_ASSET_BASE_URL" || { echo "build arg VITE_ASSET_BASE_URL is r
 RUN npm run build \
   && test -f dist/index.html \
   && for folder in models props sky sound textures; do test ! -e "dist/$folder" || { echo "dist/$folder must not be in the image"; exit 1; }; done
+# The asset list of this release, downloaded and verified by CI. The client reads it from the page's
+# own origin, so a rollback to this image also goes back to the assets it was built with.
+RUN test -s release/assets-manifest.json || { echo "release/assets-manifest.json is required (CI downloads and verifies it)"; exit 1; } \
+  && node -e "JSON.parse(require('node:fs').readFileSync('release/assets-manifest.json', 'utf8'))" \
+  && cp release/assets-manifest.json dist/assets-manifest.json \
+  && sha256sum dist/assets-manifest.json
 
 # Stage 2: runtime. The server runs from its TypeScript sources through tsx and also imports
 # world, physics and vehicle code from src/, so those ship as source.
-FROM node:22-slim AS runtime
+FROM $NODE_IMAGE AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 

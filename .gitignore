@@ -19,3 +19,6 @@ public/models/pajero-sport-2020.glb
 
 # wrangler keeps local state here when it runs from this folder
 .wrangler/
+
+# The release's asset manifest, downloaded by CI (or by hand for a local image build)
+release/

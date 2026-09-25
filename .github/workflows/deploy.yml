@@ -1,7 +1,9 @@
 name: Deploy
 
 # A release is a tag vX.Y.Z. A rollback is a manual run with the tag of an older image:
-# it skips the checks and the image build and only redeploys that image.
+# it skips the checks and the image build and only redeploys that image. Each image carries the
+# asset manifest it was verified with (dist/assets-manifest.json, served by the game server), so a
+# rollback also goes back to that release's asset list.
 on:
   push:
     tags: ['v*.*.*']
@@ -16,6 +18,13 @@ on:
 
 permissions:
   contents: read
+
+# Releases and rollbacks run one whole run at a time, in the order they were started, so an older tag
+# whose image happened to build faster can never deploy after a newer one. A pull request only runs
+# the checks, and a newer push to it cancels the older run.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('dune-rally-checks-{0}', github.ref) || 'dune-rally-release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE: ghcr.io/rachkovartem/dune-rally
@@ -38,10 +47,26 @@ jobs:
       - name: Typecheck and build
         run: npm run build
       # Assets are uploaded from the owner's machine (wrangler login), never from CI.
-      # This only reads the public manifest and stops the release if a file is missing or stale.
+      # The manifest is downloaded once; that file is verified and the same file goes into the image.
+      - name: Download the asset manifest of this release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p release
+          curl -fsS --retry 3 -o release/assets-manifest.json "$ASSET_BASE_URL/dune-rally/assets-manifest.json?release=$GITHUB_SHA"
+          sha256sum release/assets-manifest.json
       - name: Published assets match this commit
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          ASSET_MANIFEST_PATH: release/assets-manifest.json
         run: npm run assets:verify
+      - name: Keep the verified manifest for the image
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets-manifest
+          path: release/assets-manifest.json
+          if-no-files-found: error
+          retention-days: 7
 
   image:
     needs: [checks]
@@ -52,6 +77,12 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - name: Get the verified asset manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: assets-manifest
+          path: release
+      - run: sha256sum release/assets-manifest.json
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -79,9 +110,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: PROD
     timeout-minutes: 15
-    concurrency:
-      group: dune-rally-deploy
-      cancel-in-progress: false
     permissions:
       contents: read
       packages: read
@@ -103,15 +131,22 @@ jobs:
           fi
           echo "image_tag=$tag" >> "$GITHUB_OUTPUT"
 
+      # The host key comes from a secret: ssh-keyscan would trust whatever answers at deploy time.
       - name: Setup SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
+          if [ -z "$SSH_KNOWN_HOSTS" ]; then
+            echo "secret SSH_KNOWN_HOSTS is empty: add the server's known_hosts line to the PROD environment" >&2
+            exit 1
+          fi
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
 
       - name: Deploy
         env:
@@ -121,7 +156,7 @@ jobs:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ssh_options=(-i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes)
+          ssh_options=(-i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes)
           target="$SERVER_USER@$SERVER_HOST"
           ssh "${ssh_options[@]}" "$target" 'mkdir -p ~/dune-rally'
           scp "${ssh_options[@]}" docker-compose.prod.yml deploy/remote-deploy.sh "$target:dune-rally/"

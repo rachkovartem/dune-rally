@@ -219,6 +219,22 @@ export async function uploadSet(options: {
   return { uploaded: uploaded.sort(), skipped: skipped.sort(), manifest };
 }
 
+/**
+ * A store that answers the manifest from `manifestText` (the file a release bakes into its image), so
+ * the check runs on those exact bytes. Objects and the manifest's CORS header still come from the CDN.
+ */
+export function withManifestText(store: ReadOnlyObjectStore, manifestText: string): ReadOnlyObjectStore {
+  return {
+    exists: (key) => store.exists(key),
+    async getJson(key) {
+      if (key !== ASSET_MANIFEST_FILE) return store.getJson(key);
+      const body: unknown = JSON.parse(manifestText);
+      const live = await store.getJson(key);
+      return { found: true, body, allowOrigin: live.found ? live.allowOrigin : null };
+    },
+  };
+}
+
 /** Reads the published manifest; not published yet → null, anything else broken → throws. */
 export async function readPublishedManifest(store: ReadOnlyObjectStore): Promise<AssetManifest | null> {
   const fetched = await store.getJson(ASSET_MANIFEST_FILE);

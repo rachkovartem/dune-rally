@@ -11,6 +11,10 @@ deploy
 .wrangler
 .env*
 *.local
+*.pem
+*.key
+.npmrc
+scratch*/
 **/*.test.ts
 Dockerfile
 docker-compose*.yml

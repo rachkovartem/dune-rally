@@ -22,6 +22,14 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+    # Nothing in the image is written at run time; tsx keeps its compile cache in /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     # No published ports: nginx-proxy reaches the container by name on the "web" network.
     networks:
       - web

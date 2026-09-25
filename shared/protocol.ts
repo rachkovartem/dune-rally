@@ -19,20 +19,52 @@ export interface InputMsg {
 const clamp = (v: number, lo: number, hi: number): number =>
   Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : 0;
 
-export function sanitizeInput(raw: Partial<InputMsg> | undefined): InputMsg {
-  const r = raw ?? {};
+/** A field of a wire object; anything that is not an object has no fields. */
+function fieldOf(raw: unknown, key: string): unknown {
+  return typeof raw === 'object' && raw !== null ? Reflect.get(raw, key) : undefined;
+}
+
+const numberOr0 = (value: unknown): number => (typeof value === 'number' ? value : 0);
+
+export function sanitizeInput(raw: unknown): InputMsg {
   const input: InputMsg = {
-    throttle: clamp(r.throttle ?? 0, 0, 1),
-    brake: clamp(r.brake ?? 0, 0, 1),
-    steer: clamp(r.steer ?? 0, -1, 1),
+    throttle: clamp(numberOr0(fieldOf(raw, 'throttle')), 0, 1),
+    brake: clamp(numberOr0(fieldOf(raw, 'brake')), 0, 1),
+    steer: clamp(numberOr0(fieldOf(raw, 'steer')), -1, 1),
   };
   // The wire can carry anything: only a real boolean and a known mode get through.
-  const tractionControl: unknown = r.tractionControl;
+  const tractionControl = fieldOf(raw, 'tractionControl');
   if (typeof tractionControl === 'boolean') input.tractionControl = tractionControl;
-  const driveMode: unknown = r.driveMode;
+  const driveMode = fieldOf(raw, 'driveMode');
   if (isDriveMode(driveMode)) input.driveMode = driveMode;
   return input;
 }
+
+export const PLAYER_NAME_MAX_LENGTH = 24;
+export const DEFAULT_PLAYER_NAME = 'rider';
+
+/**
+ * The name other players see. A join can carry any value, and a non-string in the state breaks the
+ * encoder for the whole room, so only a string gets through: no control characters, trimmed, and
+ * at most PLAYER_NAME_MAX_LENGTH characters (counted by code point, so an emoji is never cut in half).
+ */
+export function sanitizePlayerName(raw: unknown): string {
+  if (typeof raw !== 'string') return DEFAULT_PLAYER_NAME;
+  const printable = raw.replace(/\p{Cc}/gu, '').trim();
+  const name = Array.from(printable).slice(0, PLAYER_NAME_MAX_LENGTH).join('').trimEnd();
+  return name === '' ? DEFAULT_PLAYER_NAME : name;
+}
+
+/** The car id and the name from a join; every other field of the join options is ignored. */
+export function sanitizeJoinOptions(raw: unknown): { name: string; carId: CarId } {
+  return { name: sanitizePlayerName(fieldOf(raw, 'name')), carId: sanitizeCarId(fieldOf(raw, 'carId')) };
+}
+
+// WebSocket close code (the 4000-4999 range is for applications) for a client that sends messages
+// much faster than any real game client does.
+export const MESSAGE_FLOOD_CLOSE_CODE = 4429;
+// Close code for every client of a room whose state can no longer be encoded.
+export const ROOM_BROKEN_CLOSE_CODE = 4500;
 
 // R on the client: stand the player's own car back on its wheels. It carries no payload, and the
 // server ignores anything sent with it.

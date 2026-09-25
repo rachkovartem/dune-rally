@@ -2,9 +2,14 @@
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SERVER_PORT } from '../shared/protocol';
+import { dailySeed } from '../src/world/seed';
 
 /** One Rapier world per room: past this many players the 30 Hz tick starts to slip for everyone. */
 export const ROOM_MAX_CLIENTS = 16;
+/** Rooms one server process runs at most; each holds its own physics world in memory. */
+export const MAX_ARENA_ROOMS = 4;
+/** Every room runs the same world, whatever a client asks for when it joins. */
+export const ARENA_WORLD_SEED = dailySeed('2026-06-19');
 
 export type ServerEnv = Readonly<Record<string, string | undefined>>;
 

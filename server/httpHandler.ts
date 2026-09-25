@@ -22,7 +22,7 @@ export const HEALTH_PATH = '/health';
 export const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 export const REVALIDATE_CACHE_CONTROL = 'no-cache';
 
-type ErrorCode = 'NOT_FOUND' | 'METHOD_NOT_ALLOWED' | 'INTERNAL_ERROR';
+type ErrorCode = 'BAD_REQUEST' | 'NOT_FOUND' | 'METHOD_NOT_ALLOWED' | 'INTERNAL_ERROR';
 
 function sendJson(response: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const payload = JSON.stringify(body);
@@ -39,8 +39,10 @@ function sendError(response: ServerResponse, status: number, code: ErrorCode, he
   sendJson(response, status, { error: code }, headers);
 }
 
-function pathnameOf(request: IncomingMessage): string {
-  return new URL(request.url ?? '/', 'http://localhost').pathname;
+/** The path of the request, or null when the request line holds no valid URL (a throw here would stop the process). */
+function pathnameOf(request: IncomingMessage): string | null {
+  const url = request.url ?? '/';
+  return URL.canParse(url, 'http://localhost') ? new URL(url, 'http://localhost').pathname : null;
 }
 
 export function createRequestHandler(options: RequestHandlerOptions): RequestHandler {
@@ -66,7 +68,13 @@ export function createRequestHandler(options: RequestHandlerOptions): RequestHan
       return;
     }
 
-    if (pathnameOf(request) === HEALTH_PATH) {
+    const pathname = pathnameOf(request);
+    if (pathname === null) {
+      sendError(response, 400, 'BAD_REQUEST');
+      return;
+    }
+
+    if (pathname === HEALTH_PATH) {
       const current = stats();
       sendJson(response, 200, { ok: true, rooms: current.rooms, clients: current.clients });
       return;

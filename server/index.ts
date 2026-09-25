@@ -14,6 +14,10 @@ const httpServer = createServer(createRequestHandler({
   stats: () => ({ rooms: matchMaker.stats.local.roomCount, clients: matchMaker.stats.local.ccu }),
 }));
 
+// The client only ever calls joinOrCreate, so a new room opens only when every room is full; with
+// "create" exposed, anyone could open rooms (a physics world each) until the room limit is hit.
+matchMaker.controller.exposedMethods = ['joinOrCreate', 'reconnect'];
+
 const gameServer = new Server({
   transport: new WebSocketTransport({ server: httpServer }),
 });
