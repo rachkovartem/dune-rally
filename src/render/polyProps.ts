@@ -2,19 +2,9 @@
 // The drive prototype's Poly Haven props: prepared once from the loaded GLBs, cloned per placement.
 // Clones share geometry and materials, so a chunk that unloads disposes nothing.
 import * as THREE from 'three';
+import { POLY_PROP_IDS, type PolyPropId } from '../world/propIds';
 
-export const POLY_PROP_IDS = [
-  'namaqualand_boulder_02',
-  'namaqualand_boulder_03',
-  'namaqualand_boulder_05',
-  'dead_tree_trunk_02',
-  'namaqualand_stones_01',
-  'wild_rooibos_bush',
-] as const;
-
-export type PolyPropId = (typeof POLY_PROP_IDS)[number];
-
-export const BOULDER_IDS: readonly PolyPropId[] = ['namaqualand_boulder_02', 'namaqualand_boulder_03', 'namaqualand_boulder_05'];
+export { POLY_PROP_IDS } from '../world/propIds';
 
 export const GRASS_MODEL_ID = 'grass_medium_02';
 
