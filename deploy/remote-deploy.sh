@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Runs on the VPS, started by .github/workflows/deploy.yml over ssh.
-# Inputs: IMAGE_TAG and GHCR_USER in the environment, the GHCR token on stdin (never in argv).
-# Pulls the image, restarts the container and waits until its health check passes. When the new
-# image does not become healthy, the previous tag is started again and the script exits 1.
+# Inputs: IMAGE_TAG and GHCR_USER in the environment, the GHCR token on stdin (never in argv), and the
+# release's compose file uploaded as docker-compose.prod.yml.new. The new release starts with the new
+# file, which replaces docker-compose.prod.yml only once the container is healthy. Otherwise the
+# previous tag starts again with the previous compose file, and the script exits 1.
 set -euo pipefail
 
 : "${IMAGE_TAG:?IMAGE_TAG is required}"
 : "${GHCR_USER:?GHCR_USER is required}"
-if [[ ! "$IMAGE_TAG" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|sha-[0-9a-f]{40})$ ]]; then
+TAG_PATTERN='^(v[0-9]+\.[0-9]+\.[0-9]+|sha-[0-9a-f]{40})$'
+if [[ ! "$IMAGE_TAG" =~ $TAG_PATTERN ]]; then
   echo "IMAGE_TAG must look like v1.2.3 or sha-<40 hex>, got: $IMAGE_TAG" >&2
   exit 1
 fi
@@ -15,9 +17,15 @@ fi
 DEPLOY_DIR="$HOME/dune-rally"
 CONTAINER=dune-rally
 HEALTH_TIMEOUT_SECONDS=90
-COMPOSE=(docker compose -f docker-compose.prod.yml)
+COMPOSE_FILE=docker-compose.prod.yml
+NEW_COMPOSE_FILE=docker-compose.prod.yml.new
 
 cd "$DEPLOY_DIR"
+
+if [[ ! -f "$NEW_COMPOSE_FILE" ]]; then
+  echo "$DEPLOY_DIR/$NEW_COMPOSE_FILE is missing: the workflow uploads it before this script runs" >&2
+  exit 1
+fi
 
 GHCR_TOKEN="$(cat)"
 if [[ -z "$GHCR_TOKEN" ]]; then
@@ -35,13 +43,17 @@ previous_tag=""
 if [[ -f .env ]]; then
   previous_tag="$(sed -n 's/^IMAGE_TAG=//p' .env)"
 fi
+if [[ -n "$previous_tag" && ! "$previous_tag" =~ $TAG_PATTERN ]]; then
+  echo "ignoring the tag in .env, it does not look like a release tag: $previous_tag" >&2
+  previous_tag=""
+fi
 
-# Every compose call gets its tag explicitly: IMAGE_TAG in this shell is the new tag, and compose
-# prefers the shell's value to the one in .env.
-compose_with_tag() {
-  local tag=$1
-  shift
-  IMAGE_TAG="$tag" "${COMPOSE[@]}" "$@"
+# Every compose call gets its file and its tag explicitly: IMAGE_TAG in this shell is the new tag, and
+# compose prefers the shell's value to the one in .env.
+compose_with() {
+  local file=$1 tag=$2
+  shift 2
+  IMAGE_TAG="$tag" docker compose -f "$file" "$@"
 }
 
 # Returns 0 once the container reports healthy, 1 on timeout or when it has no health check.
@@ -67,7 +79,7 @@ trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
 printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin >/dev/null
 unset GHCR_TOKEN
 # A failed pull stops here, before .env changes: the running container and its tag stay as they are.
-compose_with_tag "$IMAGE_TAG" pull
+compose_with "$NEW_COMPOSE_FILE" "$IMAGE_TAG" pull
 docker logout ghcr.io >/dev/null
 
 if [[ -n "$previous_tag" && "$previous_tag" != "$IMAGE_TAG" ]]; then
@@ -75,22 +87,25 @@ if [[ -n "$previous_tag" && "$previous_tag" != "$IMAGE_TAG" ]]; then
 fi
 printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG" > .env
 
-if compose_with_tag "$IMAGE_TAG" up -d --remove-orphans && wait_until_healthy; then
+if compose_with "$NEW_COMPOSE_FILE" "$IMAGE_TAG" up -d --remove-orphans && wait_until_healthy; then
+  mv -f "$NEW_COMPOSE_FILE" "$COMPOSE_FILE"
   # Only dangling layers go; tagged images stay on disk for a fast rollback.
   docker image prune -f >/dev/null
   echo "deployed ghcr.io/rachkovartem/dune-rally:$IMAGE_TAG"
   exit 0
 fi
 
-if [[ -z "$previous_tag" || "$previous_tag" == "$IMAGE_TAG" ]]; then
-  echo "deploy of $IMAGE_TAG failed and there is no earlier tag to go back to" >&2
+if [[ -z "$previous_tag" || ! -f "$COMPOSE_FILE" ]]; then
+  echo "deploy of $IMAGE_TAG failed with nothing to roll back to: no earlier valid tag in .env or no earlier" >&2
+  echo "$COMPOSE_FILE (the first deploy). Fix the release and deploy again; $NEW_COMPOSE_FILE is kept" >&2
   exit 1
 fi
 
-echo "deploy of $IMAGE_TAG failed; rolling back to $previous_tag" >&2
+# The same tag goes back too: the new compose file alone can be what broke the start.
+echo "deploy of $IMAGE_TAG failed; rolling back to $previous_tag with the previous $COMPOSE_FILE" >&2
 printf 'IMAGE_TAG=%s\n' "$previous_tag" > .env
-if compose_with_tag "$previous_tag" up -d --remove-orphans && wait_until_healthy; then
-  echo "rolled back to ghcr.io/rachkovartem/dune-rally:$previous_tag; the release $IMAGE_TAG is NOT live" >&2
+if compose_with "$COMPOSE_FILE" "$previous_tag" up -d --remove-orphans && wait_until_healthy; then
+  echo "rolled back to ghcr.io/rachkovartem/dune-rally:$previous_tag; the release $IMAGE_TAG and its $NEW_COMPOSE_FILE are NOT live" >&2
 else
   echo "rollback to $previous_tag is not healthy either: the game is down, look at the server now" >&2
 fi

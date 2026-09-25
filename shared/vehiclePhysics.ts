@@ -94,6 +94,8 @@ export interface VehiclePhysics {
   setSurfaceState(state: SurfaceState): void;
   /** No spin, no sinkage: for every place that puts the car somewhere new. */
   resetSurface(): void;
+  /** The car was moved by hand and keeps its surface: the next step must not read the jump as motion. */
+  markMoved(): void;
   driveState(): DriveState;
 }
 
@@ -626,6 +628,9 @@ export function createVehiclePhysics(
       }
     },
     resetSurface,
+    markMoved(): void {
+      lastCentre = null;
+    },
     driveState(): DriveState {
       const drive: DriveModeState = driveMode !== null && requestedMode !== null
         ? { kind: 'selectable', mode: driveMode, requested: requestedMode, blocked: driveModeBlock }

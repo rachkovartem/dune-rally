@@ -44,13 +44,13 @@ export const PLAYER_NAME_MAX_LENGTH = 24;
 export const DEFAULT_PLAYER_NAME = 'rider';
 
 /**
- * The name other players see. A join can carry any value, and a non-string in the state breaks the
- * encoder for the whole room, so only a string gets through: no control characters, trimmed, and
- * at most PLAYER_NAME_MAX_LENGTH characters (counted by code point, so an emoji is never cut in half).
+ * The name other players see. A non-string in the state breaks the encoder for the whole room, so
+ * only a string gets through: no control or format (bidi) characters, trimmed, and at most
+ * PLAYER_NAME_MAX_LENGTH characters (counted by code point, so an emoji is never cut in half).
  */
 export function sanitizePlayerName(raw: unknown): string {
   if (typeof raw !== 'string') return DEFAULT_PLAYER_NAME;
-  const printable = raw.replace(/\p{Cc}/gu, '').trim();
+  const printable = raw.replace(/[\p{Cc}\p{Cf}]/gu, '').trim();
   const name = Array.from(printable).slice(0, PLAYER_NAME_MAX_LENGTH).join('').trimEnd();
   return name === '' ? DEFAULT_PLAYER_NAME : name;
 }

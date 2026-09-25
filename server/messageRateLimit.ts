@@ -12,18 +12,21 @@ export interface MessageRateLimitOptions {
   burst: number;
   /** Part of the budget that `input` cannot use, so a pose or an R still gets through at full input rate. */
   controlReserve: number;
-  /** A client above this many messages per second (measured over about one second) is disconnected. */
+  /** A client that sends above this many messages per second for longer than `kickBurst` allows is disconnected. */
   kickPerSecond: number;
+  /** Messages a client may send at once, above `kickPerSecond`, before it is disconnected. */
+  kickBurst: number;
 }
 
-// The client sends `input` once per animation frame: about 154 messages a second on a 144 Hz screen
-// and 370 on a 360 Hz one. The room ticks at 30 Hz, so the extra inputs above the budget are dropped
-// with no loss, and the kick line sits above what any real screen sends.
+// A game client sends about 45 messages a second (`input` at the tick rate plus a heartbeat, `pose` at
+// 10 Hz). After a network stall TCP delivers all queued messages at once, so the kick burst holds over
+// 20 s of that traffic, while a flood of a few thousand a second empties it in under half a second.
 export const MESSAGE_RATE_LIMIT: MessageRateLimitOptions = {
   sustainedPerSecond: 60,
   burst: 60,
   controlReserve: 10,
-  kickPerSecond: 400,
+  kickPerSecond: 200,
+  kickBurst: 1000,
 };
 
 class TokenBucket {
@@ -56,7 +59,7 @@ export class MessageRateLimiter {
       throw new Error(`MessageRateLimiter: controlReserve ${options.controlReserve} must be below burst ${options.burst}`);
     }
     this.budget = new TokenBucket(options.burst, options.sustainedPerSecond, nowMs);
-    this.flood = new TokenBucket(options.kickPerSecond, options.kickPerSecond, nowMs);
+    this.flood = new TokenBucket(options.kickBurst, options.kickPerSecond, nowMs);
   }
 
   take(kind: MessageKind, nowMs: number): RateDecision {

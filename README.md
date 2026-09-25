@@ -87,6 +87,16 @@ On the server, `~/dune-rally/.previous-image-tag` holds the tag that ran before 
 Local production check: `npm run build && CLIENT_DIST_DIR=dist npm run server:prod`
 (`/health` answers on port 2567).
 
+A local `docker build` needs `release/assets-manifest.json` (CI downloads it) and the CDN build arg:
+
+```bash
+mkdir -p release && curl -fsS -o release/assets-manifest.json https://assets.coreplex.cc/dune-rally/assets-manifest.json
+docker build --build-arg VITE_ASSET_BASE_URL=https://assets.coreplex.cc -t dune-rally:local .
+```
+
+A local `npm run build` with `VITE_ASSET_BASE_URL` set reads the manifest from the page origin, so copy
+the same file to `dist/assets-manifest.json` before starting the server.
+
 ## Controls
 
 | Key | Action |

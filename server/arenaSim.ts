@@ -198,6 +198,7 @@ export class ArenaSim {
     p.vehicle.body.setRotation({ x: pose.qx, y: pose.qy, z: pose.qz, w: pose.qw }, true);
     p.vehicle.body.setLinvel({ x: pose.vx, y: pose.vy, z: pose.vz }, true);
     p.vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    p.vehicle.markMoved();
     if (pose.surface) {
       p.vehicle.setSurfaceState({
         spin: pose.surface.spin,

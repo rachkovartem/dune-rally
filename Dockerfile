@@ -1,5 +1,5 @@
 # node:22-slim, pinned by digest so a rebuild of an old tag gets the same base. To update:
-# docker buildx imagetools inspect node:22-slim, then change both FROM lines.
+# docker buildx imagetools inspect node:22-slim, then change the digest in this ARG (both FROM lines use it).
 ARG NODE_IMAGE=node:22-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
 
 # Stage 1: build the client shell. The big files (models, sky, textures, sound) live on the

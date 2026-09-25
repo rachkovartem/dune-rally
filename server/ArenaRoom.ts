@@ -26,6 +26,8 @@ interface ClientGuard {
   rejectingPoses: boolean;
   /** The socket closes a little later: messages already on the way are ignored, not logged again. */
   kicked: boolean;
+  /** The newest `input` the budget dropped. The tick applies it, so a burst of queued inputs ends on the latest one. */
+  droppedInput: { message: unknown } | null;
 }
 
 export class ArenaRoom extends Room<ArenaState> {
@@ -33,6 +35,7 @@ export class ArenaRoom extends Room<ArenaState> {
   private sim: ArenaSim | null = null;
   private holdsRoomSlot = false;
   private readonly guards = new Map<string, ClientGuard>();
+  private broken = false;
 
   // Join options come from the client, so they never choose the world: every room runs the same one.
   async onCreate() {
@@ -53,7 +56,10 @@ export class ArenaRoom extends Room<ArenaState> {
     this.setSimulationInterval(() => this.tick(), 1000 / TICK_HZ);
 
     this.onLimitedMessage('input', 'input', (client, message) => {
+      this.guardOf(client).droppedInput = null;
       this.readySim().setInput(client.sessionId, sanitizeInput(message));
+    }, (client, message) => {
+      this.guardOf(client).droppedInput = { message };
     });
 
     // The payload is never read: a player can only reset its own car.
@@ -121,7 +127,7 @@ export class ArenaRoom extends Room<ArenaState> {
     try {
       return super.broadcastPatch();
     } catch (error) {
-      this.closeBrokenRoom('patch', error);
+      this.closeBrokenRoom('cannot encode the patch', error);
       return false;
     }
   }
@@ -130,13 +136,17 @@ export class ArenaRoom extends Room<ArenaState> {
     try {
       super.sendFullState(client);
     } catch (error) {
-      this.closeBrokenRoom('full state', error);
+      this.closeBrokenRoom('cannot encode the full state', error);
     }
   }
 
-  private closeBrokenRoom(what: string, error: unknown): void {
-    console.error(`[arena ${this.roomId}] cannot encode the ${what}, closing the room:`, error instanceof Error ? error.stack : String(error));
+  // Patches and ticks keep running until the clients are gone, so only the first failure is logged.
+  private closeBrokenRoom(reason: string, error: unknown): void {
+    if (this.broken) return;
+    this.broken = true;
+    console.error(`[arena ${this.roomId}] ${reason}, closing the room:`, error instanceof Error ? error.stack : String(error));
     this.setPatchRate(null);
+    this.setSimulationInterval();
     void this.disconnect(ROOM_BROKEN_CLOSE_CODE);
   }
 
@@ -149,19 +159,28 @@ export class ArenaRoom extends Room<ArenaState> {
     const existing = this.guards.get(client.sessionId);
     if (existing) return existing;
     const nowMs = performance.now();
-    const guard: ClientGuard = { limiter: new MessageRateLimiter(MESSAGE_RATE_LIMIT, nowMs), poseAcceptedAtMs: nowMs, rejectingPoses: false, kicked: false };
+    const guard: ClientGuard = {
+      limiter: new MessageRateLimiter(MESSAGE_RATE_LIMIT, nowMs), poseAcceptedAtMs: nowMs, rejectingPoses: false, kicked: false, droppedInput: null,
+    };
     this.guards.set(client.sessionId, guard);
     return guard;
   }
 
-  private onLimitedMessage(type: string, kind: MessageKind, handler: (client: Client, message: unknown) => void): void {
+  private onLimitedMessage(
+    type: string,
+    kind: MessageKind,
+    handler: (client: Client, message: unknown) => void,
+    onDrop?: (client: Client, message: unknown) => void,
+  ): void {
     this.onMessage(type, (client: Client, message: unknown) => {
       const guard = this.guardOf(client);
       if (guard.kicked) return;
       const decision = guard.limiter.take(kind, performance.now());
       if (decision === 'accept') {
         handler(client, message);
-      } else if (decision === 'kick') {
+      } else if (decision === 'drop') {
+        onDrop?.(client, message);
+      } else {
         guard.kicked = true;
         console.warn(`[arena ${this.roomId}] ${client.sessionId} sends messages faster than any game client, disconnecting`);
         client.leave(MESSAGE_FLOOD_CLOSE_CODE);
@@ -192,8 +211,22 @@ export class ArenaRoom extends Room<ArenaState> {
     sim.applyClientPose(client.sessionId, trusted);
   }
 
+  // A throw here (a Rapier WASM panic) would repeat on every tick with the world frozen, so the room closes.
   private tick() {
+    try {
+      this.stepWorld();
+    } catch (error) {
+      this.closeBrokenRoom('the tick failed', error);
+    }
+  }
+
+  private stepWorld() {
     const sim = this.readySim();
+    for (const [sessionId, guard] of this.guards) {
+      if (guard.droppedInput === null) continue;
+      sim.setInput(sessionId, sanitizeInput(guard.droppedInput.message));
+      guard.droppedInput = null;
+    }
     for (let step = 0; step < STEPS_PER_TICK; step++) sim.step();
     for (const id of sim.playerIds()) {
       const transform = sim.transform(id);

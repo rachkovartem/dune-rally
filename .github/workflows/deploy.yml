@@ -19,9 +19,9 @@ on:
 permissions:
   contents: read
 
-# Releases and rollbacks run one whole run at a time, in the order they were started, so an older tag
-# whose image happened to build faster can never deploy after a newer one. A pull request only runs
-# the checks, and a newer push to it cancels the older run.
+# Releases and rollbacks change the same container, so they share one group (a rollback gets no group
+# of its own) and run one at a time. GitHub keeps one waiting run per group: a newer run cancels the
+# waiting one, which must be re-run by hand. A newer push to a pull request cancels its older checks.
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('dune-rally-checks-{0}', github.ref) || 'dune-rally-release' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -159,7 +159,9 @@ jobs:
           ssh_options=(-i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes)
           target="$SERVER_USER@$SERVER_HOST"
           ssh "${ssh_options[@]}" "$target" 'mkdir -p ~/dune-rally'
-          scp "${ssh_options[@]}" docker-compose.prod.yml deploy/remote-deploy.sh "$target:dune-rally/"
+          # The compose file goes up as .new: the running release and its rollback keep the current one.
+          scp "${ssh_options[@]}" deploy/remote-deploy.sh "$target:dune-rally/"
+          scp "${ssh_options[@]}" docker-compose.prod.yml "$target:dune-rally/docker-compose.prod.yml.new"
           # The two values are expanded here on purpose, quoted with %q; the token goes over stdin.
           remote_command="IMAGE_TAG=$(printf '%q' "$IMAGE_TAG") GHCR_USER=$(printf '%q' "$GHCR_USER") bash ~/dune-rally/remote-deploy.sh"
           # shellcheck disable=SC2029
