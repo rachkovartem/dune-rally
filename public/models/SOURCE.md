@@ -78,3 +78,42 @@ devDependency; on Apple Silicon it runs under Rosetta 2, see the Pajero section 
   into one primitive; wheel parts are centred on their hub.
 - Result (2026-09-24): 31 nodes, 128,575 drawn triangles (raw 1,294,622 after deletion),
   749.2 KB (meshopt-compressed). `measuredCarForester` is copied from the script's printout.
+
+---
+
+# public/models/elantra-2016.glb — source
+
+- **Title:** Hyundai Elantra AD (2017, pre-facelift)
+- **Source:** Elantra model provided/approved by the project owner (3D Warehouse, D3NK); converted
+  with `scripts/convert-elantra.ts`.
+- **Not committed:** `public/models/elantra-2016.glb` is in `.gitignore`. On a fresh clone the
+  game shows "Elantra model missing — run npx tsx scripts/convert-elantra.ts <glb>" until the file
+  is built locally.
+
+## Building this file
+
+```sh
+npx tsx scripts/convert-elantra.ts "<dir>/elantra-2017-avante-ad.glb"
+```
+
+The input is the SketchUp-exported GLB itself (no FBX2glTF step, no textures).
+
+## What the pipeline does
+
+- The source is in feet, Y up, front +Z; `ELANTRA_SOURCE` in `src/assets/elantraPartRules.ts`
+  moves it into car space (metres, centred on the body length, ground at y = 0). Its wheelbase
+  reads 2.702 m against the real 2.700 m, so no extra scale is applied.
+- Every raw primitive is keyed by its node path below `skp603B` plus its material name (mirrored
+  copies named `…_1` fold onto their original) and classified by `classifyElantraPart()`; an
+  unknown key, or a rule for a key the source does not have, stops the script.
+- **Removed:** the trunk "H", the "ELANTRA" and "Limited" scripts (whole raw parts), and, as
+  connected components, the grille "H" with its dark backing and the "H" on all four centre caps.
+- **Plate:** the source has none. A blank neutral 335 × 170 mm quad is added on the trunk lid's
+  lower panel; there is no front plate.
+- Normals are dropped (creased at load time). The paint gets a box-projected UV (4 repeats per
+  metre) for the flake normal map; no other part has a UV set.
+- Each clean id is welded, simplified to its triangle budget (`ELANTRA_TRIANGLE_TARGETS`) and
+  joined into one primitive; wheel parts are centred on their hub. The source has no brake discs
+  or calipers, so every corner part rolls with the wheel.
+- Result (2026-09-25): 22 nodes, 126,607 drawn triangles (raw 252,127), 584.9 KB
+  (meshopt-compressed). `measuredCarElantra` is copied from the script's printout.
