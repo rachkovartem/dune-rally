@@ -18,6 +18,7 @@ import { controlsFromKeys } from './input/controls';
 import { CameraRig, cameraModeLabelFor, readSavedCameraMode, saveCameraMode } from './render/cameraModes';
 import { connectToArena, type NetPlayer } from './net/connection';
 import { PlayerViews } from './net/playerViews';
+import { shouldSendInput, type SentInput } from './net/inputSendPolicy';
 import { TireTracks } from './render/groundDecals';
 import { SandRoost } from './render/sandRoost';
 import { surfaceTintFor, tintColor } from './render/surfaceTints';
@@ -433,10 +434,12 @@ window.__dbg = () => {
   };
 };
 window.__terrain = () => terrain.stats();
-window.__tp = (x, z) => {
-  localCar?.buggy.teleport(x, heightField(x, z) + 3, z);
-  tracks.breakChains();
-};
+if (import.meta.env.DEV || debugModeEnabled()) {
+  window.__tp = (x, z) => {
+    localCar?.buggy.teleport(x, heightField(x, z) + 3, z);
+    tracks.breakChains();
+  };
+}
 const cameraBannerEl = document.getElementById('hud-camera');
 if (!cameraBannerEl) throw new Error('Expected a #hud-camera element in the HUD.');
 const cameraBanner = createCameraModeBanner(cameraBannerEl);
@@ -483,6 +486,7 @@ const showDebugReadout = debugModeEnabled();
 const READOUT_INTERVAL_MS = 100;
 let lastReadoutAt = -Infinity;
 let lastPoseSentAt = -Infinity;
+let lastInputSent: SentInput | null = null;
 
 function poseOf(buggy: Buggy): PoseMsg {
   const position = buggy.position();
@@ -642,7 +646,12 @@ function frame() {
     const controls = controlsFromKeys(keyboard.keys);
     const input: InputMsg = { ...controls, tractionControl };
     if (car.requestedDriveMode !== undefined) input.driveMode = car.requestedDriveMode;
-    guard.run('network input', () => conn.sendInput(sanitizeInput(input))); // server (for other players)
+    guard.run('network input', () => {
+      const wireInput = sanitizeInput(input);
+      if (!shouldSendInput(now, lastInputSent, wireInput)) return;
+      conn.sendInput(wireInput);
+      lastInputSent = { atMs: now, input: wireInput };
+    }); // server (for other players)
     guard.run('brake lights', () => setBrakeLights(getCarMaterials(buggy.mesh), controls.brake > 0.1)); // this car's own tail lights only
 
     guard.run('physics', () => {
