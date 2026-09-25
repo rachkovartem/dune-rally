@@ -840,3 +840,147 @@ export function runTopSpeed(config: VehicleConfig, ground: SurfaceGround, second
 export function maxSinkOf(config: Pick<VehicleConfig, 'wheel'>): number {
   return SURFACE_TYRE.maxSinkShare * config.wheel.radius;
 }
+
+// ── no input (release blocker 2026-09-25: a car moved with nobody on the pedals) ────────────
+
+/** How the car got to where it is parked: it stood there, it was teleported there, or R stood it up. */
+export type ParkStart = 'settled' | 'teleport' | 'reset';
+
+export interface ParkedResult {
+  /** Fastest flat speed during the hold, m/s. */
+  maxSpeed: number;
+  /** Flat distance the body moved during the hold, m. */
+  drift: number;
+  /** Highest wheelspin from the first step with no input on, m/s. */
+  maxSpin: number;
+}
+
+// Full throttle before a teleport or an R, so the car comes there with spin and sinkage to clear.
+const PARK_DIG_SECONDS = 3;
+const TELEPORT_OFFSET = 50;
+const TELEPORT_LIFT = 3;
+
+/**
+ * No input for `seconds` on flat ground. `teleport` and `reset` first dig in with full throttle,
+ * then move the car the way the game does and let it land for SETTLE_SECONDS before the hold.
+ */
+export function runParked(config: VehicleConfig, ground: SurfaceGround, start: ParkStart, seconds: number, held: HeldInput = {}): ParkedResult {
+  const car = createBenchCar(config);
+  const idle: InputMsg = { ...IDLE, ...held };
+  if (start !== 'settled') {
+    for (let step = 0; step < PARK_DIG_SECONDS / BENCH_STEP; step++) stepBenchCar(car, { throttle: 1, brake: 0, steer: 0, ...held }, ground);
+  }
+  const body = car.vehicle.body;
+  if (start === 'teleport') {
+    const position = body.translation();
+    body.setTranslation({ x: position.x + TELEPORT_OFFSET, y: position.y + TELEPORT_LIFT, z: position.z }, true);
+    body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    car.vehicle.resetSurface();
+  }
+  if (start === 'reset') car.vehicle.resetUpright(RESET_LIFT);
+  let maxSpin = 0;
+  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) {
+    stepBenchCar(car, idle, ground);
+    maxSpin = Math.max(maxSpin, car.vehicle.spin());
+  }
+  const from = body.translation();
+  let maxSpeed = 0;
+  const holdStart = car.time;
+  while (car.time - holdStart < seconds - 1e-9) {
+    stepBenchCar(car, idle, ground);
+    maxSpeed = Math.max(maxSpeed, car.vehicle.speed());
+    maxSpin = Math.max(maxSpin, car.vehicle.spin());
+  }
+  const to = body.translation();
+  return { maxSpeed, drift: Math.hypot(to.x - from.x, to.z - from.z), maxSpin };
+}
+
+export interface ReleaseResult {
+  /** Flat speed when the throttle was let go, m/s. */
+  releaseSpeed: number;
+  /** Flat speed at the end of the run, m/s. */
+  endSpeed: number;
+  /** Largest rise of the flat speed from one step to the next after the release, m/s. */
+  maxSpeedGain: number;
+  /** Wheelspin after the first step with the throttle off, m/s. */
+  spinAfterRelease: number;
+  /** Seconds from the release until the car stood still, or null when it still rolled at the end. */
+  stopSeconds: number | null;
+}
+
+// Below this flat speed the car counts as standing still.
+const STANDING_SPEED = 0.01;
+
+/** Full throttle for `throttleSeconds` from a stop, then no input for `seconds`: the car coasts down. */
+export function runRelease(
+  config: VehicleConfig, ground: SurfaceGround, throttleSeconds: number, seconds: number, held: HeldInput = {},
+): ReleaseResult {
+  const car = createBenchCar(config);
+  while (car.time < throttleSeconds - 1e-9) stepBenchCar(car, { throttle: 1, brake: 0, steer: 0, ...held }, ground);
+  const releaseSpeed = car.vehicle.speed();
+  const idle: InputMsg = { ...IDLE, ...held };
+  stepBenchCar(car, idle, ground);
+  const spinAfterRelease = car.vehicle.spin();
+  let previous = car.vehicle.speed();
+  let maxSpeedGain = previous - releaseSpeed;
+  let stopSeconds: number | null = null;
+  const releaseTime = car.time - BENCH_STEP;
+  while (car.time - releaseTime < seconds - 1e-9) {
+    stepBenchCar(car, idle, ground);
+    const speed = car.vehicle.speed();
+    maxSpeedGain = Math.max(maxSpeedGain, speed - previous);
+    previous = speed;
+    if (stopSeconds === null && speed < STANDING_SPEED) stopSeconds = car.time - releaseTime;
+  }
+  return { releaseSpeed, endSpeed: car.vehicle.speed(), maxSpeedGain, spinAfterRelease, stopSeconds };
+}
+
+export interface ParkedOnSlopeResult {
+  /** Flat distance the body moved during the hold, m. */
+  drift: number;
+  /** Fastest speed up the slope during the hold, m/s: gravity can only pull the car down. */
+  maxUphillSpeed: number;
+  /** Largest gain of the downhill speed in one step, as a share of what gravity alone adds. */
+  maxGravityShare: number;
+}
+
+/**
+ * The car stands on a straight slope of `slope` (tan θ), nose up, with no input for `seconds`.
+ * Where the resistance is stronger than the slope pull it stays; otherwise gravity rolls it down.
+ */
+export function runParkedOnSlope(config: VehicleConfig, ground: SurfaceGround, slope: number, seconds: number, held: HeldInput = {}): ParkedOnSlopeResult {
+  const angle = Math.atan(slope);
+  const world = createBenchWorld();
+  const topZ = HILL_RISE / slope;
+  addHeightfieldGround(world, (z) => hillHeightAt(slope, z), -100, topZ + 100);
+  // Halfway up, so a car that rolls back has the whole slope below it.
+  const along = topZ / 2 / Math.cos(angle);
+  const lift = 1.2;
+  const vehicle = createVehiclePhysics(world, {
+    x: 0, y: along * Math.sin(angle) + lift * Math.cos(angle), z: along * Math.cos(angle) - lift * Math.sin(angle),
+  }, config);
+  vehicle.body.setRotation({ x: -Math.sin(angle / 2), y: 0, z: 0, w: Math.cos(angle / 2) }, true);
+  const car: BenchCar = { world, vehicle, time: 0 };
+  const idle: InputMsg = { ...IDLE, ...held };
+  // The first contact is not a hold: the car drops onto the slope and the springs settle.
+  const landing = 1;
+  while (car.time < landing - 1e-9) stepBenchCar(car, idle, ground);
+  const from = vehicle.body.translation();
+  const downhill = { y: -Math.sin(angle), z: -Math.cos(angle) };
+  const downhillSpeed = (): number => vehicle.body.linvel().y * downhill.y + vehicle.body.linvel().z * downhill.z;
+  const gravityStep = WORLD_GRAVITY * Math.sin(angle) * BENCH_STEP;
+  let previous = downhillSpeed();
+  let maxUphillSpeed = 0;
+  let maxGravityShare = 0;
+  while (car.time - landing < seconds - 1e-9) {
+    stepBenchCar(car, idle, ground);
+    const speed = downhillSpeed();
+    maxUphillSpeed = Math.max(maxUphillSpeed, -speed);
+    maxGravityShare = Math.max(maxGravityShare, (speed - previous) / gravityStep);
+    previous = speed;
+  }
+  const to = vehicle.body.translation();
+  return { drift: Math.hypot(to.x - from.x, to.z - from.z), maxUphillSpeed, maxGravityShare };
+}

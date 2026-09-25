@@ -9,8 +9,8 @@ import { restingSuspensionLength, vehicleConfigFor } from '../src/vehicle/vehicl
 import { FULL_GRIP, groundFor, groundGripFor } from '../shared/terrainGrip';
 import {
   chassisBottomOf, createBenchCar, maxSinkOf, runBraking, runCatch, runCrest, runDig, runDriftTurn, runDropSettle, runEnterAtSpeed,
-  runEscape, runGroundLine, runHillClimb, runRidge, runRollover, runStraightLine, runTopSpeed, runTurn, speedAt, stepBenchCar,
-  type HeldInput,
+  runEscape, runGroundLine, runHillClimb, runParked, runParkedOnSlope, runRelease, runRidge, runRollover, runStraightLine, runTopSpeed,
+  runTurn, speedAt, stepBenchCar, type HeldInput, type ParkStart,
 } from '../shared/carBench';
 import { GROUND_SOFTNESS } from '../src/world/groundSoftness';
 import { wheelRpmAt } from '../shared/drivetrain';
@@ -478,6 +478,75 @@ const pajeroBottom = createBenchCar(pajeroConfig);
 verdict('pajero chassis bottom at rest 0.218 ± 0.02 m (real clearance)', Math.abs(chassisBottomOf(pajeroBottom.vehicle, pajeroConfig) - 0.218) <= 0.02,
   chassisBottomOf(pajeroBottom.vehicle, pajeroConfig).toFixed(3));
 console.log(`Deepest possible sinkage: ${CAR_IDS.map((carId) => `${carId} ${cm(maxSinkOf(vehicleConfigFor(carId)))} cm`).join(', ')}`);
+
+console.log('\nNo input (release blocker 2026-09-25): 20 s with no key held, every drive mode, traction control on and off:');
+const PARK_SECONDS = 20;
+const PARK_STARTS: readonly ParkStart[] = ['settled', 'teleport', 'reset'];
+// A parked car on flat ground must not move at all: these only leave room for float noise.
+const PARKED_MAX_DRIFT = 0.01;
+const PARKED_MAX_SPEED = 0.01;
+// Rocking in a dug-in rut is the largest step-to-step speed rise seen after a release, well under this.
+const RELEASE_MAX_SPEED_GAIN = 0.01;
+const heldInputsFor = (carId: CarId): HeldInput[] => {
+  const modes = vehicleConfigFor(carId).driveSelect ? (['2H', '4H', '4HLc', '4LLc'] as const) : [undefined];
+  return [true, false].flatMap((tractionControl) => modes.map((driveMode) => (driveMode ? { tractionControl, driveMode } : { tractionControl })));
+};
+const mm = (metres: number): string => (metres * 1000).toFixed(1);
+const heldLabel = (held: HeldInput): string => `${held.driveMode ?? ''}${held.driveMode ? ' ' : ''}TC ${held.tractionControl === false ? 'off' : 'on'}`;
+for (const carId of CAR_IDS) {
+  const config = vehicleConfigFor(carId);
+  const parkGrounds = [['road', groundGripFor('road', config)], ['plain sand', plain(carId)], ['dune sand', dune(carId)]] as const;
+  for (const [groundName, ground] of parkGrounds) {
+    let worstDrift = 0;
+    let worstSpeed = 0;
+    let worstSpin = 0;
+    let worstCase = '';
+    let releaseGain = -Infinity;
+    let releaseSpin = 0;
+    const releaseStops: string[] = [];
+    let releaseSlows = true;
+    for (const held of heldInputsFor(carId)) {
+      for (const start of PARK_STARTS) {
+        const parked = runParked(config, ground, start, PARK_SECONDS, held);
+        if (parked.drift > worstDrift) worstCase = `${start}, ${heldLabel(held)}`;
+        worstDrift = Math.max(worstDrift, parked.drift);
+        worstSpeed = Math.max(worstSpeed, parked.maxSpeed);
+        worstSpin = Math.max(worstSpin, parked.maxSpin);
+      }
+      const release = runRelease(config, ground, 3, PARK_SECONDS, held);
+      releaseGain = Math.max(releaseGain, release.maxSpeedGain);
+      releaseSpin = Math.max(releaseSpin, release.spinAfterRelease);
+      releaseSlows &&= release.endSpeed < release.releaseSpeed || release.stopSeconds !== null;
+      releaseStops.push(`${heldLabel(held)} ${kmh(release.releaseSpeed)}→${release.stopSeconds === null ? `${kmh(release.endSpeed)} km/h` : `0 in ${release.stopSeconds.toFixed(1)} s`}`);
+    }
+    verdict(`NI-1 ${carId} ${groundName} no input ${PARK_SECONDS} s (settled, after teleport, after R): stays still, no spin`,
+      worstDrift <= PARKED_MAX_DRIFT && worstSpeed <= PARKED_MAX_SPEED && worstSpin === 0,
+      `drift ≤ ${mm(worstDrift)} mm${worstCase ? ` (${worstCase})` : ''}, speed ≤ ${(worstSpeed * KMH).toFixed(3)} km/h, spin ≤ ${worstSpin.toFixed(2)} m/s`);
+    verdict(`NI-2 ${carId} ${groundName} W 3 s then release: spin 0 at once, speed only falls`,
+      releaseSpin === 0 && releaseGain <= RELEASE_MAX_SPEED_GAIN && releaseSlows,
+      `spin ${releaseSpin.toFixed(2)} m/s, largest rise ${(releaseGain * KMH).toFixed(3)} km/h per step · ${releaseStops.join(' · ')}`);
+  }
+}
+// Gentle: the rolling resistance is stronger than the slope pull. Steep: gravity wins and rolls the car down.
+const PARK_SLOPES = [['road', 0.02, 'hold'], ['road', 0.15, 'roll'], ['dune sand', 0.04, 'hold'], ['dune sand', 0.3, 'roll']] as const;
+const SLOPE_MAX_DRIFT = 0.02;
+// A car rolling back may bounce up the slope a little as it settles; it never drives up it.
+const SLOPE_MAX_UPHILL_SPEED = 0.05;
+for (const carId of CAR_IDS) {
+  const config = vehicleConfigFor(carId);
+  for (const [groundName, slope, expected] of PARK_SLOPES) {
+    const ground = groundName === 'road' ? groundGripFor('road', config) : dune(carId);
+    for (const held of heldInputsFor(carId).filter((candidate) => candidate.tractionControl !== false)) {
+      const parked = runParkedOnSlope(config, ground, slope, PARK_SECONDS, held);
+      const label = `NI-3 ${carId}${held.driveMode ? ` ${held.driveMode}` : ''} ${groundName} slope ${slope} no input ${PARK_SECONDS} s`;
+      if (expected === 'hold') verdict(`${label}: stays`, parked.drift <= SLOPE_MAX_DRIFT, `drift ${mm(parked.drift)} mm`);
+      else {
+        verdict(`${label}: only rolls down by gravity`, parked.maxUphillSpeed <= SLOPE_MAX_UPHILL_SPEED && parked.maxGravityShare <= 1,
+          `rolled ${parked.drift.toFixed(1)} m, uphill ≤ ${(parked.maxUphillSpeed * KMH).toFixed(2)} km/h, downhill gain ≤ ${parked.maxGravityShare.toFixed(2)} × gravity`);
+      }
+    }
+  }
+}
 
 console.log(failures === 0 ? '\nAll targets PASS.' : `\n${failures} target(s) FAIL.`);
 process.exitCode = failures === 0 ? 0 : 1;

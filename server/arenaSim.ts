@@ -44,8 +44,20 @@ export interface PlayerTransform {
 interface Player {
   vehicle: VehiclePhysics;
   input: InputMsg;
+  /** Steps run since the last input message from this player's client. */
+  inputAgeSteps: number;
   carId: CarId;
   spawnSlot: number;
+}
+
+// A client sends its input every frame. A hidden or frozen tab sends nothing, and the copy must not
+// keep driving on the pedals it last saw: after this long it gets pedals and steering released.
+export const INPUT_TIMEOUT_SECONDS = 0.5;
+const INPUT_TIMEOUT_STEPS = Math.round(INPUT_TIMEOUT_SECONDS / SIM_STEP_SECONDS);
+
+/** The last input with the pedals and steering released; the traction control and drive mode stay. */
+export function releasedInput(input: InputMsg): InputMsg {
+  return { ...input, throttle: 0, brake: 0, steer: 0 };
 }
 
 /** The lowest slot no one holds; when every slot is taken, cars share one (`used.size` mod `count`). */
@@ -115,7 +127,7 @@ export class ArenaSim {
     const pose = spawnPoseFor(spawnSlot);
     const vehicle = createVehiclePhysics(this.world, { x: pose.x, y: this.standingHeight(pose), z: pose.z }, vehicleConfigFor(carId));
     this.placeAt(vehicle, pose);
-    this.players.set(id, { vehicle, input: { throttle: 0, brake: 0, steer: 0 }, carId, spawnSlot });
+    this.players.set(id, { vehicle, input: { throttle: 0, brake: 0, steer: 0 }, inputAgeSteps: 0, carId, spawnSlot });
   }
 
   private standingHeight(pose: SpawnPose): number {
@@ -140,7 +152,7 @@ export class ArenaSim {
     this.destroyVehicle(p.vehicle);
     const vehicle = createVehiclePhysics(this.world, translation, vehicleConfigFor(carId));
     vehicle.body.setRotation(rotation, true);
-    this.players.set(id, { vehicle, input: p.input, carId, spawnSlot: p.spawnSlot });
+    this.players.set(id, { vehicle, input: p.input, inputAgeSteps: p.inputAgeSteps, carId, spawnSlot: p.spawnSlot });
   }
 
   carIdOf(id: string): CarId | undefined {
@@ -149,7 +161,9 @@ export class ArenaSim {
 
   setInput(id: string, input: InputMsg): void {
     const p = this.players.get(id);
-    if (p) p.input = input;
+    if (!p) return;
+    p.input = input;
+    p.inputAgeSteps = 0;
   }
 
   /**
@@ -222,7 +236,11 @@ export class ArenaSim {
     }
     // Before the physics step, so a car never stands over a chunk that has no collider yet.
     this.streamer.update([...this.players.values()].map((p) => movingCarOf(p.vehicle)));
-    for (const p of this.players.values()) p.vehicle.applyInput(p.input, this.groundUnder(p));
+    for (const p of this.players.values()) {
+      const input = p.inputAgeSteps >= INPUT_TIMEOUT_STEPS ? releasedInput(p.input) : p.input;
+      p.inputAgeSteps++;
+      p.vehicle.applyInput(input, this.groundUnder(p));
+    }
     this.world.step();
     for (const p of this.players.values()) p.vehicle.update(this.world.timestep);
   }

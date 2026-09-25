@@ -268,6 +268,8 @@ export function createVehiclePhysics(
   const digDirection: (1 | -1)[] = config.wheel.positions.map((): 1 | -1 => 1);
   const telemetry: WheelSurface[] = config.wheel.positions.map(() => ({ sink: 0, slipAngle: 0, spinSpeed: 0, lateralSlip: 0 }));
   let loadShare = 1;
+  // Where the centre of mass was at the last applyInput; null after the car was put somewhere new.
+  let lastCentre: { x: number; y: number; z: number } | null = null;
   // The last step's acceleration force as a share of the weight on the ground: it moves load to the rear axle.
   let accelerationShare = 0;
   let tractionControl = true;
@@ -294,6 +296,7 @@ export function createVehiclePhysics(
     return count;
   };
   const resetSurface = (): void => {
+    lastCentre = null;
     spin = 0;
     spinDirection = 1;
     loadShare = 1;
@@ -421,10 +424,18 @@ export function createVehiclePhysics(
       const aeroAlongNose = airSpeed > 1e-3 ? (-aeroDrag * alongNose) / airSpeed : 0;
       // Without the slope pull here, a steady climb would lose the rotating-mass share of its traction.
       const gravityAlongNose = -config.chassis.mass * WORLD_GRAVITY * nose.y;
+      const externalAlongNose = aeroAlongNose + gravityAlongNose;
+      // Rapier adds the suspension impulses after its step, so on a slope the body moves a little
+      // differently from the velocity it reports, and a car held by its tyres crept a few mm/s. The
+      // tyre force uses what the centre of mass really moved along the nose in the last step.
+      const centre = body.worldCom();
+      const movedAlongNose = lastCentre === null ? alongNose
+        : ((centre.x - lastCentre.x) * nose.x + (centre.y - lastCentre.y) * nose.y + (centre.z - lastCentre.z) * nose.z) / dt;
+      lastCentre = { x: centre.x, y: centre.y, z: centre.z };
       const tyreForce = forceWheels.length === 0 ? 0 : withRotatingMass(driveSpec, longitudinalForce(driveSpec, {
         driveForce: spinning.tyreForce,
         intent,
-        forwardSpeed: alongNose,
+        forwardSpeed: movedAlongNose,
         grip,
         rollingResistance,
         normalForce,
@@ -432,7 +443,8 @@ export function createVehiclePhysics(
         brakeForce: config.brakeForce,
         mass: config.chassis.mass,
         dt,
-      }), aeroAlongNose + gravityAlongNose, intent);
+        externalAlongNose,
+      }), externalAlongNose, intent);
       // Only the part of the tyre force that speeds the car up moves load; the part that holds it on
       // a slope is already in the slope term of axleLoadShares.
       accelerationShare = selectable && intent.drive > 0 && weight > 1
@@ -476,7 +488,6 @@ export function createVehiclePhysics(
       // Side grip per wheel, set every step: the ground, the slip angle, the spin and the drive on
       // that tyre all change it.
       const angularVelocity = body.angvel();
-      const centre = body.worldCom();
       for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
         let angle = 0;
         let lateralSlip = 0;
@@ -604,6 +615,7 @@ export function createVehiclePhysics(
       if (state.sink.length !== wheelCount || state.digDirection.length !== wheelCount) {
         throw new Error(`setSurfaceState: expected ${wheelCount} wheels, got sink ${state.sink.length}, digDirection ${state.digDirection.length}`);
       }
+      lastCentre = null;
       spin = Math.min(SURFACE_TYRE.maxSpin, Math.max(0, state.spin));
       spinDirection = state.spinDirection;
       for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {

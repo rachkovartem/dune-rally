@@ -11,7 +11,7 @@ export const AIR_DENSITY = 1.225;
 const RAD_PER_SEC_TO_RPM = 60 / (2 * Math.PI);
 // Below this forward speed a pedal changes its meaning: brake becomes reverse, gas stops a reverse roll.
 export const PEDAL_SWITCH_SPEED = 0.5;
-// Below this speed rolling resistance acts like static friction: it resists but never pushes.
+// Below this speed a weak push does not start the car: rolling resistance takes all of it.
 const STANDSTILL_SPEED = 0.05;
 // The governor fades the drive force out over this band above the top speed instead of cutting it.
 const LIMITER_BAND = 0.25;
@@ -293,6 +293,11 @@ export interface LongitudinalInput {
   brakeForce: number;
   mass: number;
   dt: number;
+  /**
+   * Signed sum of the forces along the nose that Rapier applies by itself (the slope pull, air
+   * drag), N. With no drive the resistance holds the car against them; left out means none.
+   */
+  externalAlongNose?: number;
 }
 
 /**
@@ -305,13 +310,19 @@ export function longitudinalForce(spec: DrivetrainSpec, input: LongitudinalInput
   const drive = Math.max(-driveTraction, Math.min(driveTraction, input.driveForce));
   const rolling = input.rollingResistance * input.normalForce;
   const speed = input.forwardSpeed;
+  const braking = Math.min(input.intent.brake * input.brakeForce, traction);
+  const engineBrake = input.intent.drive > 0 ? 0 : spec.engineBrakeForce;
+  const resist = braking + rolling + engineBrake;
 
+  if (drive === 0) {
+    // Without drive the resistance works like static friction, down to a real stop: it takes the
+    // speed out and holds the car against the slope, up to its limit, but never pushes it on.
+    const toStop = (input.mass * speed) / input.dt + (input.externalAlongNose ?? 0);
+    if (toStop === 0) return 0;
+    return -Math.sign(toStop) * Math.min(resist, Math.abs(toStop));
+  }
   if (Math.abs(speed) < STANDSTILL_SPEED) {
     return Math.abs(drive) <= rolling ? 0 : drive - Math.sign(drive) * rolling;
   }
-  const braking = Math.min(input.intent.brake * input.brakeForce, traction);
-  const engineBrake = input.intent.drive > 0 ? 0 : spec.engineBrakeForce;
-  let resist = braking + rolling + engineBrake;
-  if (drive === 0) resist = Math.min(resist, (input.mass * Math.abs(speed)) / input.dt);
   return drive - Math.sign(speed) * resist;
 }
