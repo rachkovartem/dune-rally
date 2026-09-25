@@ -8,6 +8,7 @@ import {
   aeroDragForce,
   createDrivetrainState,
   driveForce,
+  drivenLoadShare,
   longitudinalForce,
   pedalIntent,
   stepGearbox,
@@ -93,6 +94,10 @@ export function createVehiclePhysics(
   spawn: { x: number; y: number; z: number },
   config: VehicleConfig,
 ): VehiclePhysics {
+  const drivesEveryWheel = config.drivenWheels.length === config.wheel.positions.length;
+  if ((config.driveLayout.kind === 'awd') !== drivesEveryWheel) {
+    throw new Error(`createVehiclePhysics: driveLayout "${config.driveLayout.kind}" does not match drivenWheels [${config.drivenWheels.join(', ')}]`);
+  }
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(spawn.x, spawn.y, spawn.z)
@@ -110,6 +115,7 @@ export function createVehiclePhysics(
   // friction give terrain/obstacle hits some bounce and scrub instead of a dead stop.
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(config.chassis.hx, config.chassis.hy, config.chassis.hz)
+      .setTranslation(0, config.chassis.offsetY, 0)
       .setDensity(0)
       .setRestitution(config.restitution)
       .setFriction(config.friction),
@@ -174,30 +180,44 @@ export function createVehiclePhysics(
       const aeroDrag = aeroDragForce(spec, airSpeed);
 
       // All tyre forces go through the wheels that touch the ground: a car on its roof gets no push.
+      // The engine pushes through the driven wheels only; brakes and rolling resistance act on all.
       const drivenInContact = config.drivenWheels.filter((wheelIndex) => controller.wheelIsInContact(wheelIndex));
-      const contacts = wheelsInContact();
+      const allInContact: number[] = [];
+      for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
+        if (controller.wheelIsInContact(wheelIndex)) allInContact.push(wheelIndex);
+      }
+      const contacts = allInContact.length;
+      const forceWheels = intent.drive > 0 ? drivenInContact : allInContact;
       // On a slope only the part of the weight across the ground presses the tyres down, so
       // traction and rolling resistance shrink with cos θ and a steep face cannot be climbed.
-      const uprightShare = Math.max(0, upAxisOf(body.rotation()).y);
+      const up = upAxisOf(body.rotation());
+      const nose = forwardAxisOf(body.rotation());
+      const uprightShare = Math.max(0, up.y);
       const normalForce = (config.chassis.mass * WORLD_GRAVITY * uprightShare * contacts) / wheelCount;
+      // Only the static slope transfer moves load off the driven axle; the transfer under
+      // acceleration is left out on purpose, it would make the launch depend on pitch noise.
+      const drivenShare = drivenLoadShare(config.driveLayout, wheelbase, nose.y, up.y);
+      const drivenNormalForce =
+        (config.chassis.mass * WORLD_GRAVITY * uprightShare * drivenShare * drivenInContact.length) / config.drivenWheels.length;
       const aeroAlongNose = airSpeed > 1e-3 ? (-aeroDrag * alongNose) / airSpeed : 0;
       // Without the slope pull here, a steady climb would lose the rotating-mass share of its traction.
-      const gravityAlongNose = -config.chassis.mass * WORLD_GRAVITY * forwardAxisOf(body.rotation()).y;
-      const tyreForce = drivenInContact.length === 0 ? 0 : withRotatingMass(spec, longitudinalForce(spec, {
+      const gravityAlongNose = -config.chassis.mass * WORLD_GRAVITY * nose.y;
+      const tyreForce = forceWheels.length === 0 ? 0 : withRotatingMass(spec, longitudinalForce(spec, {
         driveForce: driveForce(spec, drivetrainState, intent, alongNose),
         intent,
         forwardSpeed: alongNose,
         grip,
         rollingResistance: rollingResistanceFor(grip),
         normalForce,
+        drivenNormalForce,
         brakeForce: config.brakeForce,
         mass: config.chassis.mass,
         dt,
       }), aeroAlongNose + gravityAlongNose, intent);
       // Negative engine force drives the chassis toward its own front (+Z, away from the chase camera).
-      const perWheel = drivenInContact.length === 0 ? 0 : -tyreForce / drivenInContact.length;
-      for (const wheelIndex of config.drivenWheels) {
-        controller.setWheelEngineForce(wheelIndex, drivenInContact.includes(wheelIndex) ? perWheel : 0);
+      const perWheel = forceWheels.length === 0 ? 0 : -tyreForce / forceWheels.length;
+      for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
+        controller.setWheelEngineForce(wheelIndex, forceWheels.includes(wheelIndex) ? perWheel : 0);
       }
       for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
         // Set every step so the ground under the car can change the grip; grip 1 keeps the base value.
@@ -214,7 +234,6 @@ export function createVehiclePhysics(
       if (contacts >= 2) {
         const yawRate = body.angvel().y;
         const turnAcceleration = { x: yawRate * velocity.z, y: 0, z: -yawRate * velocity.x };
-        const up = upAxisOf(body.rotation());
         const scale = -config.chassis.mass * config.rollMomentArm * dt;
         body.applyTorqueImpulse({
           x: scale * (up.y * turnAcceleration.z - up.z * turnAcceleration.y),

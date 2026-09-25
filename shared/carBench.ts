@@ -5,7 +5,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { VehicleConfig } from '../src/vehicle/vehicleConfig';
 import type { InputMsg } from './protocol';
-import { createVehiclePhysics, forwardAxisOf, RESET_LIFT, type Quaternion, type VehiclePhysics } from './vehiclePhysics';
+import { createVehiclePhysics, forwardAxisOf, RESET_LIFT, upAxisOf, type Quaternion, type VehiclePhysics } from './vehiclePhysics';
 import { WORLD_GRAVITY } from './drivetrain';
 
 // Same step as the game's client and server worlds.
@@ -65,6 +65,28 @@ export function rollOf(rotation: Quaternion): number {
   const { x, y, z, w } = rotation;
   const rightUp = 2 * (x * y + w * z);
   return Math.asin(Math.max(-1, Math.min(1, rightUp)));
+}
+
+/**
+ * World height of the lowest corner of the chassis box. `centre` is the box's own world centre
+ * (the collider's translation, not the body's), `rotation` the body's rotation.
+ */
+export function chassisBottomHeight(
+  centre: { x: number; y: number; z: number },
+  rotation: Quaternion,
+  chassis: Pick<VehicleConfig['chassis'], 'hx' | 'hy' | 'hz'>,
+): number {
+  const rightUp = 2 * (rotation.x * rotation.y + rotation.w * rotation.z);
+  const reach = Math.abs(rightUp) * chassis.hx
+    + Math.abs(upAxisOf(rotation).y) * chassis.hy
+    + Math.abs(forwardAxisOf(rotation).y) * chassis.hz;
+  return centre.y - reach;
+}
+
+/** Lowest point of a car's chassis collider in world space, metres. */
+export function chassisBottomOf(vehicle: VehiclePhysics, config: VehicleConfig): number {
+  if (vehicle.body.numColliders() < 1) throw new Error('chassisBottomOf: the car body has no collider');
+  return chassisBottomHeight(vehicle.body.collider(0).translation(), vehicle.body.rotation(), config.chassis);
 }
 
 export interface SpeedSample {
@@ -293,7 +315,7 @@ function crestProfile(radius: number): CrestProfile {
   };
 }
 
-function addProfileGround(world: RAPIER.World, heightAt: (z: number) => number, fromZ: number, toZ: number): void {
+function addProfileGround(world: RAPIER.World, heightAt: (z: number) => number, fromZ: number, toZ: number): RAPIER.Collider {
   const vertices: number[] = [];
   const indices: number[] = [];
   const rows = Math.ceil((toZ - fromZ) / CREST_SAMPLE_STEP);
@@ -307,7 +329,7 @@ function addProfileGround(world: RAPIER.World, heightAt: (z: number) => number, 
     }
   }
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(vertices), new Uint32Array(indices)), ground);
+  return world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(vertices), new Uint32Array(indices)), ground);
 }
 
 export interface CrestResult {
@@ -414,6 +436,8 @@ export interface DropSettleResult {
   settleSeconds: number;
   /** Highest rebound above the resting height after the first compression, metres. */
   maxBounce: number;
+  /** Lowest chassis-box height above the flat ground over the whole run, metres; ≤ 0 = it touched. */
+  minChassisClearance: number;
 }
 
 const SETTLE_BAND = 0.005;
@@ -433,12 +457,71 @@ export function runDropSettle(config: VehicleConfig, dropHeight: number): DropSe
   let lastOutsideBand = 0;
   let compressed = false;
   let maxBounce = 0;
+  let minChassisClearance = chassisBottomOf(car.vehicle, config);
   while (car.time - releaseTime < DROP_RUN_SECONDS) {
     stepBenchCar(car, IDLE, 1);
+    minChassisClearance = Math.min(minChassisClearance, chassisBottomOf(car.vehicle, config));
     const offset = body.translation().y - restingY;
     if (offset < 0) compressed = true;
     if (compressed) maxBounce = Math.max(maxBounce, offset);
     if (Math.abs(offset) > SETTLE_BAND) lastOutsideBand = car.time - releaseTime;
   }
-  return { settleSeconds: lastOutsideBand, maxBounce };
+  return { settleSeconds: lastOutsideBand, maxBounce, minChassisClearance };
+}
+
+const RIDGE_START_Z = 40;
+const RIDGE_HEIGHT = 1.5;
+const RIDGE_SECONDS = 20;
+// Below this forward speed the car counts as stuck on the ridge.
+const RIDGE_STUCK_SPEED = 0.3;
+
+export interface RidgeResult {
+  /** The car's centre passed the far foot of the ridge within the time limit. */
+  crossed: boolean;
+  /** Seconds the car spent slower than RIDGE_STUCK_SPEED once it reached the ridge. */
+  stuckSeconds: number;
+  /** Seconds the chassis box touched the ground once the car reached the ridge: the belly scraping. */
+  bellyContactSeconds: number;
+}
+
+/**
+ * Drives at `speed` over a sharp ridge: a straight ramp up at `rampAngleDegrees`, a pointed top and
+ * the same ramp down. A car whose belly sits lower than the top between its axles hangs on it.
+ * The throttle holds the speed for RIDGE_SECONDS from the foot of the ridge.
+ */
+export function runRidge(config: VehicleConfig, rampAngleDegrees: number, speed: number): RidgeResult {
+  const slope = Math.tan((rampAngleDegrees * Math.PI) / 180);
+  const halfLength = RIDGE_HEIGHT / slope;
+  const topZ = RIDGE_START_Z + halfLength;
+  const endZ = topZ + halfLength;
+  const heightAt = (z: number): number => Math.max(0, RIDGE_HEIGHT - Math.abs(z - topZ) * slope);
+  const world = createBenchWorld();
+  const ground = addProfileGround(world, heightAt, -50, endZ + 100);
+  const vehicle = createVehiclePhysics(world, { x: 0, y: 2.5, z: 0 }, config);
+  const chassis = vehicle.body.collider(0);
+  const car: BenchCar = { world, vehicle, time: 0 };
+  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, 1);
+  while (vehicle.body.translation().z < RIDGE_START_Z - frontAxleOffset(config)) {
+    if (car.time > 120) throw new Error('runRidge: the car did not reach the ridge within 120 s');
+    stepBenchCar(car, { throttle: throttleToHold(car, speed), brake: 0, steer: 0 }, 1);
+  }
+  const startTime = car.time;
+  let stuckSeconds = 0;
+  let bellyContactSeconds = 0;
+  while (car.time - startTime < RIDGE_SECONDS) {
+    stepBenchCar(car, { throttle: throttleToHold(car, speed), brake: 0, steer: 0 }, 1);
+    if (vehicle.forwardSpeed() < RIDGE_STUCK_SPEED) stuckSeconds += BENCH_STEP;
+    let touching = false;
+    world.contactPair(chassis, ground, (manifold) => {
+      if (manifold.numContacts() > 0) touching = true;
+    });
+    if (touching) bellyContactSeconds += BENCH_STEP;
+    if (vehicle.body.translation().z > endZ) return { crossed: true, stuckSeconds, bellyContactSeconds };
+  }
+  return { crossed: false, stuckSeconds, bellyContactSeconds };
+}
+
+// How far ahead of the body origin the front wheels sit.
+function frontAxleOffset(config: VehicleConfig): number {
+  return Math.max(...config.wheel.positions.map((position) => position.z));
 }

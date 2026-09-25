@@ -263,6 +263,22 @@ export function aeroDragForce(spec: DrivetrainSpec, speed: number): number {
   return 0.5 * AIR_DENSITY * spec.dragCoefficient * spec.frontalArea * speed * speed;
 }
 
+/** Which axle the engine drives. A front-driven car carries `frontLoadShare` of its weight on the
+ * front axle on flat ground; `comHeight` (m) is the real height of its centre of mass. */
+export type DriveLayout = { kind: 'awd' } | { kind: 'fwd'; frontLoadShare: number; comHeight: number };
+
+/**
+ * Share (0..1) of the weight on the ground that the driven wheels carry. `noseRise` is the nose
+ * axis' world y (+ = nose up), `upright` the roof axis' world y. AWD → 1. FWD → frontLoadShare
+ * minus the static slope transfer comHeight / wheelbase × tan θ, clamped; on its side or roof → 0.
+ */
+export function drivenLoadShare(layout: DriveLayout, wheelbase: number, noseRise: number, upright: number): number {
+  if (layout.kind === 'awd') return 1;
+  if (!(upright > 0)) return 0;
+  const share = layout.frontLoadShare - (layout.comHeight / wheelbase) * (noseRise / upright);
+  return Math.min(1, Math.max(0, share));
+}
+
 export interface LongitudinalInput {
   driveForce: number;
   intent: PedalIntent;
@@ -270,8 +286,10 @@ export interface LongitudinalInput {
   /** Terrain grip of the ground under the car, (0, 1]. */
   grip: number;
   rollingResistance: number;
-  /** Weight carried by the wheels that touch the ground, N. */
+  /** Weight carried by all wheels that touch the ground, N: limits braking, sets rolling resistance. */
   normalForce: number;
+  /** Weight carried by the driven wheels that touch the ground, N: limits drive traction. */
+  drivenNormalForce: number;
   brakeForce: number;
   mass: number;
   dt: number;
@@ -282,8 +300,9 @@ export interface LongitudinalInput {
  * brakes, rolling resistance and engine braking. Resistance can stop the car but never reverse it.
  */
 export function longitudinalForce(spec: DrivetrainSpec, input: LongitudinalInput): number {
+  const driveTraction = spec.tyrePeakFriction * input.grip * input.drivenNormalForce;
   const traction = spec.tyrePeakFriction * input.grip * input.normalForce;
-  const drive = Math.max(-traction, Math.min(traction, input.driveForce));
+  const drive = Math.max(-driveTraction, Math.min(driveTraction, input.driveForce));
   const rolling = input.rollingResistance * input.normalForce;
   const speed = input.forwardSpeed;
 
