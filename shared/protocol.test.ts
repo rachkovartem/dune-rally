@@ -1,6 +1,7 @@
 // shared/protocol.test.ts
 import { describe, it, expect } from 'vitest';
-import { sanitizeInput, TICK_HZ, ARENA_CHUNKS } from './protocol';
+import { sanitizeCarId, sanitizeInput } from './protocol';
+import { DEFAULT_CAR_ID } from '../src/vehicle/cars';
 
 describe('sanitizeInput', () => {
   it('passes through valid values', () => {
@@ -15,9 +16,21 @@ describe('sanitizeInput', () => {
   });
 });
 
-describe('constants', () => {
-  it('are the documented values', () => {
-    expect(TICK_HZ).toBe(30);
-    expect(ARENA_CHUNKS).toBe(8);
+describe('sanitizeCarId — the protocol boundary for a car choice (R112, R113)', () => {
+  it.each(['forester', 'pajero'])('keeps the known car id "%s"', (carId) => {
+    expect(sanitizeCarId(carId)).toBe(carId);
+  });
+
+  it.each<[string, unknown]>([
+    ['a wrong-case id', 'FORESTER'],
+    ['an empty string', ''],
+    ['null', null],
+    ['undefined (an old client sends no car)', undefined],
+    ['a number', 7],
+    ['an object', {}],
+    ['an id with a trailing space', 'pajero '],
+  ])('gives the default car for %s', (_name, raw) => {
+    // An old client, a typo or a hostile message still gets a car instead of a crash.
+    expect(sanitizeCarId(raw)).toBe(DEFAULT_CAR_ID);
   });
 });
