@@ -60,7 +60,7 @@ export function createBiome(seed: number): Biome {
 
   const coverAt = (x: number, z: number, h: number, slope: number): Cover => {
     // Road network: flat corridor + gravel shoulder, on the carved geometry.
-    const rd = W.nearestRoad(x, z);
+    const rd = W.nearestRoad(x, z, W.ROAD_HALF + W.ROAD_SHOULDER);
     if (rd) {
       if (rd.dist < W.ROAD_HALF) return 'road';
       if (rd.dist < W.ROAD_HALF + W.ROAD_SHOULDER) return 'gravel';

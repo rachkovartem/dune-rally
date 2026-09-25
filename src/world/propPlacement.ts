@@ -78,7 +78,7 @@ export function isPropAllowedAt(x: number, z: number): boolean {
 }
 
 function keepsClear(x: number, z: number, feats: W.ChunkFeatures): boolean {
-  const road = W.nearestRoad(x, z);
+  const road = W.nearestRoad(x, z, W.ROAD_HALF + W.ROAD_SHOULDER + 2);
   if (road && road.dist < W.ROAD_HALF + W.ROAD_SHOULDER + 2) return true;
   if (W.townDist(x, z) < W.TOWN.plaza + 4) return true;
   if (W.spawnDist(x, z) < W.SPAWN_KNOLL.top) return true;

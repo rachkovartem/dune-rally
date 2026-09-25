@@ -42,7 +42,7 @@ export function createHeightField(_seed: number): Height2D {
     // Roads: grade toward the authored height above the ground level at the closest centre-line
     // point (so the cross-section stays level), with a ramped shoulder so the corridor is a flat
     // drivable strip with gentle edges (no vertical cut).
-    const rd = W.nearestRoad(x, z);
+    const rd = W.nearestRoad(x, z, ROAD_INFL);
     if (rd && rd.dist < ROAD_INFL) {
       const roadH = W.groundLevel(rd.x, rd.z) + W.lerp(rd.ya, rd.yb, rd.t);
       h = W.lerp(h, roadH, 1 - W.smoothstep(W.ROAD_HALF, ROAD_INFL, rd.dist));

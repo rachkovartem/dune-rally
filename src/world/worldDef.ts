@@ -8,6 +8,8 @@
 // feature lists drive placed meshes + solid colliders.
 
 import { CHUNK_SIZE } from './chunk';
+import { createFeatureIndex } from './featureIndex';
+import { nearestOnPolyline } from './polyline';
 
 export const WORLD_SIZE = 512;
 export const WORLD_CHUNKS = WORLD_SIZE / CHUNK_SIZE;
@@ -43,17 +45,6 @@ export function smoothstep(e0: number, e1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
-
-function segDist(
-  px: number, pz: number, ax: number, az: number, bx: number, bz: number,
-): { dist: number; t: number } {
-  const dx = bx - ax;
-  const dz = bz - az;
-  const len2 = dx * dx + dz * dz;
-  let t = len2 > 0 ? ((px - ax) * dx + (pz - az) * dz) / len2 : 0;
-  t = t < 0 ? 0 : t > 1 ? 1 : t;
-  return { dist: Math.hypot(px - (ax + t * dx), pz - (az + t * dz)), t };
-}
 
 // ── HUB TOWN ──────────────────────────────────────────────────────────
 export const TOWN = { x: 256, z: 256, plaza: 34, skirt: 14 };
@@ -194,19 +185,57 @@ export const ROADS: Wp[][] = [
 
 /** `x`, `z` is the closest point on the road's centre line. */
 export interface RoadHit { dist: number; ya: number; yb: number; t: number; x: number; z: number; }
-export function nearestRoad(x: number, z: number): RoadHit | null {
+
+/** The widest reach any rule has around a road centre line (the graded corridor with its ramp). */
+export const ROAD_INDEX_REACH = ROAD_HALF + ROAD_SHOULDER + ROAD_RAMP;
+
+interface RoadSegment { roadIndex: number; segmentIndex: number; }
+
+const ROAD_SEGMENTS: RoadSegment[] = ROADS.flatMap((road, roadIndex) =>
+  road.slice(0, -1).map((_waypoint, segmentIndex) => ({ roadIndex, segmentIndex })));
+
+const ROAD_INDEX = createFeatureIndex(ROAD_SEGMENTS, ({ roadIndex, segmentIndex }) => {
+  const a = ROADS[roadIndex][segmentIndex];
+  const b = ROADS[roadIndex][segmentIndex + 1];
+  return {
+    minX: Math.min(a.x, b.x) - ROAD_INDEX_REACH,
+    minZ: Math.min(a.z, b.z) - ROAD_INDEX_REACH,
+    maxX: Math.max(a.x, b.x) + ROAD_INDEX_REACH,
+    maxZ: Math.max(a.z, b.z) + ROAD_INDEX_REACH,
+  };
+}, CHUNK_SIZE);
+
+const ALL_SEGMENTS_BY_ROAD: number[][] = ROADS.map((road) => road.slice(0, -1).map((_waypoint, index) => index));
+
+// Roads in order, each with its segments in order, so ties resolve exactly as a full scan does.
+function nearestAmong(segmentsByRoad: readonly (readonly number[])[], x: number, z: number): RoadHit | null {
   let best: RoadHit | null = null;
-  for (const road of ROADS) {
-    for (let i = 0; i < road.length - 1; i++) {
-      const a = road[i];
-      const b = road[i + 1];
-      const s = segDist(x, z, a.x, a.z, b.x, b.z);
-      if (!best || s.dist < best.dist) {
-        best = { dist: s.dist, ya: a.y, yb: b.y, t: s.t, x: a.x + (b.x - a.x) * s.t, z: a.z + (b.z - a.z) * s.t };
-      }
-    }
+  for (let roadIndex = 0; roadIndex < segmentsByRoad.length; roadIndex++) {
+    const road = ROADS[roadIndex];
+    const hit = nearestOnPolyline(road, segmentsByRoad[roadIndex], x, z);
+    if (!hit || (best && hit.distance >= best.dist)) continue;
+    const a = road[hit.segmentIndex];
+    const b = road[hit.segmentIndex + 1];
+    best = { dist: hit.distance, ya: a.y, yb: b.y, t: hit.t, x: hit.x, z: hit.z };
   }
   return best;
+}
+
+/**
+ * The closest point on any road centre line. With `maxDistance` at most ROAD_INDEX_REACH the
+ * answer comes from the index alone and is null when no road is that close; without it the answer
+ * is always the true nearest road, the same as testing every segment.
+ */
+export function nearestRoad(x: number, z: number, maxDistance = Infinity): RoadHit | null {
+  const candidates = ROAD_INDEX.query(x, z);
+  const segmentsByRoad: number[][] = ROADS.map(() => []);
+  for (const candidate of candidates) segmentsByRoad[candidate.roadIndex].push(candidate.segmentIndex);
+  // Any segment within the reach is listed in this cell, so a candidate that close is the nearest.
+  const near = nearestAmong(segmentsByRoad, x, z);
+  if (near && near.dist <= ROAD_INDEX_REACH) return near.dist <= maxDistance ? near : null;
+  if (maxDistance <= ROAD_INDEX_REACH) return null;
+  const far = nearestAmong(ALL_SEGMENTS_BY_ROAD, x, z);
+  return far && far.dist <= maxDistance ? far : null;
 }
 
 // ── PLACED FEATURES (meshes + solid colliders) ─────────────────────────
