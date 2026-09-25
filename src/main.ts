@@ -43,6 +43,8 @@ import { readSavedCarId, saveCarId } from './ui/carChoice';
 import { createCarPicker } from './ui/carPicker';
 import { createFrameGuard } from './debug/frameGuard';
 import { debugModeEnabled } from './render/devOverlay';
+import { formatDebugReadout } from './ui/debugReadout';
+import type { Cover } from './world/biome';
 
 const canvas = document.getElementById('app');
 if (!(canvas instanceof HTMLCanvasElement)) {
@@ -205,7 +207,7 @@ const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, kno
 // spawn spiral there too; with no reconciliation yet, the local car is what our own camera follows.)
 const spawnX = SPAWN.x;
 const spawnZ = SPAWN.z;
-terrain.update(spawnX, spawnZ, 5); // request colliders around the spawn before the buggy drops
+terrain.update(spawnX, spawnZ, 0, 0); // request colliders around the spawn before the buggy drops
 // Spawn above the surface so the car lands on its wheels (a too-low spawn lands on the chassis
 // belly → wheels never grip). The start gate below waits for the colliders it lands on.
 const spawn = { x: spawnX, y: heightField(spawnX, spawnZ) + 8, z: spawnZ };
@@ -236,11 +238,18 @@ interface LocalCar {
   config: VehicleConfig;
   /** Grip under the car from the latest surface sample (the same one the tyre audio uses). */
   grip: number;
+  /** Surface cover under the car from that same sample. */
+  cover: Cover;
+  /** Where the car was last frame, for the velocity the terrain streamer looks ahead with. */
+  lastX: number;
+  lastZ: number;
 }
 // Built on the start click, so the car the player picked is the one that drives.
 let localCar: LocalCar | null = null;
 
-const views = new PlayerViews(ctx.scene, world); // remote players only
+// Remote players only. Past the collider ring there is no collider under a remote car, so its
+// wheels stand on the drawn ground instead.
+const views = new PlayerViews(ctx.scene, world, (x, z) => terrainSurfaceHeight(heightField, x, z));
 const keyboard = new Keyboard();
 // TEMP debug hook
 window.__dbg = () => {
@@ -269,6 +278,7 @@ window.__dbg = () => {
     cameraClearance: +(ctx.camera.position.y - terrainSurfaceHeight(heightField, ctx.camera.position.x, ctx.camera.position.z)).toFixed(2),
   };
 };
+window.__terrain = () => terrain.stats();
 window.__tp = (x, z) => {
   localCar?.buggy.teleport(x, heightField(x, z) + 3, z);
   tracks.breakChains();
@@ -293,6 +303,10 @@ const playerCountEl = document.getElementById('player-count');
 const speedEl = document.getElementById('speed');
 const hudErrorEl = document.getElementById('hud-error');
 const showErrorsInHud = debugModeEnabled();
+const showDebugReadout = debugModeEnabled();
+// The readout is text for a person; ten updates a second are enough and keep layout work low.
+const READOUT_INTERVAL_MS = 100;
+let lastReadoutAt = -Infinity;
 
 const addRemote = (id: string, player: NetPlayer) => {
   if (id !== conn.sessionId) views.add(id, sanitizeCarId(player.carId));
@@ -304,8 +318,9 @@ conn.onRemove((id) => views.remove(id));
 function startDriving(carId: CarId): void {
   const config = vehicleConfigFor(carId);
   const surface = surfaceSampleAt(heightField, spawn.x, spawn.z);
-  const grip = terrainGripFor(biome.coverAt(spawn.x, spawn.z, surface.height, surface.slope), config);
-  localCar = { buggy: new Buggy(world, ctx.scene, spawn, carId), carId, config, grip };
+  const cover = biome.coverAt(spawn.x, spawn.z, surface.height, surface.slope);
+  const grip = terrainGripFor(cover, config);
+  localCar = { buggy: new Buggy(world, ctx.scene, spawn, carId), carId, config, grip, cover, lastX: spawn.x, lastZ: spawn.z };
 }
 
 startEl.addEventListener('click', () => {
@@ -403,7 +418,13 @@ function frame() {
     guard.run('fall guard', () => recoverIfFallenThrough(buggy));
 
     const p = buggy.position();
-    guard.run('terrain', () => terrain.update(p.x, p.z, 5));
+    guard.run('terrain', () => {
+      const velocityX = dt > 0 ? (p.x - car.lastX) / dt : 0;
+      const velocityZ = dt > 0 ? (p.z - car.lastZ) / dt : 0;
+      car.lastX = p.x;
+      car.lastZ = p.z;
+      terrain.update(p.x, p.z, velocityX, velocityZ);
+    });
     guard.run('tyre tracks', () => {
       const forward = new Vector3(0, 0, 1).applyQuaternion(buggy.mesh.quaternion);
       tracks.update(buggy.wheelContacts(), p.x, p.z, Math.atan2(forward.x, forward.z), buggy.tyreWidth());
@@ -424,6 +445,7 @@ function frame() {
     guard.run('audio', () => {
       const surface = surfaceSampleAt(heightField, p.x, p.z);
       const cover = biome.coverAt(p.x, p.z, surface.height, surface.slope);
+      car.cover = cover;
       car.grip = terrainGripFor(cover, car.config);
       audio.updateLocal({
         carId: car.carId,
@@ -444,7 +466,26 @@ function frame() {
     guard.run('hud', () => {
       if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));
     });
+    if (showDebugReadout && now - lastReadoutAt >= READOUT_INTERVAL_MS) {
+      lastReadoutAt = now;
+      guard.run('debug readout', () => {
+        const cq = buggy.mesh.quaternion;
+        const forwardX = 2 * (cq.x * cq.z + cq.w * cq.y);
+        const forwardZ = 1 - 2 * (cq.x * cq.x + cq.y * cq.y);
+        const headingDegrees = ((Math.atan2(forwardX, -forwardZ) * 180) / Math.PI + 360) % 360;
+        const streaming = terrain.stats();
+        ctx.showDebugLines([
+          ...formatDebugReadout({
+            x: p.x, y: p.y, z: p.z, headingDegrees, cover: car.cover, grip: car.grip,
+            chunk: worldToChunk(p.x, p.z), serverChunks: null,
+          }),
+          `terrain drawn ${streaming.drawnChunks}  colliders ${streaming.colliderChunks}  `
+            + `build p95 ${streaming.meshBuildMs.p95.toFixed(1)} ms  max ${streaming.meshBuildMs.max.toFixed(1)} ms`,
+        ]);
+      });
+    }
   } else {
+    guard.run('terrain', () => terrain.update(spawn.x, spawn.z, 0, 0));
     guard.run('start gate', openStartGateWhenGroundIsSolid);
     // The world is not stepped until a car exists, so the remote wheels' ground rays need this.
     guard.run('scene queries', () => world.updateSceneQueries());

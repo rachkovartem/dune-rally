@@ -4,6 +4,8 @@ import Stats from 'three/addons/libs/stats.module.js';
 export interface DevOverlay {
   update: () => void;
   setLabel: (label: string) => void;
+  /** Lines shown under the label; they replace the previous lines. */
+  setDetails: (lines: readonly string[]) => void;
 }
 
 function labelElement(label: string): HTMLDivElement {
@@ -17,6 +19,7 @@ function labelElement(label: string): HTMLDivElement {
   element.style.background = 'rgba(0,0,0,0.6)';
   element.style.color = '#8f8';
   element.style.font = '12px monospace';
+  element.style.whiteSpace = 'pre';
   return element;
 }
 
@@ -24,7 +27,7 @@ export function debugModeEnabled(): boolean {
   return new URLSearchParams(location.search).get('debug') === '1';
 }
 
-/** `?debug=1` → an fps readout plus one label line. Off by default. */
+/** `?debug=1` → an fps readout plus a label line and detail lines. Off by default. */
 export function createDevOverlay(label: string): DevOverlay | null {
   if (!debugModeEnabled()) return null;
 
@@ -33,8 +36,13 @@ export function createDevOverlay(label: string): DevOverlay | null {
   const element = labelElement(label);
   document.body.appendChild(element);
 
+  let currentLabel = label;
+  let currentDetails: readonly string[] = [];
+  const show = (): void => { element.textContent = [currentLabel, ...currentDetails].join('\n'); };
+
   return {
     update: () => stats.update(),
-    setLabel: (text) => { element.textContent = text; },
+    setLabel: (text) => { currentLabel = text; show(); },
+    setDetails: (lines) => { currentDetails = lines; show(); },
   };
 }

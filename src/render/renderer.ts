@@ -33,6 +33,8 @@ export interface RenderContext {
   setQuality: (name: QualityName) => void;
   /** Called at once with the current tier, then on every change. */
   onQualityChange: (listener: (tier: QualityTier, name: QualityName) => void) => void;
+  /** Detail lines of the `?debug=1` overlay; does nothing when the overlay is off. */
+  showDebugLines: (lines: readonly string[]) => void;
 }
 
 export function createRenderer(canvas: HTMLCanvasElement, sky: SkyTextures): RenderContext {
@@ -108,5 +110,6 @@ export function createRenderer(canvas: HTMLCanvasElement, sky: SkyTextures): Ren
       qualityListeners.push(listener);
       listener(QUALITY_TIERS[qualityName], qualityName);
     },
+    showDebugLines: (lines) => overlay?.setDetails(lines),
   };
 }
