@@ -8,8 +8,7 @@ import type { SolidProp } from '../render/polyProps';
 import type { Knockables } from '../render/knockables';
 import type { Biome } from './biome';
 import type { Height2D } from './noise';
-
-interface Resp { cx: number; cz: number; heights: Float32Array }
+import type { TerrainChunkJob, TerrainChunkResult } from './terrainWorker';
 
 export interface TerrainPhysicsHooks {
   onLoad(key: string, heights: Float32Array, originX: number, originZ: number, solidProps: readonly SolidProp[]): void;
@@ -33,15 +32,15 @@ export class TerrainManager {
     private physics?: TerrainPhysicsHooks,
   ) {
     this.worker = new Worker(new URL('./terrainWorker.ts', import.meta.url), { type: 'module' });
-    this.worker.onmessage = (e: MessageEvent<Resp>) => this.onChunk(e.data);
+    this.worker.onmessage = (event: MessageEvent<TerrainChunkResult>) => this.onChunk(event.data);
   }
 
-  private onChunk({ cx, cz, heights }: Resp) {
+  private onChunk({ cx, cz, heights, covers }: TerrainChunkResult) {
     const key = chunkKey({ cx, cz });
     this.pending.delete(key);
     if (!this.isWanted({ cx, cz })) return; // moved away while generating
     const origin = chunkOrigin({ cx, cz });
-    const mesh = buildTerrainMesh(heights, origin.x, origin.z, this.biome);
+    const mesh = buildTerrainMesh({ heights, covers }, origin.x, origin.z);
     this.scene.add(mesh);
     this.meshes.set(key, mesh);
     this.heights.set(key, heights);
@@ -71,7 +70,8 @@ export class TerrainManager {
     for (const c of toLoad) {
       const key = chunkKey(c);
       this.pending.add(key);
-      this.worker.postMessage({ seed: this.seed, cx: c.cx, cz: c.cz });
+      const job: TerrainChunkJob = { kind: 'chunk', seed: this.seed, cx: c.cx, cz: c.cz };
+      this.worker.postMessage(job);
     }
     for (const key of toUnload) {
       const mesh = this.meshes.get(key);

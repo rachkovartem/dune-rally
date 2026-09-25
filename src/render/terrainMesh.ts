@@ -1,7 +1,8 @@
 // src/render/terrainMesh.ts
 import * as THREE from 'three';
 import { buildChunkGeometry } from '../world/chunkGeometry';
-import type { Biome, Cover } from '../world/biome';
+import { coverFromIndex, type Cover } from '../world/biome';
+import type { ChunkSurface } from '../world/chunkSurface';
 import { borderDepth, smoothstep } from '../world/worldDef';
 import { visualTerrainHeight } from './horizonShape';
 
@@ -45,24 +46,17 @@ function rockWeightAt(outside: number, slope: number): number {
 }
 
 /**
- * Builds a chunk render mesh from its row-major height grid: an indexed grid with smooth
- * normals, a planar world-space `uv`, a per-vertex `color` tint from the cover at that vertex and
+ * Builds a chunk render mesh from its row-major surface grid: an indexed grid with smooth
+ * normals, a planar world-space `uv`, a per-vertex `color` tint from the surface cover and
  * a `rockWeight` for the terrain material's rock layer. Vertices match the physics collider
  * geometry everywhere a car can reach; only the ground past the border crest is drawn lower (horizonShape).
  */
-export function buildTerrainMesh(
-  heights: Float32Array,
-  originX: number,
-  originZ: number,
-  biome: Biome,
-): THREE.Mesh {
-  const { positions, indices } = buildChunkGeometry(heights, originX, originZ);
-  const colliderHeights = new Float32Array(positions.length / 3);
-  for (let vertex = 0; vertex < colliderHeights.length; vertex++) {
+export function buildTerrainMesh(surface: ChunkSurface, originX: number, originZ: number): THREE.Mesh {
+  const { positions, indices } = buildChunkGeometry(surface.heights, originX, originZ);
+  for (let vertex = 0; vertex < positions.length / 3; vertex++) {
     const x = positions[vertex * 3];
     const z = positions[vertex * 3 + 2];
-    colliderHeights[vertex] = positions[vertex * 3 + 1];
-    positions[vertex * 3 + 1] = visualTerrainHeight(colliderHeights[vertex], x, z);
+    positions[vertex * 3 + 1] = visualTerrainHeight(positions[vertex * 3 + 1], x, z);
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -77,7 +71,6 @@ export function buildTerrainMesh(
   const rockWeights = new Float32Array(vertexCount);
   for (let vertex = 0; vertex < vertexCount; vertex++) {
     const x = positions[vertex * 3];
-    const y = colliderHeights[vertex];
     const z = positions[vertex * 3 + 2];
     uvs[vertex * 2] = x * TERRAIN_UV_REPEATS_PER_METRE;
     uvs[vertex * 2 + 1] = z * TERRAIN_UV_REPEATS_PER_METRE;
@@ -86,7 +79,7 @@ export function buildTerrainMesh(
     const slope = Math.hypot(normals.getX(vertex), normals.getZ(vertex)) / Math.max(Math.abs(normalY), 1e-4);
     const rockWeight = rockWeightAt(borderDepth(x, z), slope);
     rockWeights[vertex] = rockWeight;
-    const tint = A_STEP_TINT_BY_COVER[biome.coverAt(x, z, y, slope)] * (1 - rockWeight) + rockWeight;
+    const tint = A_STEP_TINT_BY_COVER[coverFromIndex(surface.covers[vertex])] * (1 - rockWeight) + rockWeight;
     colors[vertex * 3] = tint;
     colors[vertex * 3 + 1] = tint;
     colors[vertex * 3 + 2] = tint;

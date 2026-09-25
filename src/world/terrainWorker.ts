@@ -1,19 +1,32 @@
 // src/world/terrainWorker.ts
 import { createHeightField, type Height2D } from './noise';
-import { generateChunkHeights } from './heightfieldData';
+import { createBiome, type Biome } from './biome';
+import { generateChunkSurface } from './chunkSurface';
 
-interface Req { seed: number; cx: number; cz: number }
+export interface TerrainChunkJob { kind: 'chunk'; seed: number; cx: number; cz: number }
+
+export interface TerrainChunkResult {
+  kind: 'chunk';
+  cx: number;
+  cz: number;
+  /** Row-major height grid of the chunk, as `generateChunkSurface` returns it. */
+  heights: Float32Array;
+  /** Same layout as `heights`; each value is a `coverIndex`. */
+  covers: Uint8Array;
+}
 
 let seedCached = -1;
 let height: Height2D | null = null;
+let biome: Biome | null = null;
 
-self.onmessage = (e: MessageEvent<Req>) => {
-  const { seed, cx, cz } = e.data;
-  if (height === null || seed !== seedCached) {
+self.onmessage = (event: MessageEvent<TerrainChunkJob>) => {
+  const { seed, cx, cz } = event.data;
+  if (height === null || biome === null || seed !== seedCached) {
     height = createHeightField(seed);
+    biome = createBiome(seed);
     seedCached = seed;
   }
-  const heights = generateChunkHeights(height, { cx, cz });
-  // Transfer the buffer to avoid a copy.
-  (self as unknown as Worker).postMessage({ cx, cz, heights }, [heights.buffer]);
+  const { heights, covers } = generateChunkSurface(height, biome, { cx, cz });
+  const result: TerrainChunkResult = { kind: 'chunk', cx, cz, heights, covers };
+  self.postMessage(result, { transfer: [heights.buffer, covers.buffer] });
 };
