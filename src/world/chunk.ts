@@ -1,6 +1,7 @@
 // src/world/chunk.ts
 export const CHUNK_SIZE = 64;
-export const CHUNK_RES = 32;
+// 1 m grid: fine enough for wheel-sized bumps, and a heightfield collider keeps it cheap.
+export const CHUNK_RES = 64;
 
 export interface ChunkCoord {
   cx: number;

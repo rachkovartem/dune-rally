@@ -11,10 +11,8 @@ export interface ChunkGeometry {
 }
 
 /**
- * Build the shared world-space geometry for a chunk from its row-major height grid
- * (row = z, col = x). Used by BOTH the render mesh and the physics trimesh collider so
- * the two are guaranteed identical — this removes the heightfield-orientation ambiguity
- * that a Rapier heightfield collider would reintroduce.
+ * Build the world-space render geometry for a chunk from its row-major height grid
+ * (row = z, col = x). The heightfield collider splits each cell along the same diagonal.
  */
 export function buildChunkGeometry(
   heights: Float32Array,
@@ -54,7 +52,7 @@ const GRID_STEP = CHUNK_SIZE / CHUNK_RES;
 
 /**
  * Exact height of the rendered/collided terrain surface at (x, z) — the SAME value the chunk
- * mesh and trimesh collider use. The surface is a triangulated grid (step GRID_STEP), so this
+ * mesh and heightfield collider use. The surface is a triangulated grid (step GRID_STEP), so this
  * barycentric-interpolates the triangle the point lands in, matching the mesh's faceting
  * exactly (unlike the smooth heightField, which deviates between grid vertices). Use this to
  * place anything that must sit precisely ON the ground (tyre tracks, decals).

@@ -1,6 +1,7 @@
 // src/physics/physicsWorld.ts
 import RAPIER from '@dimforge/rapier3d-compat';
-import { buildChunkGeometry } from '../world/chunkGeometry';
+import { CHUNK_RES, CHUNK_SIZE } from '../world/chunk';
+import { VERTS_PER_SIDE } from '../world/heightfieldData';
 import { WORLD_GRAVITY } from '../../shared/drivetrain';
 import {
   landmarkBox,
@@ -15,9 +16,26 @@ export async function initPhysics(): Promise<RAPIER.World> {
 }
 
 /**
- * Add a static trimesh collider for a chunk, built from the SAME world-space geometry as the
- * render mesh (buildChunkGeometry). Using a trimesh — rather than a Rapier heightfield —
- * guarantees the collision surface matches what is drawn, with no axis/orientation ambiguity.
+ * Reorders a row-major height grid (row = z, column = x) into the column-major order a Rapier
+ * heightfield reads, where each column is one x and runs along z.
+ */
+export function toColumnMajor(heights: Float32Array, verticesPerSide: number): Float32Array {
+  if (heights.length !== verticesPerSide * verticesPerSide) {
+    throw new Error(`toColumnMajor: ${heights.length} heights is not a ${verticesPerSide} × ${verticesPerSide} grid`);
+  }
+  const columnMajor = new Float32Array(heights.length);
+  for (let row = 0; row < verticesPerSide; row++) {
+    for (let column = 0; column < verticesPerSide; column++) {
+      columnMajor[column * verticesPerSide + row] = heights[row * verticesPerSide + column];
+    }
+  }
+  return columnMajor;
+}
+
+/**
+ * Add a static heightfield collider for a chunk from its row-major height grid. With this layout
+ * Rapier splits every cell along the same diagonal as buildChunkGeometry, so the collider is
+ * exactly the drawn ground (terrainSurfaceHeight), at about 1/50 of the memory of a trimesh.
  */
 export function addChunkCollider(
   world: RAPIER.World,
@@ -25,9 +43,17 @@ export function addChunkCollider(
   originX: number,
   originZ: number,
 ): RAPIER.Collider {
-  const { positions, indices } = buildChunkGeometry(heights, originX, originZ);
-  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  const desc = RAPIER.ColliderDesc.trimesh(positions, indices);
+  const halfSize = CHUNK_SIZE / 2;
+  const body = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(originX + halfSize, 0, originZ + halfSize),
+  );
+  const desc = RAPIER.ColliderDesc.heightfield(
+    CHUNK_RES,
+    CHUNK_RES,
+    toColumnMajor(heights, VERTS_PER_SIDE),
+    { x: CHUNK_SIZE, y: 1, z: CHUNK_SIZE },
+    RAPIER.HeightFieldFlags.FIX_INTERNAL_EDGES,
+  );
   return world.createCollider(desc, body);
 }
 
