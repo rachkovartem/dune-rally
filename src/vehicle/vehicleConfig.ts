@@ -2,11 +2,30 @@
 import type { Cover } from '../world/biome';
 import type { CarId } from './cars';
 import { WORLD_GRAVITY, type DriveLayout, type DrivetrainSpec } from '../../shared/drivetrain';
+import type { SelectableDriveSpec } from '../../shared/driveModes';
+
+/** How a car meets loose and soft ground (plan v3 surface, §3). */
+export interface SurfaceSpec {
+  /** More than 1 floats better on soft sand (bigger, wider tyres, less weight per wheel). */
+  flotation: number;
+  /** Traction control on the loosest ground: spin allowed at a standstill (m/s) and per m/s of speed. */
+  spinAllowance: number;
+  spinAllowanceRatio: number;
+  /** Share of the rear side grip taken away on the loosest ground: more = the tail slides out sooner. */
+  tailLooseness: number;
+  /** Share of the drive force on the rear axle; only for a car that drives all four wheels. */
+  rearDriveShare?: number;
+}
 
 export interface VehicleConfig {
   /** Half sizes of the body collider box. `offsetY` moves the box down from the body origin so its
    * bottom sits at the real underbody height; 0 keeps it centred. */
-  chassis: { hx: number; hy: number; hz: number; offsetY: number; mass: number };
+  chassis: {
+    hx: number; hy: number; hz: number; offsetY: number; mass: number;
+    /** A second, full-length box above a short belly box: bumpers and overhangs that stop against
+     * walls where the body is drawn, while the belly box keeps the real approach angle. */
+    overhang?: { hy: number; hz: number; offsetY: number };
+  };
   com: { x: number; y: number; z: number };
   inertia: { x: number; y: number; z: number };
   linearDamping: number;
@@ -40,6 +59,9 @@ export interface VehicleConfig {
   restitution: number;
   friction: number;
   gripOverrides: Partial<Record<Cover, number>>;
+  surface: SurfaceSpec;
+  /** Only for a car whose driver picks the drive mode (the Pajero's Super Select). */
+  driveSelect?: SelectableDriveSpec;
 }
 
 const KMH = 1 / 3.6;
@@ -49,9 +71,13 @@ const KMH = 1 / 3.6;
 // at 2500 rpm, kerb 2050–2100 kg, wheelbase 2.800, track 1.520 / 1.515, 265/60 R18, clearance 0.218.
 // Heavy and planted, strong low-rpm torque, stronger than the Forester on soft sand and steep rock.
 export const PAJERO_CONFIG: VehicleConfig = {
-  // The box stays high (bottom about 0.55 m at rest) as before: the game's ridges are cut for a car
-  // that crosses them, so the real 0.218 m clearance is only drawn, not collided.
-  chassis: { hx: 0.9, hy: 0.6, hz: 2.1, offsetY: 0, mass: 2100 + 75 },
+  // Owner decision (2026-09-25): the real 0.218 m clearance is collided. The belly box ends where
+  // a 29° approach and departure angle start (real 30° / 24°); the old high box above it (bottom
+  // about 0.55 m, top 1.75 m) keeps the full body length against walls.
+  chassis: {
+    hx: 0.9, hy: 0.766, hz: 1.8, offsetY: -0.166, mass: 2100 + 75,
+    overhang: { hy: 0.6, hz: 2.1, offsetY: 0 },
+  },
 
   // Low centre of mass + large angular inertia → heavy, stable, hard to flip. Inertia scales with
   // the mass so the car turns and rolls as it did at 1600 kg.
@@ -135,6 +161,19 @@ export const PAJERO_CONFIG: VehicleConfig = {
 
   // All-terrain tyres, low range and more clearance than the Forester: better on loose ground.
   gripOverrides: { sand: 0.75, mud: 0.62, rock: 0.9, gravel: 0.95, salt: 0.95 },
+  // 265/60 R18 all-terrain tyres (0.776 m) float best. 4H sends 60 % of the drive to the rear.
+  surface: { flotation: 1.4, spinAllowance: 3, spinAllowanceRatio: 0.3, tailLooseness: 0.26, rearDriveShare: 0.6 },
+  // Super Select 4WD-II: 2H, 4H (limited-slip centre, 40:60), 4HLc, 4LLc (low range 2.566). Weight
+  // split, centre-of-mass height and the bias ratio are approximate (kerb about 54 % front). A fully
+  // open centre (bias 1) loses about 17 % of traction on the 0.58 slip face and cannot climb it.
+  driveSelect: {
+    startMode: '4H',
+    lowRangeRatio: 2.566,
+    rangeChangeMaxSpeed: 5 * KMH,
+    frontLoadShare: 0.54,
+    comHeight: 0.75,
+    centreDiffBias: 2,
+  },
 };
 
 // Subaru Forester 2.5i (SK, FB25, Lineartronic CVT, symmetrical AWD). Wheel geometry is the
@@ -213,6 +252,8 @@ export const FORESTER_CONFIG: VehicleConfig = {
   friction: 0.6,
 
   gripOverrides: { sand: 0.55, mud: 0.45, rock: 0.8, gravel: 0.85, road: 1.0 },
+  // Symmetrical AWD with the CVT's active clutch: front-biased, both axles always used in full.
+  surface: { flotation: 1.0, spinAllowance: 3, spinAllowanceRatio: 0.3, tailLooseness: 0.26, rearDriveShare: 0.4 },
 };
 
 // Hyundai Elantra AD (6th gen, 2016–2018 pre-facelift), 2.0 Nu MPi (G4NH, about 150 PS) with the
@@ -301,6 +342,8 @@ export const ELANTRA_CONFIG: VehicleConfig = {
     road: 1.0, gravel: 0.82, dirt: 0.72, rock: 0.75, dryGrass: 0.7, grass: 0.7, forest: 0.7,
     beach: 0.55, sand: 0.45, snow: 0.5, mud: 0.35,
   },
+  // 205/55 R16 road tyres (0.61 m) sink first.
+  surface: { flotation: 0.8, spinAllowance: 3, spinAllowanceRatio: 0.3, tailLooseness: 0.26 },
 };
 
 /**

@@ -7,6 +7,8 @@ import {
   landmarkBox,
   type BuildingBox, type Ramp, type ChunkFeatures,
 } from '../world/worldDef';
+import type { PropPlacement } from '../world/propPlacement';
+import { propColliderBox } from '../world/propColliders';
 
 export async function initPhysics(): Promise<RAPIER.World> {
   await RAPIER.init();
@@ -116,6 +118,33 @@ export function addFeatureColliders(
   for (const r of f.ramps) out.push(addRampCollider(world, r, heightAt(r.x, r.z)));
   for (const l of f.landmarks) out.push(addBuildingCollider(world, landmarkBox(l), heightAt(l.x, l.z)));
   return out;
+}
+
+/** Share of a prop box's smallest half size that is rounded off, so a wheel rides over a corner instead of stopping dead. */
+const PROP_EDGE_ROUNDING = 0.3;
+
+/**
+ * Static round-box colliders for the solid placements of a chunk; every other placement is skipped.
+ * The client and the server call this with the same placements, so both see the same boulders.
+ */
+export function addPropColliders(world: RAPIER.World, placements: readonly PropPlacement[]): RAPIER.Collider[] {
+  const colliders: RAPIER.Collider[] = [];
+  for (const placement of placements) {
+    if (!placement.solid) continue;
+    const box = propColliderBox(placement);
+    if (!box) throw new Error(`addPropColliders: ${placement.modelId} is marked solid but has no collider shape`);
+    // A round cuboid is its inner box grown by the radius, so the inner box is shrunk by it.
+    const radius = PROP_EDGE_ROUNDING * Math.min(box.halfX, box.halfY, box.halfZ);
+    const half = box.yaw / 2;
+    const body = world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(box.x, box.y, box.z)
+        .setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }),
+    );
+    const desc = RAPIER.ColliderDesc.roundCuboid(box.halfX - radius, box.halfY - radius, box.halfZ - radius, radius);
+    colliders.push(world.createCollider(desc, body));
+  }
+  return colliders;
 }
 
 /** Static box colliders for the solid scattered props (boulders, logs) of one chunk. */

@@ -8,7 +8,8 @@ import {
 } from '../src/world/worldDef';
 import { borderEscapeTarget } from '../src/world/borderSafety';
 import { terrainSurfaceHeight } from '../src/world/chunkGeometry';
-import { addChunkCollider, addFeatureColliders } from '../src/physics/physicsWorld';
+import { addChunkCollider, addFeatureColliders, addPropColliders } from '../src/physics/physicsWorld';
+import { propPlacementsInChunk } from '../src/world/propPlacement';
 import { createVehiclePhysics, RESET_LIFT, type VehiclePhysics } from '../shared/vehiclePhysics';
 import { WORLD_GRAVITY } from '../shared/drivetrain';
 import type { InputMsg, PoseMsg } from '../shared/protocol';
@@ -16,7 +17,7 @@ import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
 import type { CarId } from '../src/vehicle/cars';
 import { createBiome, type Biome } from '../src/world/biome';
 import { groundAt } from '../src/world/groundAt';
-import type { GroundGrip } from '../shared/terrainGrip';
+import type { SurfaceGround } from '../shared/terrainGrip';
 import type { MovingCar } from '../shared/chunkDemand';
 import { ColliderStreamer, type ColliderStreamerOptions } from './colliderStreamer';
 
@@ -69,6 +70,7 @@ export class ArenaSim {
     private world: RAPIER.World,
     private height: Height2D,
     private biome: Biome,
+    private readonly seed: number,
   ) {
     this.streamer = new ColliderStreamer({ build: (chunk) => this.buildChunk(chunk) }, SERVER_CHUNK_STREAMING);
   }
@@ -77,7 +79,7 @@ export class ArenaSim {
     await RAPIER.init();
     const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY, z: 0 });
     world.timestep = SIM_STEP_SECONDS;
-    const sim = new ArenaSim(world, createHeightField(seed), createBiome(seed));
+    const sim = new ArenaSim(world, createHeightField(seed), createBiome(seed), seed);
     for (const chunk of chunksInRadius(worldToChunk(SPAWN.x, SPAWN.z), SPAWN_PREBUILD_RADIUS)) {
       if (chunk.cx >= 0 && chunk.cz >= 0 && chunk.cx < WORLD_CHUNKS && chunk.cz < WORLD_CHUNKS) sim.streamer.ensureBuilt(chunk);
     }
@@ -89,6 +91,8 @@ export class ArenaSim {
     addChunkCollider(this.world, generateChunkHeights(this.height, chunk), origin.x, origin.z);
     // Solid placed features (buildings, ramps, landmarks) — same deterministic placement as the client.
     addFeatureColliders(this.world, featuresInChunk(chunk.cx, chunk.cz), this.height);
+    const placements = propPlacementsInChunk({ ...chunk, seed: this.seed, height: this.height, biome: this.biome, drawnHeight: colliderGround });
+    addPropColliders(this.world, placements);
   }
 
   /** Terrain chunks that have a collider on the server so far. */
@@ -118,12 +122,13 @@ export class ArenaSim {
     return terrainSurfaceHeight(this.height, pose.x, pose.z) + SPAWN_LIFT;
   }
 
-  /** Puts a car at a pose, upright, standing still, SPAWN_LIFT above the ground. */
+  /** Puts a car at a pose, upright, standing still, SPAWN_LIFT above the ground, not dug in. */
   private placeAt(vehicle: VehiclePhysics, pose: SpawnPose): void {
     vehicle.body.setTranslation({ x: pose.x, y: this.standingHeight(pose), z: pose.z }, true);
     vehicle.body.setRotation(rotationForYaw(pose.yaw), true);
     vehicle.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    vehicle.resetSurface();
   }
 
   /** Swap a player's car in place: same position and rotation, standing still. */
@@ -157,12 +162,14 @@ export class ArenaSim {
     p.vehicle.body.setTranslation({ x, y: this.height(x, z) + lift, z }, true);
     p.vehicle.body.setLinvel({ x: velocity.vx, y: 0, z: velocity.vz }, true);
     p.vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    p.vehicle.resetSurface();
   }
 
   /**
    * Moves the server copy to where its driver's car is when the two have drifted apart by more than
    * POSE_SNAP_DISTANCE or POSE_SNAP_ANGLE; closer than that the copy keeps its own physics. Returns
    * whether it moved the copy. The spin is cleared, so a copy tumbling on its own stops tumbling.
+   * The driver's wheelspin and sinkage come with the snap, so the copy is not left dug in.
    */
   applyClientPose(id: string, pose: PoseMsg): boolean {
     const p = this.players.get(id);
@@ -177,6 +184,14 @@ export class ArenaSim {
     p.vehicle.body.setRotation({ x: pose.qx, y: pose.qy, z: pose.qz, w: pose.qw }, true);
     p.vehicle.body.setLinvel({ x: pose.vx, y: pose.vy, z: pose.vz }, true);
     p.vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    if (pose.surface) {
+      p.vehicle.setSurfaceState({
+        spin: pose.surface.spin,
+        spinDirection: p.vehicle.surfaceState().spinDirection,
+        sink: pose.surface.sink,
+        digDirection: pose.surface.digDirection,
+      });
+    }
     return true;
   }
 
@@ -220,7 +235,7 @@ export class ArenaSim {
     return { x: t.x, y: t.y, z: t.z, qx: r.x, qy: r.y, qz: r.z, qw: r.w };
   }
 
-  private groundUnder(p: Player): GroundGrip {
+  private groundUnder(p: Player): SurfaceGround {
     const { x, z } = p.vehicle.body.translation();
     return groundAt(this.biome, this.height, x, z, vehicleConfigFor(p.carId)).ground;
   }
@@ -229,6 +244,9 @@ export class ArenaSim {
     return [...this.players.keys()];
   }
 }
+
+/** The server draws nothing, and solid placements never read the drawn ground. */
+const colliderGround = (colliderHeight: number): number => colliderHeight;
 
 function movingCarOf(vehicle: VehiclePhysics): MovingCar {
   const position = vehicle.body.translation();

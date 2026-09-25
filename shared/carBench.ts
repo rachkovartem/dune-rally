@@ -7,7 +7,8 @@ import type { VehicleConfig } from '../src/vehicle/vehicleConfig';
 import type { InputMsg } from './protocol';
 import { createVehiclePhysics, forwardAxisOf, RESET_LIFT, upAxisOf, type Quaternion, type VehiclePhysics } from './vehiclePhysics';
 import { WORLD_GRAVITY } from './drivetrain';
-import { FULL_GRIP, type GroundGrip } from './terrainGrip';
+import { FULL_GRIP, type SurfaceGround } from './terrainGrip';
+import { bodySlipOf, SURFACE_TYRE } from './surfaceTyre';
 
 // Same step as the game's client and server worlds.
 const BENCH_STEP = 1 / 60;
@@ -49,7 +50,7 @@ export function createBenchCar(config: VehicleConfig): BenchCar {
 
 const IDLE: InputMsg = { throttle: 0, brake: 0, steer: 0 };
 
-export function stepBenchCar(car: BenchCar, input: InputMsg, ground: GroundGrip): void {
+export function stepBenchCar(car: BenchCar, input: InputMsg, ground: SurfaceGround): void {
   car.vehicle.applyInput(input, ground);
   car.world.step();
   car.vehicle.update(car.world.timestep);
@@ -107,7 +108,7 @@ export interface StraightLineResult {
 }
 
 /** Full throttle from a standstill for `seconds`. */
-export function runStraightLine(config: VehicleConfig, ground: GroundGrip, seconds: number): StraightLineResult {
+export function runStraightLine(config: VehicleConfig, ground: SurfaceGround, seconds: number): StraightLineResult {
   const car = createBenchCar(config);
   const samples: SpeedSample[] = [];
   let timeTo60: number | null = null;
@@ -138,7 +139,7 @@ export function speedAt(result: StraightLineResult, time: number): number {
 /** Accelerates up to `fromSpeed`, then holds full brake until the car stops. */
 export function runBraking(
   config: VehicleConfig,
-  ground: GroundGrip,
+  ground: SurfaceGround,
   fromSpeed: number,
 ): { distance: number; seconds: number } {
   const car = createBenchCar(config);
@@ -162,7 +163,7 @@ export interface TurnOptions {
   seconds: number;
   /** -1 = full left (A), +1 = full right (D). */
   steer: number;
-  ground: GroundGrip;
+  ground: SurfaceGround;
 }
 
 export interface TurnResult {
@@ -264,7 +265,7 @@ export function runRollover(config: VehicleConfig, heading: number, slideSpeed: 
 export interface GroundStretch {
   /** Metres of this ground along the line. */
   length: number;
-  ground: GroundGrip;
+  ground: SurfaceGround;
 }
 
 export interface GroundLineResult {
@@ -378,6 +379,26 @@ function addProfileGround(world: RAPIER.World, heightAt: (z: number) => number, 
   return world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(vertices), new Uint32Array(indices)), ground);
 }
 
+const HEIGHTFIELD_COLUMNS = 4;
+
+/**
+ * A ground profile across +Z as a Rapier heightfield, like the game's terrain: a fast car body
+ * that touches a steep face is pushed out of it, where a thin trimesh can throw it back.
+ */
+function addHeightfieldGround(world: RAPIER.World, heightAt: (z: number) => number, fromZ: number, toZ: number): RAPIER.Collider {
+  const rows = Math.ceil((toZ - fromZ) / CREST_SAMPLE_STEP);
+  const length = rows * CREST_SAMPLE_STEP;
+  const heights = new Float32Array((rows + 1) * (HEIGHTFIELD_COLUMNS + 1));
+  for (let column = 0; column <= HEIGHTFIELD_COLUMNS; column++) {
+    for (let row = 0; row <= rows; row++) heights[column * (rows + 1) + row] = heightAt(fromZ + row * CREST_SAMPLE_STEP);
+  }
+  const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, fromZ + length / 2));
+  return world.createCollider(
+    RAPIER.ColliderDesc.heightfield(rows, HEIGHTFIELD_COLUMNS, heights, { x: 2 * CREST_HALF_WIDTH, y: 1, z: length }, RAPIER.HeightFieldFlags.FIX_INTERNAL_EDGES),
+    ground,
+  );
+}
+
 export interface CrestResult {
   /** Fewest wheels touching the ground at any step while the car crossed the convex top. */
   minWheelsInContact: number;
@@ -419,8 +440,25 @@ export function runCrest(config: VehicleConfig, crestRadius: number, speed: numb
   return { minWheelsInContact, airSeconds, flipped };
 }
 
-const HILL_HALF_WIDTH = 20;
 const HILL_RISE = 12;
+// The foot and the top of the slope are rounded like a real dune, so a car with a real belly
+// clearance does not hang on a sharp edge that no dune has.
+const HILL_ROUNDING_RADIUS = 8;
+
+/** Height of the bench hill at `z`: flat, a rounded foot, the slope, a rounded top, flat again. */
+function hillHeightAt(slope: number, z: number): number {
+  const angle = Math.atan(slope);
+  const topZ = HILL_RISE / slope;
+  const tangent = HILL_ROUNDING_RADIUS * Math.tan(angle / 2);
+  const radius = HILL_ROUNDING_RADIUS;
+  if (z <= -tangent) return 0;
+  if (z <= -tangent + radius * Math.sin(angle)) return radius - Math.sqrt(radius * radius - (z + tangent) ** 2);
+  if (z >= topZ + tangent) return HILL_RISE;
+  if (z >= topZ + tangent - radius * Math.sin(angle)) {
+    return HILL_RISE - radius + Math.sqrt(radius * radius - (z - topZ - tangent) ** 2);
+  }
+  return slope * z;
+}
 const HILL_SECONDS = 30;
 
 export interface HillClimbResult {
@@ -429,45 +467,65 @@ export interface HillClimbResult {
   bestProgress: number;
 }
 
+export interface HillClimbOptions {
+  /** Metres of flat ground of the same kind before the foot; 0 = start standing on the slope. */
+  runUp?: number;
+  /** Extra driver inputs held the whole run: a drive mode, traction control off. */
+  input?: Pick<InputMsg, 'driveMode' | 'tractionControl'>;
+  /** Every wheel starts this deep in the ground, m (a car dug in on the slope). */
+  startSink?: number;
+  seconds?: number;
+  /** After `afterSeconds` the driver lets go for a moment, then holds these inputs instead. */
+  change?: { afterSeconds: number; input: Pick<InputMsg, 'driveMode' | 'tractionControl'> };
+}
+
+// How long the driver lets go of the pedal before a changed input (a drive mode) takes over.
+const CHANGE_PAUSE_SECONDS = 0.5;
+
 /**
  * Full throttle from a standstill up a straight slope of `slope` (rise over run, tan θ) that
- * climbs HILL_RISE metres, with the car's grip for that ground. The car starts on the slope.
+ * climbs HILL_RISE metres, with the car's grip for that ground. The car starts on the slope, or
+ * `runUp` metres before its foot.
  */
-export function runHillClimb(config: VehicleConfig, slope: number, ground: GroundGrip): HillClimbResult {
+export function runHillClimb(config: VehicleConfig, slope: number, ground: SurfaceGround, options: HillClimbOptions = {}): HillClimbResult {
+  const runUp = options.runUp ?? 0;
   const angle = Math.atan(slope);
-  const length = HILL_RISE / Math.sin(angle);
   const world = createBenchWorld();
-  const slopeBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  const tilt = { x: -Math.sin(angle / 2), y: 0, z: 0, w: Math.cos(angle / 2) };
   const normal = { y: Math.cos(angle), z: -Math.sin(angle) };
-  // The slope box's top face runs from (0, 0, 0) up to the top edge; its centre sits half a
-  // thickness below the middle of that face.
-  world.createCollider(
-    RAPIER.ColliderDesc.cuboid(HILL_HALF_WIDTH, 0.5, length / 2)
-      .setRotation(tilt)
-      .setTranslation(0, (length / 2) * Math.sin(angle) - 0.5 * normal.y, (length / 2) * Math.cos(angle) - 0.5 * normal.z),
-    slopeBody,
-  );
-  const topZ = length * Math.cos(angle);
-  world.createCollider(
-    RAPIER.ColliderDesc.cuboid(HILL_HALF_WIDTH, 0.5, 100).setTranslation(0, HILL_RISE - 0.5, topZ + 100),
-    slopeBody,
-  );
-  world.createCollider(RAPIER.ColliderDesc.cuboid(HILL_HALF_WIDTH, 0.5, 100).setTranslation(0, -0.5, -100), slopeBody);
+  const tilt = { x: -Math.sin(angle / 2), y: 0, z: 0, w: Math.cos(angle / 2) };
+  const topZ = HILL_RISE / slope;
+  const flatBefore = Math.max(100, runUp + 50);
+  addHeightfieldGround(world, (z) => hillHeightAt(slope, z), -flatBefore, topZ + 200);
 
   const startAlong = 4;
   const lift = 1.2;
-  const vehicle = createVehiclePhysics(world, {
-    x: 0,
-    y: startAlong * Math.sin(angle) + lift * normal.y,
-    z: startAlong * Math.cos(angle) + lift * normal.z,
-  }, config);
-  vehicle.body.setRotation(tilt, true);
+  const vehicle = runUp > 0
+    ? createVehiclePhysics(world, { x: 0, y: lift, z: -runUp }, config)
+    : createVehiclePhysics(world, {
+      x: 0,
+      y: startAlong * Math.sin(angle) + lift * normal.y,
+      z: startAlong * Math.cos(angle) + lift * normal.z,
+    }, config);
+  if (runUp === 0) vehicle.body.setRotation(tilt, true);
   const car: BenchCar = { world, vehicle, time: 0 };
+  const held = { ...options.input };
+  if (options.startSink !== undefined) {
+    // Let it land first, so the depth is not lost while it drops onto the ground.
+    for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, { ...IDLE, ...held }, ground);
+    const wheels = config.wheel.positions.length;
+    vehicle.setSurfaceState({
+      spin: 0, spinDirection: 1, sink: new Array<number>(wheels).fill(options.startSink), digDirection: new Array<1 | -1>(wheels).fill(1),
+    });
+    car.time = 0;
+  }
   const footHeight = 0;
   let bestProgress = 0;
-  while (car.time < HILL_SECONDS) {
-    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, ground);
+  const change = options.change;
+  while (car.time < (options.seconds ?? HILL_SECONDS)) {
+    const changed = change !== undefined && car.time >= change.afterSeconds;
+    const pausing = changed && car.time < change.afterSeconds + CHANGE_PAUSE_SECONDS;
+    const input = changed ? { ...held, ...change.input } : held;
+    stepBenchCar(car, { throttle: pausing ? 0 : 1, brake: 0, steer: 0, ...input }, ground);
     const position = vehicle.body.translation();
     // Height of the ground under the car's centre, so a car lying on the slope still counts.
     const groundHeight = Math.min(HILL_RISE, Math.max(footHeight, position.z * slope));
@@ -570,4 +628,215 @@ export function runRidge(config: VehicleConfig, rampAngleDegrees: number, speed:
 // How far ahead of the body origin the front wheels sit.
 function frontAxleOffset(config: VehicleConfig): number {
   return Math.max(...config.wheel.positions.map((position) => position.z));
+}
+
+// ── surface handling (plan v3 surface, SH-4) ─────────────────────────────────────────────
+
+/** Body slip of a bench car right now, rad (signed). */
+function bodySlipNow(car: BenchCar): number {
+  return bodySlipOf(car.vehicle.body.linvel(), forwardAxisOf(car.vehicle.body.rotation()), car.vehicle.forwardSpeed());
+}
+
+/**
+ * Drives straight with full throttle until `speed` on the same cover with no sinkage, like a car
+ * that rolls onto soft ground at speed; throws when it never gets there.
+ */
+function accelerateTo(car: BenchCar, speed: number, ground: SurfaceGround, held: Partial<InputMsg>, runner: string): void {
+  const firm: SurfaceGround = { ...ground, softness: 0 };
+  while (car.vehicle.forwardSpeed() < speed) {
+    if (car.time > 120) throw new Error(`${runner}: the car never reached ${speed} m/s`);
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0, ...held }, firm);
+  }
+}
+
+/** Held driver choices for a surface run: a drive mode and traction control. */
+export type HeldInput = Pick<InputMsg, 'driveMode' | 'tractionControl'>;
+
+export interface DriftTurnResult {
+  maxBodySlip: number;
+  maxRearSlip: number;
+  maxFrontSlip: number;
+  /** Signed, unwrapped heading change, rad. */
+  headingChange: number;
+  maxRoll: number;
+  flipped: boolean;
+}
+
+/**
+ * Full left lock at `entrySpeed` on one ground, reached without sinkage. `hold`: 3 s with the throttle holding the speed.
+ * `lift`: full throttle for 1 s, then off, 3.5 s in all (a lift-off slide).
+ */
+export function runDriftTurn(
+  config: VehicleConfig, ground: SurfaceGround, entrySpeed: number, mode: 'hold' | 'lift', held: HeldInput = {},
+): DriftTurnResult {
+  const car = createBenchCar(config);
+  accelerateTo(car, entrySpeed, ground, held, 'runDriftTurn');
+  const seconds = mode === 'hold' ? 3 : 3.5;
+  const startTime = car.time;
+  let previousYaw = yawOf(car.vehicle.body.rotation());
+  const result: DriftTurnResult = { maxBodySlip: 0, maxRearSlip: 0, maxFrontSlip: 0, headingChange: 0, maxRoll: 0, flipped: false };
+  const rear = config.wheel.positions.map((position) => position.z < 0);
+  while (car.time - startTime < seconds - 1e-9) {
+    const elapsed = car.time - startTime;
+    const throttle = mode === 'lift' ? (elapsed < 1 ? 1 : 0) : throttleToHold(car, entrySpeed);
+    stepBenchCar(car, { throttle, brake: 0, steer: -1, ...held }, ground);
+    const rotation = car.vehicle.body.rotation();
+    const yaw = yawOf(rotation);
+    let delta = yaw - previousYaw;
+    if (delta > Math.PI) delta -= 2 * Math.PI;
+    if (delta < -Math.PI) delta += 2 * Math.PI;
+    result.headingChange += delta;
+    previousYaw = yaw;
+    const wheels = car.vehicle.wheelSurface();
+    const slipOf = (isRear: boolean): number => {
+      const picked = wheels.filter((_wheel, wheelIndex) => rear[wheelIndex] === isRear);
+      return picked.reduce((sum, wheel) => sum + wheel.slipAngle, 0) / Math.max(1, picked.length);
+    };
+    result.maxBodySlip = Math.max(result.maxBodySlip, Math.abs(bodySlipNow(car)));
+    result.maxRearSlip = Math.max(result.maxRearSlip, slipOf(true));
+    result.maxFrontSlip = Math.max(result.maxFrontSlip, slipOf(false));
+    result.maxRoll = Math.max(result.maxRoll, Math.abs(rollOf(rotation)));
+    if (isUpsideDown(rotation)) result.flipped = true;
+  }
+  return result;
+}
+
+const CATCH_SLIDE_SECONDS = 1.5;
+const CATCH_SECONDS = 4;
+const CATCH_DONE_SLIP = (3 * Math.PI) / 180;
+
+/**
+ * A slide and its catch: full lock at 60 km/h for 1.5 s, then the driver steers against the slide
+ * at half throttle until it is under 3°, then straight, 4 s in all. Returns the slide left then.
+ */
+export function runCatch(config: VehicleConfig, ground: SurfaceGround): { peakSlip: number; slipAfter: number; flipped: boolean } {
+  const car = createBenchCar(config);
+  const entry = 60 * KMH;
+  accelerateTo(car, entry, ground, {}, 'runCatch');
+  let startTime = car.time;
+  let peakSlip = 0;
+  let flipped = false;
+  while (car.time - startTime < CATCH_SLIDE_SECONDS) {
+    stepBenchCar(car, { throttle: throttleToHold(car, entry), brake: 0, steer: -1 }, ground);
+    peakSlip = Math.max(peakSlip, Math.abs(bodySlipNow(car)));
+  }
+  startTime = car.time;
+  let caught = false;
+  while (car.time - startTime < CATCH_SECONDS) {
+    const slip = bodySlipNow(car);
+    const steer = !caught && Math.abs(slip) > CATCH_DONE_SLIP ? Math.sign(slip) : 0;
+    stepBenchCar(car, { throttle: 0.5, brake: 0, steer }, ground);
+    if (Math.abs(bodySlipNow(car)) < CATCH_DONE_SLIP) caught = true;
+    if (isUpsideDown(car.vehicle.body.rotation())) flipped = true;
+  }
+  return { peakSlip, slipAfter: Math.abs(bodySlipNow(car)), flipped };
+}
+
+// Below this forward speed after a full-throttle run the car counts as stuck.
+const STUCK_SPEED = 2 * KMH;
+
+export interface DigResult {
+  /** Forward speed at the end, m/s. */
+  speed: number;
+  /** Deepest sinkage each wheel reached, m. */
+  maxSink: readonly number[];
+  /** Sinkage at the end, m. */
+  sinkAtEnd: readonly number[];
+  stuck: boolean;
+  /** Share of the weight on the wheels at the end (the rest on the belly). */
+  loadShare: number;
+  /** Metres driven along the nose. */
+  distance: number;
+}
+
+/** Full throttle from a standstill for `seconds` on one ground (usually soft sand). */
+export function runDig(config: VehicleConfig, ground: SurfaceGround, seconds: number, held: HeldInput = {}): DigResult {
+  const car = createBenchCar(config);
+  return digOn(car, ground, seconds, held);
+}
+
+function digOn(car: BenchCar, ground: SurfaceGround, seconds: number, held: HeldInput): DigResult {
+  const start = car.vehicle.body.translation();
+  const nose = forwardAxisOf(car.vehicle.body.rotation());
+  const maxSink = car.vehicle.wheelSurface().map((wheel) => wheel.sink);
+  const startTime = car.time;
+  while (car.time - startTime < seconds - 1e-9) {
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0, ...held }, ground);
+    car.vehicle.wheelSurface().forEach((wheel, wheelIndex) => { maxSink[wheelIndex] = Math.max(maxSink[wheelIndex], wheel.sink); });
+  }
+  const end = car.vehicle.body.translation();
+  const speed = car.vehicle.forwardSpeed();
+  return {
+    speed,
+    maxSink,
+    sinkAtEnd: car.vehicle.wheelSurface().map((wheel) => wheel.sink),
+    stuck: speed < STUCK_SPEED,
+    loadShare: car.vehicle.wheelLoadShare(),
+    distance: (end.x - start.x) * nose.x + (end.z - start.z) * nose.z,
+  };
+}
+
+export interface EscapeResult {
+  /** The dig before the escape (5 s of full throttle, then 2 s more). */
+  dig: DigResult;
+  /** Metres the car backed out along its own track in 3 s of reverse. */
+  backedOut: number;
+  /** Sinkage per wheel after the reverse, m. */
+  sinkAfter: readonly number[];
+}
+
+/** Digs in with 7 s of full throttle, lets go for 0.3 s, then holds reverse for 3 s. */
+export function runEscape(config: VehicleConfig, ground: SurfaceGround): EscapeResult {
+  const car = createBenchCar(config);
+  const dig = digOn(car, ground, 7, {});
+  const dugAt = car.vehicle.body.translation();
+  const nose = forwardAxisOf(car.vehicle.body.rotation());
+  const letGo = car.time;
+  while (car.time - letGo < 0.3) stepBenchCar(car, IDLE, ground);
+  const reverse = car.time;
+  while (car.time - reverse < 3) stepBenchCar(car, { throttle: 0, brake: 1, steer: 0 }, ground);
+  const end = car.vehicle.body.translation();
+  return {
+    dig,
+    backedOut: -((end.x - dugAt.x) * nose.x + (end.z - dugAt.z) * nose.z),
+    sinkAfter: car.vehicle.wheelSurface().map((wheel) => wheel.sink),
+  };
+}
+
+/**
+ * Reaches `entrySpeed` on the `from` ground, then drives on full throttle over the `to` ground and
+ * reports the speed at each of `checkSeconds` and the deepest sinkage.
+ */
+export function runEnterAtSpeed(
+  config: VehicleConfig, from: SurfaceGround, to: SurfaceGround, entrySpeed: number, checkSeconds: readonly number[],
+): { speedAt: readonly number[]; maxSink: number } {
+  const car = createBenchCar(config);
+  accelerateTo(car, entrySpeed, from, {}, 'runEnterAtSpeed');
+  const startTime = car.time;
+  const speedAt = checkSeconds.map(() => 0);
+  let maxSink = 0;
+  const lastCheck = Math.max(...checkSeconds);
+  while (car.time - startTime < lastCheck - 1e-9) {
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, to);
+    const elapsed = car.time - startTime;
+    checkSeconds.forEach((check, index) => { if (elapsed <= check + 1e-9) speedAt[index] = car.vehicle.forwardSpeed(); });
+    for (const wheel of car.vehicle.wheelSurface()) maxSink = Math.max(maxSink, wheel.sink);
+  }
+  return { speedAt, maxSink };
+}
+
+/** Full throttle in one held drive mode for `seconds` on flat ground: the top speed it reaches. */
+export function runTopSpeed(config: VehicleConfig, ground: SurfaceGround, seconds: number, held: HeldInput = {}): number {
+  const car = createBenchCar(config);
+  let top = 0;
+  while (car.time < seconds) {
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0, ...held }, ground);
+    top = Math.max(top, car.vehicle.forwardSpeed());
+  }
+  return top;
+}
+
+/** The deepest a wheel of this car can sink, m. */
+export function maxSinkOf(config: Pick<VehicleConfig, 'wheel'>): number {
+  return SURFACE_TYRE.maxSinkShare * config.wheel.radius;
 }

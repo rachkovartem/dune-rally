@@ -13,9 +13,18 @@ import {
   pedalIntent,
   stepGearbox,
   withRotatingMass,
+  type DrivetrainSpec,
   type DrivetrainState,
 } from './drivetrain';
-import type { GroundGrip } from './terrainGrip';
+import type { SurfaceGround } from './terrainGrip';
+import {
+  bodySlipOf, countersteer, onOwnTrack, rollingDirection, sideGrip, sinkEffects, sinkStep, slipAngle, spinAllowance, spinStep,
+  staticSinkage, SURFACE_TYRE,
+} from './surfaceTyre';
+import {
+  axleLoadShares, centreDiffTraction, isCentreLocked, isLowRange, lockedScrubShare, LOCKED_CENTRE_SCRUB, nextDriveMode,
+  type DriveMode, type DriveModeBlock,
+} from './driveModes';
 
 /** How far (m) R lifts a car before it stands it on its wheels; the client and the server use the same. */
 export const RESET_LIFT = 3;
@@ -27,11 +36,41 @@ export interface Quaternion {
   w: number;
 }
 
+/** What one wheel does on the ground, for sound, ruts and the debug readout. */
+export interface WheelSurface {
+  /** How deep the wheel sits in the ground, m. */
+  sink: number;
+  /** Slip angle, rad (≥ 0). */
+  slipAngle: number;
+  /** Wheelspin of this wheel, m/s (0 for a wheel that is not driven). */
+  spinSpeed: number;
+  /** Speed of the contact point across the wheel, m/s (≥ 0). */
+  lateralSlip: number;
+}
+
+/** Wheelspin and sinkage: the state a pose snap copies from the driver's car to the server copy. */
+export interface SurfaceState {
+  spin: number;
+  spinDirection: 1 | -1;
+  sink: readonly number[];
+  digDirection: readonly (1 | -1)[];
+}
+
+/** Drive mode for the HUD: a car either has one fixed layout or lets the driver pick the mode. */
+export type DriveModeState =
+  | { kind: 'fixed'; layout: 'awd' | 'fwd' }
+  | { kind: 'selectable'; mode: DriveMode; requested: DriveMode; blocked: DriveModeBlock };
+
+export interface DriveState {
+  drive: DriveModeState;
+  tractionControl: boolean;
+}
+
 export interface VehiclePhysics {
   body: RAPIER.RigidBody;
   controller: RAPIER.DynamicRayCastVehicleController;
   /** One step of driver input on the ground under the car. */
-  applyInput(input: InputMsg, ground: GroundGrip): void;
+  applyInput(input: InputMsg, ground: SurfaceGround): void;
   update(dt: number): void;
   steerAngle(): number;
   speed(): number;
@@ -42,6 +81,20 @@ export interface VehiclePhysics {
   wheelsInContact(): number;
   /** Stand the car on its wheels, raised by `lift`, facing the way its nose pointed; stops it. */
   resetUpright(lift: number): void;
+  /** Per wheel, in wheel order (FL, FR, RL, RR). */
+  wheelSurface(): readonly WheelSurface[];
+  /** Speed of the driven tyres' surface along the nose, m/s: the ground speed plus the spin. */
+  wheelSurfaceSpeed(): number;
+  /** Wheelspin of the driven wheels, m/s (≥ 0). */
+  spin(): number;
+  /** Share of the weight the wheels carry; the rest sits on the belly (1 when not sunk in). */
+  wheelLoadShare(): number;
+  surfaceState(): SurfaceState;
+  /** Copies the driver's wheelspin and sinkage; throws when the wheel count does not match. */
+  setSurfaceState(state: SurfaceState): void;
+  /** No spin, no sinkage: for every place that puts the car somewhere new. */
+  resetSurface(): void;
+  driveState(): DriveState;
 }
 
 /** The chassis's own +Z (its nose) in world space. */
@@ -96,15 +149,46 @@ export function wheelbaseOf(config: Pick<VehicleConfig, 'wheel'>): number {
   return Math.max(...zs) - Math.min(...zs);
 }
 
+/**
+ * Force share of each wheel that pushes. With a rear share the two axles split the force and each
+ * axle splits its part equally; when one axle has no wheel down, the other takes it all.
+ */
+function wheelForceShares(forceWheels: readonly number[], isRear: readonly boolean[], rearShare: number | null): Map<number, number> {
+  const shares = new Map<number, number>();
+  const rearWheels = forceWheels.filter((wheelIndex) => isRear[wheelIndex]);
+  const frontWheels = forceWheels.filter((wheelIndex) => !isRear[wheelIndex]);
+  if (rearShare === null || rearWheels.length === 0 || frontWheels.length === 0) {
+    for (const wheelIndex of forceWheels) shares.set(wheelIndex, 1 / forceWheels.length);
+    return shares;
+  }
+  for (const wheelIndex of frontWheels) shares.set(wheelIndex, (1 - rearShare) / frontWheels.length);
+  for (const wheelIndex of rearWheels) shares.set(wheelIndex, rearShare / rearWheels.length);
+  return shares;
+}
+
 export function createVehiclePhysics(
   world: RAPIER.World,
   spawn: { x: number; y: number; z: number },
   config: VehicleConfig,
 ): VehiclePhysics {
-  const drivesEveryWheel = config.drivenWheels.length === config.wheel.positions.length;
-  if ((config.driveLayout.kind === 'awd') !== drivesEveryWheel) {
+  const wheelCount = config.wheel.positions.length;
+  const drivesEveryWheel = config.drivenWheels.length === wheelCount;
+  const allWheelDrive = config.driveLayout.kind === 'awd';
+  if (allWheelDrive !== drivesEveryWheel) {
     throw new Error(`createVehiclePhysics: driveLayout "${config.driveLayout.kind}" does not match drivenWheels [${config.drivenWheels.join(', ')}]`);
   }
+  const rearDriveShare = config.surface.rearDriveShare;
+  if (allWheelDrive !== (rearDriveShare !== undefined)) {
+    throw new Error(`createVehiclePhysics: surface.rearDriveShare must be set for AWD and only for AWD (driveLayout "${config.driveLayout.kind}")`);
+  }
+  if (rearDriveShare !== undefined && !(rearDriveShare > 0 && rearDriveShare < 1)) {
+    throw new Error(`createVehiclePhysics: surface.rearDriveShare ${rearDriveShare} is outside (0, 1)`);
+  }
+  const selectable = config.driveSelect;
+  if (selectable && !allWheelDrive) throw new Error('createVehiclePhysics: a selectable drive needs an AWD car');
+  // 4H splits the drive at the car's own rear share; the checks above make it present here.
+  const openCentreRearShare = selectable && rearDriveShare !== undefined ? rearDriveShare : null;
+
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(spawn.x, spawn.y, spawn.z)
@@ -119,8 +203,9 @@ export function createVehiclePhysics(
       ),
   );
   // Density 0: mass comes from setAdditionalMassProperties (keeping the low COM). Restitution +
-  // friction give terrain/obstacle hits some bounce and scrub instead of a dead stop.
-  world.createCollider(
+  // friction give terrain/obstacle hits some bounce and scrub instead of a dead stop. The belly box
+  // is the first collider: the bench measures the underbody on it.
+  const bellyCollider = world.createCollider(
     RAPIER.ColliderDesc.cuboid(config.chassis.hx, config.chassis.hy, config.chassis.hz)
       .setTranslation(0, config.chassis.offsetY, 0)
       .setDensity(0)
@@ -128,6 +213,17 @@ export function createVehiclePhysics(
       .setFriction(config.friction),
     body,
   );
+  const overhang = config.chassis.overhang;
+  if (overhang) {
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(config.chassis.hx, overhang.hy, overhang.hz)
+        .setTranslation(0, overhang.offsetY, 0)
+        .setDensity(0)
+        .setRestitution(config.restitution)
+        .setFriction(config.friction),
+      body,
+    );
+  }
 
   const controller = world.createVehicleController(body);
   const down = new RAPIER.Vector3(0, -1, 0);
@@ -141,7 +237,6 @@ export function createVehiclePhysics(
       config.wheel.radius,
     );
   }
-  const wheelCount = config.wheel.positions.length;
   for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
     controller.setWheelSuspensionStiffness(wheelIndex, config.wheel.suspensionStiffness);
     controller.setWheelSuspensionCompression(wheelIndex, config.wheel.suspensionCompression);
@@ -152,9 +247,35 @@ export function createVehiclePhysics(
   }
 
   const spec = config.drivetrain;
+  // Low range multiplies every ratio, so it acts like a taller final drive.
+  const lowRangeSpec: DrivetrainSpec | null = selectable
+    ? { ...spec, finalDrive: spec.finalDrive * selectable.lowRangeRatio }
+    : null;
   const wheelbase = wheelbaseOf(config);
+  const radius = config.wheel.radius;
+  const maxSink = SURFACE_TYRE.maxSinkShare * radius;
+  const isRear = config.wheel.positions.map((position) => position.z < 0);
+  const rearWheels = config.drivenWheels.filter((wheelIndex) => isRear[wheelIndex]);
+  const frontCount = isRear.filter((rear) => !rear).length;
+  const rearCount = wheelCount - frontCount;
+  const spinInertia = Math.max(SURFACE_TYRE.minSpinInertiaShare, spec.rotatingMassFactor - 1) * config.chassis.mass;
+
   let currentSteer = 0;
   let drivetrainState = createDrivetrainState(spec);
+  let spin = 0;
+  let spinDirection: 1 | -1 = 1;
+  const sink = config.wheel.positions.map(() => 0);
+  const digDirection: (1 | -1)[] = config.wheel.positions.map((): 1 | -1 => 1);
+  const telemetry: WheelSurface[] = config.wheel.positions.map(() => ({ sink: 0, slipAngle: 0, spinSpeed: 0, lateralSlip: 0 }));
+  let loadShare = 1;
+  // The last step's acceleration force as a share of the weight on the ground: it moves load to the rear axle.
+  let accelerationShare = 0;
+  let tractionControl = true;
+  let driveMode: DriveMode | null = selectable ? selectable.startMode : null;
+  let requestedMode: DriveMode | null = driveMode;
+  let driveModeBlock: DriveModeBlock = null;
+
+  const drivenWheelsNow = (): readonly number[] => (driveMode === '2H' ? rearWheels : config.drivenWheels);
 
   const speed = (): number => {
     const velocity = body.linvel();
@@ -172,16 +293,41 @@ export function createVehiclePhysics(
     }
     return count;
   };
+  const resetSurface = (): void => {
+    spin = 0;
+    spinDirection = 1;
+    loadShare = 1;
+    accelerationShare = 0;
+    for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
+      sink[wheelIndex] = 0;
+      digDirection[wheelIndex] = 1;
+      telemetry[wheelIndex] = { sink: 0, slipAngle: 0, spinSpeed: 0, lateralSlip: 0 };
+      controller.setWheelRadius(wheelIndex, radius);
+    }
+    bellyCollider.setFriction(config.friction);
+  };
 
   return {
     body,
     controller,
-    applyInput(input: InputMsg, ground: GroundGrip) {
-      const { grip } = ground;
+    applyInput(input: InputMsg, ground: SurfaceGround) {
       const dt = world.timestep;
       const alongNose = forwardSpeed();
       const intent = pedalIntent(input.throttle, input.brake, alongNose);
-      drivetrainState = stepGearbox(spec, drivetrainState, intent, alongNose, dt);
+      tractionControl = input.tractionControl !== false;
+      if (selectable && driveMode !== null) {
+        if (input.driveMode !== undefined) requestedMode = input.driveMode;
+        const next = nextDriveMode(driveMode, requestedMode ?? driveMode, alongNose, selectable);
+        driveMode = next.mode;
+        driveModeBlock = next.blocked;
+      }
+      const lowRange = driveMode !== null && isLowRange(driveMode);
+      const centreLocked = driveMode !== null && isCentreLocked(driveMode);
+      const driveSpec = lowRange && lowRangeSpec ? lowRangeSpec : spec;
+      const drivenWheels = drivenWheelsNow();
+
+      // The engine turns with the driven tyres, so their spin flares the revs.
+      drivetrainState = stepGearbox(driveSpec, drivetrainState, intent, alongNose + spinDirection * spin, dt);
 
       const velocity = body.linvel();
       const airSpeed = Math.hypot(velocity.x, velocity.y, velocity.z);
@@ -189,59 +335,132 @@ export function createVehiclePhysics(
 
       // All tyre forces go through the wheels that touch the ground: a car on its roof gets no push.
       // The engine pushes through the driven wheels only; brakes and rolling resistance act on all.
-      const drivenInContact = config.drivenWheels.filter((wheelIndex) => controller.wheelIsInContact(wheelIndex));
+      const inContact: boolean[] = [];
+      for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) inContact.push(controller.wheelIsInContact(wheelIndex));
+      const drivenInContact = drivenWheels.filter((wheelIndex) => inContact[wheelIndex]);
       const allInContact: number[] = [];
       for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
-        if (controller.wheelIsInContact(wheelIndex)) allInContact.push(wheelIndex);
+        if (inContact[wheelIndex]) allInContact.push(wheelIndex);
       }
       const contacts = allInContact.length;
       const forceWheels = intent.drive > 0 ? drivenInContact : allInContact;
+      const rotation = body.rotation();
+      const up = upAxisOf(rotation);
+      const nose = forwardAxisOf(rotation);
+      const right = rightAxisOf(rotation);
       // On a slope only the part of the weight across the ground presses the tyres down, so
       // traction and rolling resistance shrink with cos θ and a steep face cannot be climbed.
-      const up = upAxisOf(body.rotation());
-      const nose = forwardAxisOf(body.rotation());
       const uprightShare = Math.max(0, up.y);
-      const normalForce = (config.chassis.mass * WORLD_GRAVITY * uprightShare * contacts) / wheelCount;
-      // Only the static slope transfer moves load off the driven axle; the transfer under
-      // acceleration is left out on purpose, it would make the launch depend on pitch noise.
-      const drivenShare = drivenLoadShare(config.driveLayout, wheelbase, nose.y, up.y);
-      const drivenNormalForce =
-        (config.chassis.mass * WORLD_GRAVITY * uprightShare * drivenShare * drivenInContact.length) / config.drivenWheels.length;
+      const weight = config.chassis.mass * WORLD_GRAVITY * uprightShare;
+
+      // A sunk car rests partly on its belly: only the weight the springs carry presses the tyres.
+      const anySunk = sink.some((depth) => depth > SURFACE_TYRE.rutDepth);
+      if (anySunk && contacts === wheelCount && weight > 1) {
+        let carried = 0;
+        for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) carried += controller.wheelSuspensionForce(wheelIndex) ?? 0;
+        const measured = Math.min(1, carried / weight);
+        loadShare += (measured - loadShare) * Math.min(1, dt / SURFACE_TYRE.loadShareSeconds);
+      } else {
+        loadShare = 1;
+      }
+      const wheelWeight = weight * loadShare;
+      const normalForce = (wheelWeight * contacts) / wheelCount;
+
+      const settled = staticSinkage(ground.softness, config.surface.flotation, alongNose);
+      const moving = rollingDirection(alongNose, intent.drive, intent.direction);
+      const ownTrack = sink.map((depth, wheelIndex) => onOwnTrack(moving, digDirection[wheelIndex], depth, settled));
+      const sinkage = sinkEffects({
+        sinks: sink, ownTrack, drivenWheels, staticSink: settled, radius, baseRollingResistance: ground.rollingResistance,
+      });
+      const grip = ground.grip * sinkage.gripFactor;
+      const scrub = centreLocked ? lockedScrubShare(currentSteer, config.maxSteer, ground.looseness) : 0;
+      const rollingResistance = sinkage.rollingResistance + scrub * LOCKED_CENTRE_SCRUB.rollingResistance;
+
+      // Most drive force the driven tyres pass to the ground before they spin.
+      const peakFriction = spec.tyrePeakFriction * grip;
+      let peakTraction: number;
+      let rearShare: number | null = allWheelDrive && rearDriveShare !== undefined ? rearDriveShare : null;
+      if (selectable && driveMode !== null) {
+        const loads = axleLoadShares(selectable, wheelbase, nose.y, up.y, accelerationShare);
+        const frontDown = allInContact.filter((wheelIndex) => !isRear[wheelIndex]).length;
+        const rearDown = contacts - frontDown;
+        const frontLimit = peakFriction * wheelWeight * loads.front * (frontDown / frontCount);
+        const rearLimit = peakFriction * wheelWeight * loads.rear * (rearDown / rearCount);
+        if (driveMode === '2H') {
+          peakTraction = rearLimit;
+          rearShare = null;
+        } else if (centreLocked) {
+          peakTraction = frontLimit + rearLimit;
+          // Both axles turn at one speed, so the force goes where the grip is.
+          rearShare = peakTraction > 0 ? rearLimit / peakTraction : 0.5;
+        } else {
+          if (openCentreRearShare === null) throw new Error('createVehiclePhysics: a selectable drive has no rear share');
+          peakTraction = centreDiffTraction(frontLimit, rearLimit, openCentreRearShare, selectable.centreDiffBias);
+          rearShare = openCentreRearShare;
+        }
+      } else {
+        // Only the static slope transfer moves load off the driven axle; the transfer under
+        // acceleration is left out on purpose, it would make the launch depend on pitch noise.
+        const drivenShare = drivenLoadShare(config.driveLayout, wheelbase, nose.y, up.y);
+        peakTraction = (peakFriction * wheelWeight * drivenShare * drivenInContact.length) / drivenWheels.length;
+      }
+      const drivenNormalForce = peakFriction > 0 ? peakTraction / peakFriction : 0;
+
+      const demanded = driveForce(driveSpec, drivetrainState, intent, alongNose + spinDirection * spin);
+      // Traction control watches the engine revs, so in low range the same rev flare is less wheel slip.
+      const allowance = tractionControl
+        ? spinAllowance(config.surface, ground.looseness, alongNose) / (lowRange && selectable ? selectable.lowRangeRatio : 1)
+        : null;
+      const spinning = spinStep({
+        spin, spinDirection, drive: intent.drive, direction: intent.direction, demandedForce: demanded, peakTraction,
+        looseness: ground.looseness, allowance, spinInertia, drivenInContact: drivenInContact.length > 0, dt,
+      });
+      spin = spinning.spin;
+      spinDirection = spinning.spinDirection;
+
       const aeroAlongNose = airSpeed > 1e-3 ? (-aeroDrag * alongNose) / airSpeed : 0;
       // Without the slope pull here, a steady climb would lose the rotating-mass share of its traction.
       const gravityAlongNose = -config.chassis.mass * WORLD_GRAVITY * nose.y;
-      const tyreForce = forceWheels.length === 0 ? 0 : withRotatingMass(spec, longitudinalForce(spec, {
-        driveForce: driveForce(spec, drivetrainState, intent, alongNose),
+      const tyreForce = forceWheels.length === 0 ? 0 : withRotatingMass(driveSpec, longitudinalForce(driveSpec, {
+        driveForce: spinning.tyreForce,
         intent,
         forwardSpeed: alongNose,
         grip,
-        rollingResistance: ground.rollingResistance,
+        rollingResistance,
         normalForce,
         drivenNormalForce,
         brakeForce: config.brakeForce,
         mass: config.chassis.mass,
         dt,
       }), aeroAlongNose + gravityAlongNose, intent);
+      // Only the part of the tyre force that speeds the car up moves load; the part that holds it on
+      // a slope is already in the slope term of axleLoadShares.
+      accelerationShare = selectable && intent.drive > 0 && weight > 1
+        ? Math.max(-1, Math.min(1, (tyreForce + gravityAlongNose) / weight))
+        : 0;
+
       // Rapier caps its engine impulse together with the side grip, so a lower side grip would also
       // cut the drive. The tyre force is applied here instead, at each contact point, along the
       // wheel's heading in the ground plane; Rapier's engine force stays 0.
-      const perWheel = forceWheels.length === 0 ? 0 : tyreForce / forceWheels.length;
-      const rotation = body.rotation();
-      const right = rightAxisOf(rotation);
+      const shares = wheelForceShares(forceWheels, isRear, intent.drive > 0 ? rearShare : null);
+      const wheelForce = config.wheel.positions.map((_position, wheelIndex) => tyreForce * (shares.get(wheelIndex) ?? 0));
+      const headings: { x: number; y: number; z: number }[] = [];
+      const axles: { x: number; y: number; z: number }[] = [];
       for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
-        controller.setWheelEngineForce(wheelIndex, 0);
-        if (perWheel === 0 || !forceWheels.includes(wheelIndex)) continue;
-        const contactPoint = controller.wheelContactPoint(wheelIndex);
-        const contactNormal = controller.wheelContactNormal(wheelIndex);
-        if (contactPoint === null || contactNormal === null) continue;
         const steer = config.steeredWheels.includes(wheelIndex) ? currentSteer : 0;
         const sine = Math.sin(steer);
         const cosine = Math.cos(steer);
-        const heading = {
-          x: sine * right.x + cosine * nose.x,
-          y: sine * right.y + cosine * nose.y,
-          z: sine * right.z + cosine * nose.z,
-        };
+        headings.push({ x: sine * right.x + cosine * nose.x, y: sine * right.y + cosine * nose.y, z: sine * right.z + cosine * nose.z });
+        axles.push({ x: cosine * right.x - sine * nose.x, y: cosine * right.y - sine * nose.y, z: cosine * right.z - sine * nose.z });
+      }
+      for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
+        controller.setWheelEngineForce(wheelIndex, 0);
+        const force = wheelForce[wheelIndex];
+        if (force === 0) continue;
+        const contactPoint = controller.wheelContactPoint(wheelIndex);
+        const contactNormal = controller.wheelContactNormal(wheelIndex);
+        if (contactPoint === null || contactNormal === null) continue;
+        const heading = headings[wheelIndex];
         const intoNormal = heading.x * contactNormal.x + heading.y * contactNormal.y + heading.z * contactNormal.z;
         const along = {
           x: heading.x - contactNormal.x * intoNormal,
@@ -250,13 +469,71 @@ export function createVehiclePhysics(
         };
         const length = Math.hypot(along.x, along.y, along.z);
         if (length < 1e-6) continue;
-        const impulse = (perWheel * dt) / length;
+        const impulse = (force * dt) / length;
         body.applyImpulseAtPoint({ x: along.x * impulse, y: along.y * impulse, z: along.z * impulse }, contactPoint, true);
       }
+
+      // Side grip per wheel, set every step: the ground, the slip angle, the spin and the drive on
+      // that tyre all change it.
+      const angularVelocity = body.angvel();
+      const centre = body.worldCom();
       for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
-        // Set every step so the ground under the car can change the grip; grip 1 keeps the base value.
-        controller.setWheelFrictionSlip(wheelIndex, config.wheel.frictionSlip * grip);
+        let angle = 0;
+        let lateralSlip = 0;
+        const contactPoint = inContact[wheelIndex] ? controller.wheelContactPoint(wheelIndex) : null;
+        if (contactPoint !== null) {
+          const arm = { x: contactPoint.x - centre.x, y: contactPoint.y - centre.y, z: contactPoint.z - centre.z };
+          const pointVelocity = {
+            x: velocity.x + angularVelocity.y * arm.z - angularVelocity.z * arm.y,
+            y: velocity.y + angularVelocity.z * arm.x - angularVelocity.x * arm.z,
+            z: velocity.z + angularVelocity.x * arm.y - angularVelocity.y * arm.x,
+          };
+          const axleDirection = axles[wheelIndex];
+          angle = slipAngle(pointVelocity, headings[wheelIndex], axleDirection);
+          lateralSlip = Math.abs(pointVelocity.x * axleDirection.x + pointVelocity.y * axleDirection.y + pointVelocity.z * axleDirection.z);
+        }
+        const load = controller.wheelSuspensionForce(wheelIndex) ?? 0;
+        const wheelSpin = drivenWheels.includes(wheelIndex) ? spin : 0;
+        const side = sideGrip({
+          configFrictionSlip: config.wheel.frictionSlip,
+          grip,
+          lateralFactor: ground.lateralFactor,
+          looseness: ground.looseness,
+          rear: isRear[wheelIndex],
+          tailLooseness: config.surface.tailLooseness,
+          slipAngle: angle,
+          lateralSlipSpeed: lateralSlip,
+          spin: wheelSpin,
+          usedFriction: load > 1 ? wheelForce[wheelIndex] / load : 0,
+          scrubLoss: config.steeredWheels.includes(wheelIndex) ? scrub * LOCKED_CENTRE_SCRUB.frontSideGripLoss : 0,
+        });
+        controller.setWheelFrictionSlip(wheelIndex, side.frictionSlip);
+        controller.setWheelSideFrictionStiffness(wheelIndex, side.stiffness);
+        telemetry[wheelIndex] = { sink: sink[wheelIndex], slipAngle: angle, spinSpeed: wheelSpin, lateralSlip };
       }
+
+      // Sinkage per wheel. A shorter wheel radius lowers the car for real, so a deep wheel puts the
+      // belly on the sand; a wheel in the air keeps its depth.
+      for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
+        if (!inContact[wheelIndex]) continue;
+        const next = sinkStep({
+          sink: sink[wheelIndex],
+          digDirection: digDirection[wheelIndex],
+          softness: ground.softness,
+          flotation: config.surface.flotation,
+          speed: alongNose,
+          moving,
+          spin: drivenWheels.includes(wheelIndex) ? spin : 0,
+          driveDirection: spinDirection,
+          radius,
+          dt,
+        });
+        sink[wheelIndex] = next.sink;
+        digDirection[wheelIndex] = next.digDirection;
+        telemetry[wheelIndex].sink = next.sink;
+        controller.setWheelRadius(wheelIndex, radius - next.sink);
+      }
+      bellyCollider.setFriction(ground.softness > 0 ? SURFACE_TYRE.bellyFriction : config.friction);
 
       if (airSpeed > 1e-3) {
         const dragImpulse = (aeroDrag * dt) / airSpeed;
@@ -278,7 +555,10 @@ export function createVehiclePhysics(
 
       // Ramp steering toward the target for an analog feel (not a snap). Negated so a positive
       // steer input turns left: measured steer-angle and yaw share a sign, so left needs +angle.
-      const target = -input.steer * steerLimitAt(config, wheelbase, Math.abs(alongNose));
+      let target = -input.steer * steerLimitAt(config, wheelbase, Math.abs(alongNose));
+      if (contacts >= 2) {
+        target = countersteer(target, bodySlipOf(velocity, nose, alongNose), Math.hypot(velocity.x, velocity.z), config.maxSteer);
+      }
       const maxStep = config.steerSpeed * dt;
       currentSteer += Math.max(-maxStep, Math.min(maxStep, target - currentSteer));
       for (const wheelIndex of config.steeredWheels) controller.setWheelSteering(wheelIndex, currentSteer);
@@ -303,6 +583,42 @@ export function createVehiclePhysics(
       body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       currentSteer = 0;
       drivetrainState = createDrivetrainState(spec);
+      resetSurface();
+    },
+    wheelSurface(): readonly WheelSurface[] {
+      return telemetry.map((wheel) => ({ ...wheel }));
+    },
+    wheelSurfaceSpeed(): number {
+      return forwardSpeed() + spinDirection * spin;
+    },
+    spin(): number {
+      return spin;
+    },
+    wheelLoadShare(): number {
+      return loadShare;
+    },
+    surfaceState(): SurfaceState {
+      return { spin, spinDirection, sink: [...sink], digDirection: [...digDirection] };
+    },
+    setSurfaceState(state: SurfaceState) {
+      if (state.sink.length !== wheelCount || state.digDirection.length !== wheelCount) {
+        throw new Error(`setSurfaceState: expected ${wheelCount} wheels, got sink ${state.sink.length}, digDirection ${state.digDirection.length}`);
+      }
+      spin = Math.min(SURFACE_TYRE.maxSpin, Math.max(0, state.spin));
+      spinDirection = state.spinDirection;
+      for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex++) {
+        sink[wheelIndex] = Math.min(maxSink, Math.max(0, state.sink[wheelIndex]));
+        digDirection[wheelIndex] = state.digDirection[wheelIndex];
+        telemetry[wheelIndex].sink = sink[wheelIndex];
+        controller.setWheelRadius(wheelIndex, radius - sink[wheelIndex]);
+      }
+    },
+    resetSurface,
+    driveState(): DriveState {
+      const drive: DriveModeState = driveMode !== null && requestedMode !== null
+        ? { kind: 'selectable', mode: driveMode, requested: requestedMode, blocked: driveModeBlock }
+        : { kind: 'fixed', layout: config.driveLayout.kind };
+      return { drive, tractionControl };
     },
   };
 }

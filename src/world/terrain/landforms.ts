@@ -73,7 +73,7 @@ interface BandShape {
 /** Height share (1 at the top, 0 at the foot) at `share` of the radius, for the band `band`. */
 function koppieProfile(share: number, band: BandShape, koppie: Koppie): number {
   const { top, tor, shoulder } = KOPPIE_PROFILE;
-  const bandWidth = (2 * band.drop * koppie.height) / (KOPPIE_PROFILE.band.toeSlope * koppie.radius);
+  const bandWidth = bandWidthShare(band, koppie);
   const shoulderDrop = shoulder.drop + KOPPIE_PROFILE.band.drop - band.drop;
   const torTop = tor.centre + band.wander - tor.width / 2;
   const torFoot = tor.centre + band.wander + tor.width / 2;
@@ -92,7 +92,7 @@ function koppieProfile(share: number, band: BandShape, koppie: Koppie): number {
   return 1 - drops;
 }
 
-function koppieShape(form: KoppieForm, x: number, z: number): { share: number; band: BandShape } {
+function koppieShape(form: KoppieForm, x: number, z: number): { share: number; band: BandShape; radius: number } {
   const { koppie } = form;
   const distance = Math.hypot(x - koppie.x, z - koppie.z);
   // The direction on the unit circle, without trigonometry; the centre itself takes any direction.
@@ -101,14 +101,20 @@ function koppieShape(form: KoppieForm, x: number, z: number): { share: number; b
   const inward = 0.5 + 0.5 * form.outlineNoise(cosine * KOPPIE_OUTLINE_LOBES, sine * KOPPIE_OUTLINE_LOBES);
   const radius = koppie.radius * (1 - KOPPIE_PROFILE.outline * inward);
   const share = distance / radius;
-  if (share >= 1) return { share, band: { wander: 0, drop: KOPPIE_PROFILE.band.drop } };
+  if (share >= 1) return { share, band: { wander: 0, drop: KOPPIE_PROFILE.band.drop }, radius };
   return {
     share,
+    radius,
     band: {
       wander: KOPPIE_PROFILE.wander * form.wanderNoise(cosine * KOPPIE_WANDER_LOBES, sine * KOPPIE_WANDER_LOBES),
       drop: KOPPIE_PROFILE.band.drop + KOPPIE_PROFILE.bandSwing * form.wanderNoise(sine * KOPPIE_WANDER_LOBES + BAND_SWING_OFFSET, cosine * KOPPIE_WANDER_LOBES),
     },
   };
+}
+
+/** Share of a koppie's radius the band takes, from its drop: the band's toe slope fixes its width. */
+function bandWidthShare(band: BandShape, koppie: Koppie): number {
+  return (2 * band.drop * koppie.height) / (KOPPIE_PROFILE.band.toeSlope * koppie.radius);
 }
 
 function koppieRise(form: KoppieForm, x: number, z: number): number {
@@ -323,6 +329,27 @@ export function koppieLumps(x: number, z: number): number {
   if (lumpHeight <= 0) return 0;
   const saddle = smoothstep(SADDLE_CLEAR.from, SADDLE_CLEAR.to, Math.hypot(x - KLIM_SPUR.to.x, z - KLIM_SPUR.to.z));
   return lumpHeight * saddle * ridged(x, z);
+}
+
+/** Where (x, z) lies across a koppie's rock band, in metres along the ground from the koppie's centre. */
+export interface KoppieBandSample {
+  /** Metres outward from the band's top edge (the crest): negative on the shoulder above it. */
+  fromCrest: number;
+  /** Metres from the band's crest to its foot. */
+  width: number;
+}
+
+/** The band of the koppie that stands at (x, z), or null off every koppie. */
+export function koppieBandAt(x: number, z: number): KoppieBandSample | null {
+  for (const landform of LUMP_INDEX.query(x, z)) {
+    if (landform.kind !== 'koppie') continue;
+    const { share, band, radius } = koppieShape(landform, x, z);
+    if (share >= 1) continue;
+    const width = bandWidthShare(band, landform.koppie);
+    const crest = KOPPIE_PROFILE.band.centre + band.wander - width / 2;
+    return { fromCrest: (share - crest) * radius, width: width * radius };
+  }
+  return null;
 }
 
 /** Height the dolerite ridge adds at (x, z) before anything is cut into it. */
