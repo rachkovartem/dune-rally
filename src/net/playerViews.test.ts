@@ -24,7 +24,7 @@ function fakeAssembly(carId: CarId): CarAssembly {
 }
 
 function netPlayer(carId: string, x = 0, y = 2, z = 0): NetPlayer {
-  return { name: 'remote', carId, x, y, z, qx: 0, qy: 0, qz: 0, qw: 1 };
+  return { name: 'remote', carId, x, y, z, qx: 0, qy: 0, qz: 0, qw: 1, spawnSlot: 0 };
 }
 
 /** Which car's model a view shows, read from the body mesh the registered asset put there. */
@@ -147,5 +147,59 @@ describe('PlayerViews.update — remote wheels stand on the ground', () => {
     views.update(100, null, 100);
     const spinner = views.group('p1')?.children[1].children[0];
     expect(spinner?.rotation.x).toBeCloseTo(2 / config.wheel.radius, 6);
+  });
+});
+
+describe('PlayerViews.update — a remote car far from the local collider ring (S0-5)', () => {
+  // The client builds colliders only near its own car: a remote car farther away has no collider
+  // under it, and its wheels must still stand on the drawn ground, not hang in the air.
+  const DRAWN_GROUND = 7.5;
+  let emptyWorld: RAPIER.World;
+
+  beforeEach(() => {
+    emptyWorld = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    emptyWorld.step();
+  });
+
+  it('stands every wheel on the drawn ground when the ray finds no collider', () => {
+    const config = vehicleConfigFor('forester');
+    const aboveGround = new PlayerViews(new THREE.Scene(), emptyWorld, () => DRAWN_GROUND);
+    const bodyHeight = DRAWN_GROUND + config.wheel.radius + restingSuspensionLength(config.wheel) - config.wheel.positions[0].y + 0.05;
+    aboveGround.add('far', 'forester');
+    aboveGround.pushState('far', netPlayer('forester', 900, bodyHeight, 900), 0);
+    aboveGround.update(0, null, 0);
+
+    const pivots = aboveGround.group('far')?.children.slice(1) ?? [];
+    expect(pivots).toHaveLength(4);
+    for (const pivot of pivots) {
+      expect(pivot.getWorldPosition(new THREE.Vector3()).y - config.wheel.radius).toBeCloseTo(DRAWN_GROUND, 3);
+    }
+  });
+
+  it('hangs the wheels at their resting length when the drawn ground is out of their reach', () => {
+    const config = vehicleConfigFor('forester');
+    const farBelow = new PlayerViews(new THREE.Scene(), emptyWorld, () => DRAWN_GROUND);
+    farBelow.add('jumping', 'forester');
+    farBelow.pushState('jumping', netPlayer('forester', 900, DRAWN_GROUND + 30, 900), 0);
+    farBelow.update(0, null, 0);
+
+    const pivots = farBelow.group('jumping')?.children.slice(1) ?? [];
+    pivots.forEach((pivot, wheelIndex) => {
+      expect(pivot.position.y).toBeCloseTo(config.wheel.positions[wheelIndex].y - restingSuspensionLength(config.wheel), 6);
+    });
+  });
+
+  it('pushes the wheels fully up, not below the ground, for a car sunk into the drawn ground', () => {
+    const config = vehicleConfigFor('forester');
+    const sunk = new PlayerViews(new THREE.Scene(), emptyWorld, () => DRAWN_GROUND);
+    sunk.add('sunk', 'forester');
+    sunk.pushState('sunk', netPlayer('forester', 900, DRAWN_GROUND - 1, 900), 0);
+    sunk.update(0, null, 0);
+
+    const pivots = sunk.group('sunk')?.children.slice(1) ?? [];
+    pivots.forEach((pivot, wheelIndex) => {
+      // No wheel hangs lower than its resting pose while the body is under the ground.
+      expect(pivot.position.y).toBeGreaterThan(config.wheel.positions[wheelIndex].y - restingSuspensionLength(config.wheel));
+    });
   });
 });

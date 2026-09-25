@@ -12,9 +12,11 @@ describe('carDefinitionFor (R75, R101)', () => {
   });
 
   it('loads a different model and shows a different name for each car', () => {
-    // A copy-paste slip here would put the Pajero body on the Forester's physics everywhere.
-    expect(carDefinitionFor('forester').modelUrl).not.toBe(carDefinitionFor('pajero').modelUrl);
-    expect(carDefinitionFor('forester').label).not.toBe(carDefinitionFor('pajero').label);
+    // A copy-paste slip here would put one car's body on another car's physics everywhere.
+    // Replacement (E1): three cars, not two.
+    const definitions = CAR_IDS.map(carDefinitionFor);
+    expect(new Set(definitions.map((definition) => definition.modelUrl)).size).toBe(CAR_IDS.length);
+    expect(new Set(definitions.map((definition) => definition.label)).size).toBe(CAR_IDS.length);
   });
 
   it('pairs each car with its own assembly rules', () => {
@@ -25,7 +27,12 @@ describe('carDefinitionFor (R75, R101)', () => {
     expect(carDefinitionFor('forester').rules.needsCylindricalUv('wheelFL')).toBe(false);
   });
 
-  it('gives the two cars their own measured sizes', () => {
-    expect(carDefinitionFor('forester').measured.wheelbase).not.toBe(carDefinitionFor('pajero').measured.wheelbase);
+  it('gives every car its own measured size', () => {
+    expect(new Set(CAR_IDS.map((carId) => carDefinitionFor(carId).measured.wheelbase)).size).toBe(CAR_IDS.length);
+  });
+
+  it('pairs the Elantra with its own rules: it has no brake discs, and its tyres take the generated tread (E1)', () => {
+    expect(() => carDefinitionFor('elantra').rules.slotFor('brakeRL')).toThrow();
+    expect(carDefinitionFor('elantra').rules.needsCylindricalUv('wheelFL')).toBe(true);
   });
 });

@@ -13,6 +13,7 @@ import {
   type VehiclePhysics,
 } from './vehiclePhysics';
 import { WORLD_GRAVITY } from './drivetrain';
+import { FULL_GRIP, rollingResistanceFor, type GroundGrip } from './terrainGrip';
 import type { InputMsg } from './protocol';
 import { CAR_IDS } from '../src/vehicle/cars';
 import { restingSuspensionLength, vehicleConfigFor, type VehicleConfig } from '../src/vehicle/vehicleConfig';
@@ -34,10 +35,11 @@ function carOnFlatGround(config: VehicleConfig): TestCar {
   return { world, vehicle: createVehiclePhysics(world, { x: 0, y: GROUND_TOP + 2, z: 0 }, config) };
 }
 
-function drive(car: TestCar, input: InputMsg, seconds: number, grip = 1): void {
+// Replacement (S2-3): the car takes the whole ground (grip and rolling resistance), not a grip number.
+function drive(car: TestCar, input: InputMsg, seconds: number, ground: GroundGrip = FULL_GRIP): void {
   const steps = Math.round(seconds * 60);
   for (let step = 0; step < steps; step++) {
-    car.vehicle.applyInput(input, grip);
+    car.vehicle.applyInput(input, ground);
     car.world.step();
     car.vehicle.update(car.world.timestep);
   }
@@ -97,8 +99,8 @@ describe('createVehiclePhysics — driving promises (R67, R68, R69)', () => {
   it.each(CAR_IDS)('reaches a lower speed on grip 0.5 than on grip 1 with the same throttle (%s)', (carId) => {
     const firm = settledCar(vehicleConfigFor(carId));
     const soft = settledCar(vehicleConfigFor(carId));
-    drive(firm, FULL_THROTTLE, 5, 1);
-    drive(soft, FULL_THROTTLE, 5, 0.5);
+    drive(firm, FULL_THROTTLE, 5, FULL_GRIP);
+    drive(soft, FULL_THROTTLE, 5, { grip: 0.5, rollingResistance: rollingResistanceFor(0.5) });
     expect(soft.vehicle.forwardSpeed()).toBeLessThan(firm.vehicle.forwardSpeed());
   });
 

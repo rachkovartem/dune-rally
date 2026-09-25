@@ -6,6 +6,7 @@ import {
   converterMultiplier,
   createDrivetrainState,
   driveForce,
+  drivenLoadShare,
   engineTorqueAt,
   longitudinalForce,
   pedalIntent,
@@ -16,6 +17,7 @@ import {
   type CvtSpec,
   type DrivetrainSpec,
   type DrivetrainState,
+  type DriveLayout,
   type EngineSpec,
   type LongitudinalInput,
   type PedalIntent,
@@ -366,6 +368,8 @@ describe('longitudinalForce — tyre force along the car', () => {
     grip: 1,
     rollingResistance: 0.015,
     normalForce: 15000,
+    // Replacement (E2): an AWD car drives through every wheel, so its driven load is the whole load.
+    drivenNormalForce: 15000,
     brakeForce: 20000,
     mass: 1500,
     dt: DT,
@@ -411,5 +415,87 @@ describe('longitudinalForce — tyre force along the car', () => {
 
   it('resists against the direction of travel when rolling backwards', () => {
     expect(longitudinalForce(CVT_SPEC, { ...base, forwardSpeed: -5, intent: { drive: 0, brake: 0, direction: -1 } })).toBeGreaterThan(0);
+  });
+});
+
+describe('longitudinalForce — a car that drives through one axle (E2)', () => {
+  const base: LongitudinalInput = {
+    driveForce: 0,
+    intent: COASTING,
+    forwardSpeed: 10,
+    grip: 1,
+    rollingResistance: 0.015,
+    normalForce: 15000,
+    drivenNormalForce: 15000,
+    brakeForce: 20000,
+    mass: 1500,
+    dt: DT,
+  };
+  const frontAxleLoad = 9000;
+
+  it('limits the push to what the driven wheels hold, not to the load on all four', () => {
+    // A front-driven car on sand must spin its front wheels long before an AWD car would.
+    const force = longitudinalForce(CVT_SPEC, { ...base, drivenNormalForce: frontAxleLoad, driveForce: 1e6, intent: FULL_FORWARD });
+    const rolling = base.rollingResistance * base.normalForce;
+    expect(force).toBeCloseTo(CVT_SPEC.tyrePeakFriction * frontAxleLoad - rolling, 6);
+  });
+
+  it('still brakes with the grip of all four wheels', () => {
+    const intent: PedalIntent = { drive: 0, brake: 1, direction: 1 };
+    const oneAxle = longitudinalForce(CVT_SPEC, { ...base, drivenNormalForce: frontAxleLoad, intent, forwardSpeed: 30, grip: 0.4 });
+    const allWheels = longitudinalForce(CVT_SPEC, { ...base, intent, forwardSpeed: 30, grip: 0.4 });
+    expect(oneAxle).toBeCloseTo(allWheels, 9);
+  });
+
+  it('pushes no harder than zero when the driven wheels carry no load', () => {
+    const force = longitudinalForce(CVT_SPEC, { ...base, drivenNormalForce: 0, forwardSpeed: 0, driveForce: 5000, intent: FULL_FORWARD });
+    expect(force).toBe(0);
+  });
+});
+
+describe('drivenLoadShare — share of the weight on the driven wheels (E2)', () => {
+  const AWD: DriveLayout = { kind: 'awd' };
+  const FWD: DriveLayout = { kind: 'fwd', frontLoadShare: 0.6, comHeight: 0.5 };
+  const WHEELBASE = 2.5;
+  /** The nose and roof axes' world y for a car pitched `degrees` nose up. */
+  const pitched = (degrees: number): [number, number] => {
+    const angle = (degrees * Math.PI) / 180;
+    return [Math.sin(angle), Math.cos(angle)];
+  };
+
+  it.each([
+    ['flat', 0, 1],
+    ['nose up 30°', Math.sin(Math.PI / 6), Math.cos(Math.PI / 6)],
+    ['nose down 30°', -Math.sin(Math.PI / 6), Math.cos(Math.PI / 6)],
+    ['on its roof', 0, -1],
+  ])('gives an AWD car the whole load (%s)', (_name, noseRise, upright) => {
+    expect(drivenLoadShare(AWD, WHEELBASE, noseRise, upright)).toBe(1);
+  });
+
+  it('gives a front-driven car its front axle share on flat ground', () => {
+    expect(drivenLoadShare(FWD, WHEELBASE, 0, 1)).toBeCloseTo(FWD.frontLoadShare, 12);
+  });
+
+  it('moves weight off the front axle nose up by comHeight / wheelbase × tan θ', () => {
+    const [noseRise, upright] = pitched(15);
+    const expected = FWD.frontLoadShare - (FWD.comHeight / WHEELBASE) * Math.tan((15 * Math.PI) / 180);
+    expect(drivenLoadShare(FWD, WHEELBASE, noseRise, upright)).toBeCloseTo(expected, 9);
+  });
+
+  it('puts more weight on the front axle nose down than on flat ground', () => {
+    const [noseRise, upright] = pitched(-15);
+    expect(drivenLoadShare(FWD, WHEELBASE, noseRise, upright)).toBeGreaterThan(FWD.frontLoadShare);
+  });
+
+  it('clamps to 0 on a very steep climb and to 1 on a very steep descent', () => {
+    expect(drivenLoadShare(FWD, WHEELBASE, ...pitched(85))).toBe(0);
+    expect(drivenLoadShare(FWD, WHEELBASE, ...pitched(-85))).toBe(1);
+  });
+
+  it.each([
+    ['on its side (upright 0)', 0],
+    ['on its roof (upright negative)', -0.5],
+  ])('gives a front-driven car no driven load %s', (_name, upright) => {
+    expect(drivenLoadShare(FWD, WHEELBASE, 0, upright)).toBe(0);
   });
 });

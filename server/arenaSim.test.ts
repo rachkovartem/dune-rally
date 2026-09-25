@@ -1,10 +1,15 @@
 // server/arenaSim.test.ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ArenaSim, type PlayerTransform } from './arenaSim';
-import { RESET_LIFT, upAxisOf } from '../shared/vehiclePhysics';
-import type { InputMsg } from '../shared/protocol';
+import { ArenaSim, lowestFreeSlot, POSE_SNAP_ANGLE, POSE_SNAP_DISTANCE, type PlayerTransform } from './arenaSim';
+import { forwardAxisOf, RESET_LIFT, upAxisOf } from '../shared/vehiclePhysics';
+import type { InputMsg, PoseMsg } from '../shared/protocol';
+import { SPAWN_SLOT_COUNT, spawnPoseFor } from '../src/world/worldDef';
+import { borderFaceDepth } from '../src/world/terrain/border';
+import { createHeightField } from '../src/world/noise';
+import { terrainSurfaceHeight } from '../src/world/chunkGeometry';
 
 const IDLE: InputMsg = { throttle: 0, brake: 0, steer: 0 };
+const HEIGHT = createHeightField(123);
 
 function stepFor(sim: ArenaSim, id: string, input: InputMsg, steps: number): void {
   for (let step = 0; step < steps; step++) {
@@ -26,10 +31,15 @@ describe('ArenaSim', () => {
   });
 
   it('spawns a player that rests on terrain and drives under throttle', () => {
-    sim.addPlayer('driver', 'forester');
+    sim.addPlayer('driver', 'forester', 0);
     stepFor(sim, 'driver', IDLE, 120);
     const rest = transformOf(sim, 'driver');
-    expect(Number.isFinite(rest.y)).toBe(true);
+    // Replacement (S0-2): the spawn ground is built in create(), so the car stands on it, not in a fall.
+    const ground = terrainSurfaceHeight(HEIGHT, rest.x, rest.z);
+    expect(rest.y - ground).toBeGreaterThan(0);
+    expect(rest.y - ground).toBeLessThan(2);
+    stepFor(sim, 'driver', IDLE, 30);
+    expect(Math.abs(transformOf(sim, 'driver').y - rest.y)).toBeLessThan(0.01);
 
     stepFor(sim, 'driver', { throttle: 1, brake: 0, steer: 0 }, 180);
     const moved = transformOf(sim, 'driver');
@@ -37,8 +47,8 @@ describe('ArenaSim', () => {
   });
 
   it('tracks and drops players', () => {
-    sim.addPlayer('a', 'forester');
-    sim.addPlayer('b', 'pajero');
+    sim.addPlayer('a', 'forester', 0);
+    sim.addPlayer('b', 'pajero', 1);
     expect(sim.playerIds()).toEqual(expect.arrayContaining(['a', 'b']));
     sim.removePlayer('a');
     expect(sim.playerIds()).not.toContain('a');
@@ -48,14 +58,14 @@ describe('ArenaSim', () => {
   });
 
   it('remembers the car each player joined with (R125)', () => {
-    sim.addPlayer('forester-player', 'forester');
-    sim.addPlayer('pajero-player', 'pajero');
+    sim.addPlayer('forester-player', 'forester', 0);
+    sim.addPlayer('pajero-player', 'pajero', 1);
     expect(sim.carIdOf('forester-player')).toBe('forester');
     expect(sim.carIdOf('pajero-player')).toBe('pajero');
   });
 
   it('swaps a player\'s car in place: same pose, new car id (R126)', () => {
-    sim.addPlayer('swapper', 'forester');
+    sim.addPlayer('swapper', 'forester', 0);
     stepFor(sim, 'swapper', IDLE, 90);
     const before = transformOf(sim, 'swapper');
 
@@ -68,7 +78,7 @@ describe('ArenaSim', () => {
   });
 
   it('keeps the swapped car driveable, and keeps no second copy of the player (R126, R127)', () => {
-    sim.addPlayer('swap-and-drive', 'pajero');
+    sim.addPlayer('swap-and-drive', 'pajero', 0);
     stepFor(sim, 'swap-and-drive', IDLE, 60);
     sim.setPlayerCar('swap-and-drive', 'forester');
     stepFor(sim, 'swap-and-drive', IDLE, 60);
@@ -84,7 +94,7 @@ describe('ArenaSim', () => {
   });
 
   it('leaves the pose untouched when the player picks the car they already drive', () => {
-    sim.addPlayer('same-car', 'pajero');
+    sim.addPlayer('same-car', 'pajero', 0);
     stepFor(sim, 'same-car', IDLE, 30);
     const before = transformOf(sim, 'same-car');
     sim.setPlayerCar('same-car', 'pajero');
@@ -100,7 +110,7 @@ describe('ArenaSim', () => {
   });
 
   it('resets a player the same way the client R does: lifted, upright, standing still', () => {
-    sim.addPlayer('resetter', 'forester');
+    sim.addPlayer('resetter', 'forester', 0);
     stepFor(sim, 'resetter', IDLE, 60);
     stepFor(sim, 'resetter', { throttle: 1, brake: 0, steer: 1 }, 90);
     const before = transformOf(sim, 'resetter');
@@ -113,5 +123,164 @@ describe('ArenaSim', () => {
     stepFor(sim, 'resetter', IDLE, 1);
     const oneStepLater = transformOf(sim, 'resetter');
     expect(Math.hypot(oneStepLater.x - after.x, oneStepLater.z - after.z)).toBeLessThan(0.01);
+  });
+});
+
+function poseFrom(transform: PlayerTransform, change: Partial<PoseMsg> = {}): PoseMsg {
+  return { x: transform.x, y: transform.y, z: transform.z, qx: transform.qx, qy: transform.qy, qz: transform.qz, qw: transform.qw, vx: 0, vy: 0, vz: 0, ...change };
+}
+
+/** The upright rotation of a car that faces `degrees` away from its current yaw. */
+function turnedBy(transform: PlayerTransform, degrees: number): Pick<PoseMsg, 'qx' | 'qy' | 'qz' | 'qw'> {
+  const half = (degrees * Math.PI) / 360;
+  const turn = { x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) };
+  const { qx, qy, qz, qw } = transform;
+  return {
+    qx: turn.w * qx + turn.x * qw + turn.y * qz - turn.z * qy,
+    qy: turn.w * qy - turn.x * qz + turn.y * qw + turn.z * qx,
+    qz: turn.w * qz + turn.x * qy - turn.y * qx + turn.z * qw,
+    qw: turn.w * qw - turn.x * qx - turn.y * qy - turn.z * qz,
+  };
+}
+
+describe('lowestFreeSlot (S1-2)', () => {
+  it('gives slot 0 to the first player', () => {
+    expect(lowestFreeSlot(new Set(), SPAWN_SLOT_COUNT)).toBe(0);
+  });
+
+  it('fills the lowest gap left by a player who went away', () => {
+    expect(lowestFreeSlot(new Set([0, 1, 3]), SPAWN_SLOT_COUNT)).toBe(2);
+  });
+
+  it('still gives a slot in range when every slot is taken', () => {
+    const everySlot = new Set(Array.from({ length: SPAWN_SLOT_COUNT }, (_unused, slot) => slot));
+    const slot = lowestFreeSlot(everySlot, SPAWN_SLOT_COUNT);
+    expect(slot).toBeGreaterThanOrEqual(0);
+    expect(slot).toBeLessThan(SPAWN_SLOT_COUNT);
+  });
+
+  it('throws for a room with no slots', () => {
+    expect(() => lowestFreeSlot(new Set(), 0)).toThrow('bad slot count');
+  });
+});
+
+describe('ArenaSim — spawn slots, streaming and the border net (S0-2, S1-2)', () => {
+  let sim: ArenaSim;
+  beforeEach(async () => {
+    sim = await ArenaSim.create(123);
+  });
+
+  it('starts two players in different slots, both facing north', () => {
+    const first = sim.nextFreeSpawnSlot();
+    sim.addPlayer('first', 'forester', first);
+    const second = sim.nextFreeSpawnSlot();
+    sim.addPlayer('second', 'pajero', second);
+
+    expect(second).not.toBe(first);
+    const a = transformOf(sim, 'first');
+    const b = transformOf(sim, 'second');
+    expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeGreaterThan(4);
+    for (const transform of [a, b]) {
+      expect(forwardAxisOf({ x: transform.qx, y: transform.qy, z: transform.qz, w: transform.qw }).z).toBeLessThan(-0.99);
+    }
+    expect(a.x).toBeCloseTo(spawnPoseFor(first).x, 3);
+    expect(a.z).toBeCloseTo(spawnPoseFor(first).z, 3);
+  });
+
+  it('gives a freed slot to the next player who joins', () => {
+    sim.addPlayer('a', 'forester', sim.nextFreeSpawnSlot());
+    sim.addPlayer('b', 'forester', sim.nextFreeSpawnSlot());
+    const slotOfA = sim.spawnSlotOf('a');
+    sim.removePlayer('a');
+    expect(sim.nextFreeSpawnSlot()).toBe(slotOfA);
+  });
+
+  it('builds the ground around the spawn before anyone joins', () => {
+    expect(sim.builtChunkCount()).toBeGreaterThanOrEqual(9);
+  });
+
+  it('keeps a car on solid ground after it is moved 1 km away from the built area', () => {
+    sim.addPlayer('traveller', 'forester', 0);
+    const builtBefore = sim.builtChunkCount();
+    const start = spawnPoseFor(0);
+    sim.teleportPlayer('traveller', start.x, start.z - 1000, 1, { vx: 0, vz: 0 });
+
+    stepFor(sim, 'traveller', IDLE, 120);
+
+    const after = transformOf(sim, 'traveller');
+    expect(sim.builtChunkCount()).toBeGreaterThan(builtBefore);
+    expect(after.y).toBeGreaterThan(terrainSurfaceHeight(HEIGHT, after.x, after.z) - 0.5);
+  });
+
+  it('puts a car that got above the border crest back in the valley within one step', () => {
+    sim.addPlayer('climber', 'forester', 0);
+    // 20 m inside the north edge: far past the face foot, higher than the crest.
+    sim.teleportPlayer('climber', 1500, 20, 5, { vx: 0, vz: 0 });
+    expect(borderFaceDepth(1500, 20)).toBeGreaterThan(40);
+
+    sim.step();
+
+    const after = transformOf(sim, 'climber');
+    expect(borderFaceDepth(after.x, after.z)).toBeLessThan(0);
+    expect(upAxisOf({ x: after.qx, y: after.qy, z: after.qz, w: after.qw }).y).toBeGreaterThan(0.99);
+  });
+
+  it('leaves a car alone that drives on the open plain', () => {
+    sim.addPlayer('plain', 'forester', 0);
+    stepFor(sim, 'plain', IDLE, 30);
+    const before = transformOf(sim, 'plain');
+    sim.step();
+    const after = transformOf(sim, 'plain');
+    expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeLessThan(0.05);
+  });
+});
+
+describe('ArenaSim.applyClientPose — the driver corrects the server copy (S1-X)', () => {
+  let sim: ArenaSim;
+  let rest: PlayerTransform;
+  beforeEach(async () => {
+    sim = await ArenaSim.create(123);
+    sim.addPlayer('driver', 'forester', 0);
+    stepFor(sim, 'driver', IDLE, 60);
+    rest = transformOf(sim, 'driver');
+  });
+
+  it('keeps its own physics when the client is just under the distance limit', () => {
+    const moved = sim.applyClientPose('driver', poseFrom(rest, { x: rest.x + POSE_SNAP_DISTANCE - 0.01 }));
+    expect(moved).toBe(false);
+    expect(transformOf(sim, 'driver')).toEqual(rest);
+  });
+
+  it('moves to the client pose when it is just over the distance limit', () => {
+    const target = poseFrom(rest, { x: rest.x + POSE_SNAP_DISTANCE + 0.01 });
+    expect(sim.applyClientPose('driver', target)).toBe(true);
+    expect(transformOf(sim, 'driver').x).toBeCloseTo(target.x, 3);
+  });
+
+  it('snaps a copy that is 3 m off and leaves one that is 1 m off', () => {
+    expect(sim.applyClientPose('driver', poseFrom(rest, { z: rest.z + 1 }))).toBe(false);
+    expect(transformOf(sim, 'driver').z).toBeCloseTo(rest.z, 6);
+    expect(sim.applyClientPose('driver', poseFrom(rest, { z: rest.z + 3 }))).toBe(true);
+    expect(transformOf(sim, 'driver').z).toBeCloseTo(rest.z + 3, 3);
+  });
+
+  it('keeps its heading when the client is turned just under the angle limit', () => {
+    const limitDegrees = (POSE_SNAP_ANGLE * 180) / Math.PI;
+    expect(sim.applyClientPose('driver', poseFrom(rest, turnedBy(rest, limitDegrees - 1)))).toBe(false);
+    expect(transformOf(sim, 'driver')).toEqual(rest);
+  });
+
+  it('takes the client heading when it is turned just over the angle limit', () => {
+    const limitDegrees = (POSE_SNAP_ANGLE * 180) / Math.PI;
+    const target = poseFrom(rest, turnedBy(rest, limitDegrees + 1));
+    expect(sim.applyClientPose('driver', target)).toBe(true);
+    const after = transformOf(sim, 'driver');
+    const dot = Math.abs(after.qx * target.qx + after.qy * target.qy + after.qz * target.qz + after.qw * target.qw);
+    expect(dot).toBeCloseTo(1, 5);
+  });
+
+  it('ignores a pose for a player that is not in the arena', () => {
+    expect(sim.applyClientPose('ghost', poseFrom(rest, { x: rest.x + 50 }))).toBe(false);
+    expect(transformOf(sim, 'driver')).toEqual(rest);
   });
 });

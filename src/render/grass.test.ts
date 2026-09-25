@@ -44,8 +44,9 @@ function tuftsAround(cameras: [number, number][], tier: QualityTier = TIER): { s
   return { scene, tufts };
 }
 
-// Spots that cover the town, the lake, a road and the border, with open desert in between.
-const CAMERAS: [number, number][] = [[W.TOWN.x, W.TOWN.z], [W.LAKE.x, W.LAKE.z], [60, 300], [W.SPAWN.x, W.SPAWN.z]];
+// Spots that cover the spawn top, the north border face and the open plain.
+// Replacement (S1): the town, lake and old border spots were removed with the old map.
+const CAMERAS: [number, number][] = [[W.SPAWN.x, W.SPAWN.z], [1500, 170], [1000, 1500]];
 let tufts: THREE.Vector3[];
 
 beforeAll(() => {
@@ -63,16 +64,12 @@ describe('Grass — where tufts may grow', () => {
     }
   });
 
-  it('keeps the town plaza clear', () => {
-    for (const tuft of tufts) expect(W.townDist(tuft.x, tuft.z)).toBeGreaterThanOrEqual(W.TOWN.plaza);
+  it('keeps the spawn top clear', () => {
+    for (const tuft of tufts) expect(W.isPropExcluded(tuft.x, tuft.z)).toBe(false);
   });
 
-  it('keeps the lake and its wet shore clear', () => {
-    for (const tuft of tufts) expect(W.lakeDist(tuft.x, tuft.z)).toBeGreaterThanOrEqual(W.LAKE.radius + W.LAKE.feather);
-  });
-
-  it('grows nothing on the border slope outside the playable area', () => {
-    for (const tuft of tufts) expect(W.borderDepth(tuft.x, tuft.z)).toBe(0);
+  it('grows nothing past the foot of the border face', () => {
+    for (const tuft of tufts) expect(W.borderFaceDepth(tuft.x, tuft.z)).toBeLessThanOrEqual(0);
   });
 
   it('plants every tuft on the drawn ground, not floating or buried', () => {

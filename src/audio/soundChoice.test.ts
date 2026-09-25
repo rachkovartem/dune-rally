@@ -24,7 +24,8 @@ function testManifest() {
     })),
     { id: `${carId}-spare`, layer: 'mid', file: 'y.wav', rpm: 2222, sourceId: 2, sourceStart: 0, sourceEnd: 1, licence: 'CC0', note: 'spare' },
   ];
-  return parseSoundManifest({ sets: { forester: setFor('forester'), pajero: setFor('pajero') } });
+  // Replacement (E3): every car in CAR_IDS needs its own set, the Elantra included.
+  return parseSoundManifest({ sets: Object.fromEntries(CAR_IDS.map((carId) => [carId, setFor(carId)])) });
 }
 const manifest = testManifest();
 

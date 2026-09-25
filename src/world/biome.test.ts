@@ -1,70 +1,93 @@
 // src/world/biome.test.ts
+// Cover v1 of Klipfontein (plan v3 S1-1). Retired with the old map: the road, town and lake-shore
+// rows (no road, town or lake exists until steps S2 and S4).
 import { describe, it, expect } from 'vitest';
-import { createBiome } from './biome';
-import { ROAD_HALF, ROAD_SHOULDER, BORDER_HEIGHT, TOWN, LAKE, nearestRoad, townDist } from './worldDef';
+import { COVER_IDS, coverFromIndex, coverIndex, createBiome, type Cover } from './biome';
+import { borderAt } from './terrain/border';
+import { isOpenPlain } from './testing/openPlain';
+import { DOLERITE_RIDGE, GROOT_KOPPIE, SPAWN_RISE } from './mapLayout';
+import { mulberry32 } from './rng';
 
-describe('createBiome(seed).coverAt — existing precedence (baseline, R9)', () => {
-  const biome = createBiome(1);
+const biome = createBiome(1);
+const FLAT = 0;
 
-  it('classifies a road point as road even when height/slope alone would read as rock', () => {
-    // Regression guard: the mud-ring rule the lake carve is about to add sits AFTER the road
-    // check in the plan. If road precedence ever slipped below it, cars on the paved road near
-    // the lake would suddenly be classified onto the wrong surface.
-    const road = nearestRoad(TOWN.x, TOWN.z);
-    expect(road).not.toBeNull();
-    expect(road!.dist).toBeLessThan(ROAD_HALF);
+/** The first point straight in from the north edge at `x` that lies on the gravel apron. */
+function apronPoint(x: number): { x: number; z: number } {
+  for (let z = 151; z < 300; z++) if (borderAt(x, z).inApron) return { x, z };
+  throw new Error(`no apron at x ${x}`);
+}
 
-    // Both of these values would classify as 'rock' on their own (cliff height, steep slope) —
-    // road precedence must still win over them.
-    const heightThatWouldBeCliff = BORDER_HEIGHT;
-    const slopeThatWouldBeRock = 0.9;
-    expect(biome.coverAt(TOWN.x, TOWN.z, heightThatWouldBeCliff, slopeThatWouldBeRock)).toBe('road');
+
+describe('coverIndex / coverFromIndex — a cover as a small number for the worker buffer (R3a)', () => {
+  it('round-trips every cover', () => {
+    for (const cover of COVER_IDS) expect(coverFromIndex(coverIndex(cover))).toBe(cover);
   });
 
-  it('classifies a steep point away from any road or the town plaza as rock', () => {
-    // Regression guard: a steep-slope point must still read as un-drivable rock, not as the
-    // "high ground" gravel the height-based rule below it would otherwise give — a car reading
-    // a cliff face as gravel would drive somewhere it cannot actually climb.
-    const x = 60;
-    const z = 460;
-    const road = nearestRoad(x, z);
-    expect(road!.dist).toBeGreaterThan(ROAD_HALF + ROAD_SHOULDER);
-    expect(townDist(x, z)).toBeGreaterThan(TOWN.plaza);
+  it('gives every cover its own index that fits a byte', () => {
+    const indices = COVER_IDS.map(coverIndex);
+    expect(new Set(indices).size).toBe(COVER_IDS.length);
+    for (const index of indices) {
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(index).toBeLessThan(256);
+    }
+  });
 
-    const heightThatWouldBeGravel = 20; // > 12, the "high ground" gravel threshold on its own
-    const slopeThatIsSteep = 0.7; // > 0.55, the rock threshold
-    expect(biome.coverAt(x, z, heightThatWouldBeGravel, slopeThatIsSteep)).toBe('rock');
+  it.each([-1, COVER_IDS.length, 1.5, Number.NaN])('throws for index %s instead of guessing a cover', (index) => {
+    expect(() => coverFromIndex(index)).toThrow('no cover has index');
   });
 });
 
-describe('createBiome(seed).coverAt — the lake shore (baseline, R10–R13)', () => {
-  const biome = createBiome(1);
-  const flat = 0;
-  /** A point `distance` metres south of the lake centre, on open ground away from roads and the town. */
-  const southOfLake = (distance: number): [number, number] => {
-    const [x, z] = [LAKE.x, LAKE.z + distance];
-    expect(nearestRoad(x, z)?.dist).toBeGreaterThan(ROAD_HALF + ROAD_SHOULDER);
-    expect(townDist(x, z)).toBeGreaterThan(TOWN.plaza);
-    return [x, z];
-  };
-
-  it('paints the submerged bed inside the lake as mud', () => {
-    expect(biome.coverAt(...southOfLake(18), LAKE.waterLevel + 0.1, flat)).toBe('mud');
+describe('createBiome(seed).coverAt — cover v1 (S1-1)', () => {
+  it('paints the border face rock even where the given slope is flat', () => {
+    expect(biome.coverAt(1500, 60, 50, FLAT)).toBe('rock');
+    expect(biome.coverAt(3072 - 60, 1500, 50, FLAT)).toBe('rock');
   });
 
-  it('paints a wet band just above the waterline as mud, and dry ground above it as not mud', () => {
-    const shoreTop = LAKE.waterLevel + 0.9;
-    expect(biome.coverAt(...southOfLake(25), shoreTop - 0.1, flat)).toBe('mud');
-    expect(biome.coverAt(...southOfLake(25), shoreTop + 0.1, flat)).not.toBe('mud');
+  it('paints the apron before the face gravel, and rock where it is steep', () => {
+    const apron = apronPoint(1500);
+    expect(biome.coverAt(apron.x, apron.z, 10, FLAT)).toBe('gravel');
+    expect(biome.coverAt(apron.x, apron.z, 10, 0.6)).toBe('rock');
   });
 
-  it('never paints low ground outside the lake footprint as its shore', () => {
-    expect(biome.coverAt(...southOfLake(LAKE.radius + LAKE.feather + 1), LAKE.waterLevel + 0.7, flat)).not.toBe('mud');
+  it('paints the spawn top gravel', () => {
+    expect(biome.coverAt(SPAWN_RISE.x, SPAWN_RISE.z, 12, FLAT)).toBe('gravel');
+    expect(biome.coverAt(SPAWN_RISE.x + SPAWN_RISE.top, SPAWN_RISE.z, 12, FLAT)).toBe('gravel');
   });
 
-  it('keeps a road a road even when it dips as low as the lake shore', () => {
-    const road = nearestRoad(LAKE.x + 56, LAKE.z);
-    expect(road?.dist).toBeLessThan(ROAD_HALF);
-    expect(biome.coverAt(LAKE.x + 56, LAKE.z, LAKE.waterLevel + 0.1, flat)).toBe('road');
+  it('paints the dolerite ridge rock', () => {
+    const middle = DOLERITE_RIDGE.line[1];
+    expect(biome.coverAt(middle.x, middle.z, 40, FLAT)).toBe('rock');
+  });
+
+  it('paints the upper koppie gravel where it is gentle and rock where it is steep', () => {
+    const upper = { x: GROOT_KOPPIE.x + GROOT_KOPPIE.radius * 0.3, z: GROOT_KOPPIE.z };
+    expect(biome.coverAt(upper.x, upper.z, 60, 0.1)).toBe('gravel');
+    expect(biome.coverAt(upper.x, upper.z, 60, 0.4)).toBe('rock');
+  });
+
+  it('paints a plain slope steeper than 0.55 rock and one between 0.3 and 0.55 gravel', () => {
+    const plain = { x: 1000, z: 1500 };
+    expect(isOpenPlain(plain.x, plain.z)).toBe(true);
+    expect(biome.coverAt(plain.x, plain.z, 10, 0.56)).toBe('rock');
+    expect(biome.coverAt(plain.x, plain.z, 10, 0.4)).toBe('gravel');
+  });
+
+  it('covers the flat open plain with patches of sand, dry grass and dirt, and nothing else', () => {
+    const random = mulberry32(0xc0e);
+    const seen = new Set<Cover>();
+    let checked = 0;
+    while (checked < 2000) {
+      const x = random() * 3072;
+      const z = random() * 3072;
+      if (!isOpenPlain(x, z)) continue;
+      checked++;
+      seen.add(biome.coverAt(x, z, 10, FLAT));
+    }
+    expect([...seen].sort()).toEqual(['dirt', 'dryGrass', 'sand']);
+  });
+
+  it('gives the same cover for the same seed and point', () => {
+    const again = createBiome(1);
+    for (const [x, z] of [[1000, 1500], [2000, 800], [700, 2500]]) expect(again.coverAt(x, z, 10, FLAT)).toBe(biome.coverAt(x, z, 10, FLAT));
   });
 });

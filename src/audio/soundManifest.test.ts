@@ -12,7 +12,8 @@ function entry(id: string, layer: LayerName, rpm = 1000): Record<string, unknown
 const fullSet = (prefix: string): Record<string, unknown>[] => LAYER_NAMES.map((layer, index) => entry(`${prefix}-${layer}`, layer, 800 + index * 1000));
 
 function manifestJson(overrides: Partial<Record<CarId, unknown>> = {}): { sets: Record<string, unknown> } {
-  return { sets: { forester: fullSet('f'), pajero: fullSet('p'), ...overrides } };
+  // Replacement (E3): the Elantra has its own set too.
+  return { sets: { forester: fullSet('f'), pajero: fullSet('p'), elantra: fullSet('e'), ...overrides } };
 }
 
 describe('parseSoundManifest', () => {
@@ -25,6 +26,7 @@ describe('parseSoundManifest', () => {
   it.each<[string, unknown, string]>([
     ['no "sets" object', {}, 'expected an object with "sets"'],
     ['a car with no loops', manifestJson({ pajero: [] }), 'sets.pajero must be a non-empty array'],
+    ['a manifest from before the Elantra', { sets: { forester: fullSet('f'), pajero: fullSet('p') } }, 'sets.elantra must be a non-empty array'],
     ['a car missing a layer', manifestJson({ forester: fullSet('f').slice(0, 3) }), 'sets.forester has no "high" loop'],
     ['a loop with a zero rpm', manifestJson({ forester: [...fullSet('f'), entry('f-zero', 'low', 0)] }), 'sets.forester[4].rpm must be positive'],
     ['a loop with an unknown layer', manifestJson({ forester: [...fullSet('f'), entry('f-odd', 'low')].map((item, index) => (index === 4 ? { ...item, layer: 'turbo' } : item)) }), 'sets.forester[4].layer must be one of'],

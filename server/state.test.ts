@@ -51,4 +51,19 @@ describe('schema', () => {
 
     expect(clientCopy.players.get('p1')?.carId).toBe('pajero');
   });
+
+  it('replicates each player\'s spawn slot, and -1 before the server gave one (S1-2)', () => {
+    // The client builds its own car at spawnPoseFor(spawnSlot); a slot lost on the wire would put
+    // every second tab on top of the first car.
+    const state = new ArenaState();
+    const seated = new PlayerState();
+    seated.spawnSlot = 7;
+    state.players.set('seated', seated);
+    state.players.set('waiting', new PlayerState());
+
+    const clientCopy = replicated(state);
+
+    expect(clientCopy.players.get('seated')?.spawnSlot).toBe(7);
+    expect(clientCopy.players.get('waiting')?.spawnSlot).toBe(-1);
+  });
 });
