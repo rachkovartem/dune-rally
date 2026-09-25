@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT = fileURLToPath(new URL('../deploy/remote-deploy.sh', import.meta.url));
+const EARLIER_TAG = 'v0.9.0';
 const OLD_TAG = 'v1.0.0';
 const NEW_TAG = 'v1.1.0';
 const OLD_COMPOSE = 'release: old\n';
@@ -52,8 +53,8 @@ afterEach(() => {
   for (const home of servers.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-/** A server home with the given files in ~/dune-rally; a file set to null is not there. */
-function serverWith(files: { env: string | null; compose: string | null; newCompose: string | null }): Server {
+/** A server home with the given files in ~/dune-rally; a file set to null or left out is not there. */
+function serverWith(files: { env: string | null; compose: string | null; newCompose: string | null; previousTag?: string }): Server {
   const home = mkdtempSync(join(tmpdir(), 'dune-rally-deploy-'));
   servers.push(home);
   const deployDir = join(home, 'dune-rally');
@@ -65,6 +66,7 @@ function serverWith(files: { env: string | null; compose: string | null; newComp
   if (files.env !== null) writeFileSync(join(deployDir, '.env'), files.env);
   if (files.compose !== null) writeFileSync(join(deployDir, 'docker-compose.prod.yml'), files.compose);
   if (files.newCompose !== null) writeFileSync(join(deployDir, 'docker-compose.prod.yml.new'), files.newCompose);
+  if (files.previousTag !== undefined) writeFileSync(join(deployDir, '.previous-image-tag'), `${files.previousTag}\n`);
   return { home, deployDir };
 }
 
@@ -95,6 +97,8 @@ function stateOf(server: Server) {
     envTag: readOrNull(join(server.deployDir, '.env'))?.trim() ?? null,
     compose: readOrNull(join(server.deployDir, 'docker-compose.prod.yml')),
     newCompose: readOrNull(join(server.deployDir, 'docker-compose.prod.yml.new')),
+    // The tag a manual rollback goes back to.
+    previousTag: readOrNull(join(server.deployDir, '.previous-image-tag'))?.trim() ?? null,
   };
 }
 
@@ -102,19 +106,29 @@ describe('remote-deploy.sh — the release compose file and the rollback', () =>
   it('stops before anything changes when the release compose file was not uploaded', () => {
     const server = serverWith({ env: `IMAGE_TAG=${OLD_TAG}\n`, compose: OLD_COMPOSE, newCompose: null });
     expect(deploy(server)).toBe(1);
-    expect(stateOf(server)).toEqual({ runningTag: null, runningCompose: null, envTag: `IMAGE_TAG=${OLD_TAG}`, compose: OLD_COMPOSE, newCompose: null });
+    expect(stateOf(server)).toEqual({ runningTag: null, runningCompose: null, envTag: `IMAGE_TAG=${OLD_TAG}`, compose: OLD_COMPOSE, newCompose: null, previousTag: null });
   });
 
   it('starts a healthy release with its own compose file, which then replaces the old one', () => {
     const server = serverWith({ env: `IMAGE_TAG=${OLD_TAG}\n`, compose: OLD_COMPOSE, newCompose: NEW_COMPOSE });
     expect(deploy(server)).toBe(0);
-    expect(stateOf(server)).toEqual({ runningTag: NEW_TAG, runningCompose: NEW_COMPOSE, envTag: `IMAGE_TAG=${NEW_TAG}`, compose: NEW_COMPOSE, newCompose: null });
+    expect(stateOf(server)).toEqual({
+      runningTag: NEW_TAG, runningCompose: NEW_COMPOSE, envTag: `IMAGE_TAG=${NEW_TAG}`, compose: NEW_COMPOSE, newCompose: null, previousTag: OLD_TAG,
+    });
   });
 
   it('rolls an unhealthy release back to the previous tag with the previous compose file, and keeps the new file', () => {
     const server = serverWith({ env: `IMAGE_TAG=${OLD_TAG}\n`, compose: OLD_COMPOSE, newCompose: NEW_COMPOSE });
     expect(deploy(server, NEW_TAG)).toBe(1);
-    expect(stateOf(server)).toEqual({ runningTag: OLD_TAG, runningCompose: OLD_COMPOSE, envTag: `IMAGE_TAG=${OLD_TAG}`, compose: OLD_COMPOSE, newCompose: NEW_COMPOSE });
+    expect(stateOf(server)).toEqual({
+      runningTag: OLD_TAG, runningCompose: OLD_COMPOSE, envTag: `IMAGE_TAG=${OLD_TAG}`, compose: OLD_COMPOSE, newCompose: NEW_COMPOSE, previousTag: null,
+    });
+  });
+
+  it('keeps the tag a manual rollback goes back to when the release is rolled back', () => {
+    const server = serverWith({ env: `IMAGE_TAG=${OLD_TAG}\n`, compose: OLD_COMPOSE, newCompose: NEW_COMPOSE, previousTag: EARLIER_TAG });
+    expect(deploy(server, NEW_TAG)).toBe(1);
+    expect(stateOf(server)).toMatchObject({ runningTag: OLD_TAG, previousTag: EARLIER_TAG });
   });
 
   it('rolls back a broken compose file even when the tag stays the same', () => {

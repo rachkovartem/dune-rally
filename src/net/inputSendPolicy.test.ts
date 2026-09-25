@@ -2,7 +2,8 @@
 // Category 1: a pure rule over the time and the inputs it is given (review round 2).
 import { describe, it, expect } from 'vitest';
 import { INPUT_HEARTBEAT_MS, MIN_INPUT_INTERVAL_MS, shouldSendInput, type SentInput } from './inputSendPolicy';
-import { INPUT_TIMEOUT_SECONDS, TICK_HZ, type InputMsg } from '../../shared/protocol';
+import { INPUT_TIMEOUT_SECONDS, POSE_HZ, TICK_HZ, type InputMsg } from '../../shared/protocol';
+import { MESSAGE_RATE_LIMIT, MessageRateLimiter } from '../../server/messageRateLimit';
 
 const HELD: InputMsg = { throttle: 0.5, brake: 0, steer: 0.25, tractionControl: true, driveMode: '4H' };
 // Sent at 0, so the elapsed time equals `nowMs` exactly and the boundaries are not blurred by rounding.
@@ -85,11 +86,32 @@ describe('shouldSendInput — over a stream of frames', () => {
   const FAST_SCREEN_HZ = 240;
   const frameMs = 1000 / FAST_SCREEN_HZ;
   // A new steering value on every frame, never one seen before, so no frame repeats the last input sent.
-  const changingEveryFrame = (index: number): InputMsg => ({ ...HELD, steer: -1 + index / FAST_SCREEN_HZ });
+  const changingEveryFrame = (index: number): InputMsg => ({ ...HELD, steer: -1 + index / 1000 });
 
-  it('sends at most one input per server tick in a second of a 240 Hz screen whose input changes every frame', () => {
-    const sent = sendTimes(framesAt(FAST_SCREEN_HZ, 1, changingEveryFrame));
-    expect(sent.length).toBeLessThanOrEqual(TICK_HZ + 1);
+  // Replacement (review round 3): "at most one input per server tick" is not true on a 100 or 165 Hz
+  // screen once the send gap is a little under one tick. The real promise is that a game client
+  // never loses an input to the server's message budget.
+  it.each([60, 100, 144, 165, 240])('never has an input dropped by the server budget, with the pose sent too, on a %i Hz screen', (screenHz) => {
+    const seconds = 10;
+    const limiter = new MessageRateLimiter(MESSAGE_RATE_LIMIT, 0);
+    const inputs = sendTimes(framesAt(screenHz, seconds, changingEveryFrame)).map((atMs) => ({ atMs, kind: 'input' as const }));
+    const poses = Array.from({ length: POSE_HZ * seconds }, (_unused, index) => ({ atMs: (index * 1000) / POSE_HZ, kind: 'control' as const }));
+    const messages = [...inputs, ...poses].sort((first, second) => first.atMs - second.atMs);
+
+    const decisions = messages.map((message) => limiter.take(message.kind, message.atMs));
+
+    expect(decisions.filter((decision) => decision !== 'accept')).toEqual([]);
+  });
+
+  it('sends close to one input per server tick on a 60 Hz screen whose frames jitter around 16.7 ms', () => {
+    // Two frames in a row add up to a hair under one tick; the input changes on every frame.
+    const frames: Frame[] = [];
+    let atMs = 0;
+    for (let index = 0; atMs < 1000; index++) {
+      frames.push({ atMs, input: changingEveryFrame(index) });
+      atMs += index % 2 === 0 ? 16.4 : 16.9;
+    }
+    expect(sendTimes(frames).length).toBeGreaterThanOrEqual(TICK_HZ - 1);
   });
 
   it('never keeps a change waiting longer than the minimum send interval and one frame', () => {

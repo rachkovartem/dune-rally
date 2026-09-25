@@ -2,6 +2,8 @@
 // Category 1: the limiter is a pure state machine over the times it is given (release review).
 import { describe, it, expect } from 'vitest';
 import { MESSAGE_RATE_LIMIT, MessageRateLimiter, type MessageKind, type RateDecision } from './messageRateLimit';
+import { MIN_INPUT_INTERVAL_MS } from '../src/net/inputSendPolicy';
+import { POSE_HZ } from '../shared/protocol';
 
 const START_MS = 1000;
 const { burst, controlReserve, kickPerSecond, kickBurst } = MESSAGE_RATE_LIMIT;
@@ -77,8 +79,8 @@ function kickTimeAtRate(limiter: MessageRateLimiter, perSecond: number, seconds:
   return null;
 }
 
-// What a game client sends: `input` at the tick rate with a heartbeat, and a pose ten times a second.
-const GAME_CLIENT_PER_SECOND = 45;
+// What a game client sends at most: `input` as often as its send gap allows, and a pose at POSE_HZ.
+const GAME_CLIENT_PER_SECOND = Math.ceil(1000 / MIN_INPUT_INTERVAL_MS) + POSE_HZ;
 
 // Replacement (review round 2): the flood line is now a bucket of kickBurst messages that refills at
 // kickPerSecond, not one second of kickPerSecond messages. It replaces "disconnects on the first

@@ -489,3 +489,38 @@ describe('ArenaSim — a client that stops sending input (release review)', () =
     expect(afterFreshInput).toBeGreaterThan(coasting);
   });
 });
+
+// The room frees its world when it closes; nothing may reach the freed WASM memory after that (review round 3).
+describe('ArenaSim.dispose — a freed world (review round 3)', () => {
+  async function disposedWorldThatHadCars(): Promise<{ sim: ArenaSim; firstDispose: boolean }> {
+    const sim = await ArenaSim.create(123);
+    sim.addPlayer('first', 'forester', 0);
+    sim.addPlayer('second', 'pajero', 1);
+    stepFor(sim, 'first', IDLE, 10);
+    return { sim, firstDispose: sim.dispose() };
+  }
+
+  it('frees a world with cars in it and has no players left', async () => {
+    const { sim, firstDispose } = await disposedWorldThatHadCars();
+    expect(firstDispose).toBe(true);
+    expect(sim.playerIds()).toEqual([]);
+    expect(sim.transform('first')).toBeUndefined();
+  });
+
+  it('refuses a new player after the world is freed', async () => {
+    const { sim } = await disposedWorldThatHadCars();
+    expect(() => sim.addPlayer('late', 'forester', 2)).toThrow('already freed');
+    expect(sim.playerIds()).toEqual([]);
+  });
+
+  it('answers a second dispose as freed, without touching the world again', async () => {
+    const { sim } = await disposedWorldThatHadCars();
+    expect(sim.dispose()).toBe(true);
+  });
+
+  it('keeps a step after the free harmless: no throw from the freed world, and still no players', async () => {
+    const { sim } = await disposedWorldThatHadCars();
+    expect(() => sim.step()).not.toThrow();
+    expect(sim.playerIds()).toEqual([]);
+  });
+});

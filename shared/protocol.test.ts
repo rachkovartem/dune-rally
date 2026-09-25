@@ -180,12 +180,20 @@ describe('sanitizePlayerName — the name other players see (release review)', (
     ['a right-to-left isolate (U+2067)', '\u2067'],
     ['a first strong isolate (U+2068)', '\u2068'],
     ['a pop directional isolate (U+2069)', '\u2069'],
+    ['a left-to-right mark (U+200E)', '\u200E'],
+    ['a zero-width no-break space (U+FEFF)', '\uFEFF'],
+    ['an Arabic letter mark (U+061C)', '\u061C'],
+    ['a Mongolian vowel separator (U+180E)', '\u180E'],
   ])('removes %s from the name', (_name, formatCharacter) => {
     expect(sanitizePlayerName(`Ann${formatCharacter}a`)).toBe('Anna');
   });
 
   it('gives the default name for a name made only of format characters', () => {
     expect(sanitizePlayerName('\u202E\u200B\u2066\u2067\u2068\u2069')).toBe(DEFAULT_PLAYER_NAME);
+  });
+
+  it('keeps a ZWJ emoji sequence whole: the zero-width joiner inside it is not removed', () => {
+    expect(sanitizePlayerName('Ann 👩\u200D🚀')).toBe('Ann 👩\u200D🚀');
   });
 
   it('trims spaces around the name but keeps the ones inside', () => {

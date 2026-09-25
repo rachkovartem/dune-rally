@@ -215,22 +215,25 @@ describe('ArenaRoom — inputs the budget drops (release review)', () => {
   });
 });
 
-describe('ArenaRoom — a tick that throws (release review)', () => {
-  /** Every physics world the rooms build from now on, in the order they were built. */
-  function captureWorlds(): ArenaSim[] {
-    const worlds: ArenaSim[] = [];
-    const buildWorld = ArenaSim.create.bind(ArenaSim);
-    vi.spyOn(ArenaSim, 'create').mockImplementation(async (seed) => {
-      const world = await buildWorld(seed);
-      worlds.push(world);
-      return world;
-    });
-    return worlds;
-  }
+/** Every physics world the rooms build from now on, in the order they were built. */
+function captureWorlds(): ArenaSim[] {
+  const worlds: ArenaSim[] = [];
+  const buildWorld = ArenaSim.create.bind(ArenaSim);
+  vi.spyOn(ArenaSim, 'create').mockImplementation(async (seed) => {
+    const world = await buildWorld(seed);
+    worlds.push(world);
+    return world;
+  });
+  return worlds;
+}
 
-  /** From now on the world fails on every step, the way a Rapier WASM panic does. */
+describe('ArenaRoom — a tick that throws (release review)', () => {
+  /** From now on the world fails on every call that reaches Rapier, the way a WASM panic does. */
   function breakWorld(world: ArenaSim): void {
-    vi.spyOn(world, 'step').mockImplementation(() => { throw new Error('unreachable executed'); });
+    const panic = (): never => { throw new Error('unreachable executed'); };
+    vi.spyOn(world, 'step').mockImplementation(panic);
+    vi.spyOn(world, 'removePlayer').mockImplementation(panic);
+    vi.spyOn(world, 'setInput').mockImplementation(panic);
   }
 
   it('closes the room with the broken-room code for every player, logs the failure once over several ticks, and removes the room', async () => {
@@ -259,5 +262,20 @@ describe('ArenaRoom — a tick that throws (release review)', () => {
 
     expect(await openRooms()).toBe(MAX_ARENA_ROOMS - 1);
     await expect(createArena({})).resolves.toBeDefined();
+  });
+});
+
+describe('ArenaRoom — the physics world of a closed room (review round 3)', () => {
+  it('frees the world when the room closes: no players left in it, and it takes no new car', async () => {
+    const worlds = captureWorlds();
+    const room = await createArena({});
+    await joinArena(room);
+    await joinArena(room);
+
+    await room.disconnect();
+
+    expect(worlds).toHaveLength(1);
+    expect(worlds[0].playerIds()).toEqual([]);
+    expect(() => worlds[0].addPlayer('after-close', 'forester', 0)).toThrow('already freed');
   });
 });
