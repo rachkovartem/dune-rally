@@ -322,6 +322,40 @@ describe('ArenaSim.applyClientPose — the surface state comes with a snap (SH-5
   });
 });
 
+describe('ArenaSim.applyClientPose — a snap without the surface state (release review)', () => {
+  const BRAKING: InputMsg = { throttle: 0, brake: 1, steer: 0 };
+  const DRIVING_SPEED = 10;
+  // Every wheel on the surface, nothing dug in: what the copy of a car at rest on firm ground has.
+  const UNDISTURBED: NonNullable<PoseMsg['surface']> = { spin: 0, sink: [0, 0, 0, 0], digDirection: [1, 1, 1, 1] };
+
+  /**
+   * The copy is snapped 3 m back along its nose while the driver's car rolls forward and brakes.
+   * Returns how far it travels along its nose over the next steps.
+   */
+  async function travelAfterBackwardSnap(surface: PoseMsg['surface']): Promise<number> {
+    const sim = await ArenaSim.create(123);
+    sim.addPlayer('driver', 'forester', 0);
+    stepFor(sim, 'driver', IDLE, 90);
+    const rest = transformOf(sim, 'driver');
+    const nose = forwardAxisOf({ x: rest.qx, y: rest.qy, z: rest.qz, w: rest.qw });
+    const pose = poseFrom(rest, {
+      x: rest.x - nose.x * 3, z: rest.z - nose.z * 3, vx: nose.x * DRIVING_SPEED, vz: nose.z * DRIVING_SPEED,
+    });
+    expect(sim.applyClientPose('driver', surface ? { ...pose, surface } : pose)).toBe(true);
+    const snapped = transformOf(sim, 'driver');
+    stepFor(sim, 'driver', BRAKING, 20);
+    const after = transformOf(sim, 'driver');
+    return (after.x - snapped.x) * nose.x + (after.z - snapped.z) * nose.z;
+  }
+
+  it('brakes exactly like a copy snapped with its surface state: the jump is not read as driving backwards', async () => {
+    // Regression: the jump back looked like 180 m/s in reverse for one step, and the brake pushed the car forward.
+    const withoutSurface = await travelAfterBackwardSnap(undefined);
+    const withSurface = await travelAfterBackwardSnap(UNDISTURBED);
+    expect(withoutSurface).toBeCloseTo(withSurface, 3);
+  });
+});
+
 describe('ArenaSim — the server sees the shared boulders (S3-2)', () => {
   const height = createHeightField(123);
   const biome = createBiome(123);

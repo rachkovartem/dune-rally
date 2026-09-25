@@ -173,6 +173,21 @@ describe('sanitizePlayerName — the name other players see (release review)', (
     expect(sanitizePlayerName(raw)).toBe(expected);
   });
 
+  it.each<[string, string]>([
+    ['a right-to-left override (U+202E)', '\u202E'],
+    ['a zero-width space (U+200B)', '\u200B'],
+    ['a left-to-right isolate (U+2066)', '\u2066'],
+    ['a right-to-left isolate (U+2067)', '\u2067'],
+    ['a first strong isolate (U+2068)', '\u2068'],
+    ['a pop directional isolate (U+2069)', '\u2069'],
+  ])('removes %s from the name', (_name, formatCharacter) => {
+    expect(sanitizePlayerName(`Ann${formatCharacter}a`)).toBe('Anna');
+  });
+
+  it('gives the default name for a name made only of format characters', () => {
+    expect(sanitizePlayerName('\u202E\u200B\u2066\u2067\u2068\u2069')).toBe(DEFAULT_PLAYER_NAME);
+  });
+
   it('trims spaces around the name but keeps the ones inside', () => {
     expect(sanitizePlayerName('  Dune Rider  ')).toBe('Dune Rider');
   });
