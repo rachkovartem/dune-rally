@@ -164,3 +164,9 @@ The input is the SketchUp-exported GLB itself (no FBX2glTF step, no textures).
 - Result (2026-09-25): 31 nodes, 140,402 drawn triangles (18,478 of them the added inside faces;
   raw 305,042), 608.7 KB (meshopt-compressed). `measuredCarPajeroGen3` is copied from the script's
   printout.
+
+## Publishing
+
+The locally built car models (`forester-2019.glb`, `elantra-2016.glb`, `pajero-sport-2020.glb`)
+reach players only through the asset CDN. After every `scripts/convert-*.ts` run, publish them
+with `npm run assets:upload` (see README, "Deploy").

@@ -21,7 +21,7 @@ import { PlayerViews } from './net/playerViews';
 import { TireTracks } from './render/groundDecals';
 import { Knockables } from './render/knockables';
 import { AudioManager, type RemoteCarPose } from './audio/audio';
-import { POSE_HZ, sanitizeCarId, sanitizeInput, SERVER_PORT, type PoseMsg } from '../shared/protocol';
+import { POSE_HZ, sanitizeCarId, sanitizeInput, type PoseMsg } from '../shared/protocol';
 import type { GroundGrip } from '../shared/terrainGrip';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { RESET_LIFT } from '../shared/vehiclePhysics';
@@ -30,6 +30,9 @@ import { assembleCar, fitCarToChassis } from './render/carModel';
 import { registerCarAsset, getCarMaterials } from './render/buggyMesh';
 import { setBrakeLights } from './render/carMaterials';
 import { AssetLoadError, type AssetManifestEntry, type LoadedAssets } from './assets/loadAssets';
+import { ASSET_MANIFEST_FILE, assetRootFor, createAssetResolver, loadAssetManifest, type AssetResolver } from './assets/assetUrls';
+import { gameServerUrl } from './net/serverUrl';
+import { SERVER_RETRY_DELAYS_MS, waitForServer } from './net/waitForServer';
 import { PROP_TEXTURE_SETS, type PropKind } from './assets/textureManifest';
 import { createTerrainMaterial } from './render/terrainMaterial';
 import { setTerrainMaterial } from './render/terrainMesh';
@@ -53,12 +56,40 @@ const canvas = document.getElementById('app');
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Expected a <canvas id="app"> element in the page.');
 }
-const audio = new AudioManager();
-window.__audio = () => audio.snapshot();
-
 const startEl = document.getElementById('start');
 const carsEl = startEl?.querySelector<HTMLElement>('.start-cars');
 if (!startEl || !carsEl) throw new Error('Expected the #start overlay with a .start-cars picker in the page.');
+const startGoEl = startEl.querySelector<HTMLElement>('.start-go');
+const startSubEl = startEl.querySelector<HTMLElement>('.start-sub');
+const startSubDefaultText = startSubEl?.textContent ?? '';
+const showStartError = (message: string): void => {
+  if (!startSubEl) return;
+  startSubEl.textContent = message;
+  startSubEl.style.color = '#ff6b5a';
+};
+
+// In dev the files come from public/; a production build reads the CDN manifest first, because
+// every asset URL (sounds included) is a hashed name listed there.
+const assetBaseUrl = import.meta.env.VITE_ASSET_BASE_URL;
+let resolveAsset: AssetResolver;
+if (assetBaseUrl === undefined || assetBaseUrl === '') {
+  resolveAsset = createAssetResolver({ baseUrl: null, files: {} });
+} else {
+  const assetRoot = assetRootFor(assetBaseUrl);
+  try {
+    const assetManifest = await loadAssetManifest({
+      url: `${assetRoot}/${ASSET_MANIFEST_FILE}`,
+      fetchJson: (url) => fetch(url, { cache: 'no-cache' }),
+    });
+    resolveAsset = createAssetResolver({ baseUrl: assetRoot, files: assetManifest.files });
+  } catch (error) {
+    showStartError(`Ошибка загрузки: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
+}
+
+const audio = new AudioManager(resolveAsset);
+window.__audio = () => audio.snapshot();
 // Wired before connecting, so a choice made on the loading screen is not lost. The server hears
 // every change at once, and other players see the right model before this player starts driving.
 let announceCar: ((carId: CarId) => void) | null = null;
@@ -68,7 +99,24 @@ const picker = createCarPicker(carsEl, readSavedCarId(localStorage), (carId) => 
 });
 
 const joinedCarId = picker.selected();
-const conn = await connectToArena(`ws://${location.hostname}:${SERVER_PORT}`, 'rider', joinedCarId);
+const serverUrl = gameServerUrl(location, { dev: import.meta.env.DEV, override: import.meta.env.VITE_GAME_SERVER_URL });
+const conn = await connectToArena(serverUrl, 'rider', joinedCarId);
+// A restart or deploy closes the room. The page waits for the server and reloads: the world comes
+// back from the same seed and the assets from the browser cache.
+const serverRestartEl = document.getElementById('server-restart');
+if (!serverRestartEl) throw new Error('Expected a #server-restart overlay in the page.');
+let serverDropped = false;
+conn.onDropped(() => {
+  if (serverDropped) return;
+  serverDropped = true;
+  serverRestartEl.hidden = false;
+  const probe = async (): Promise<boolean> => {
+    const response = await fetch('/health', { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+    return response.ok;
+  };
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+  void waitForServer({ probe, sleep, delaysMs: SERVER_RETRY_DELAYS_MS }).then(() => location.reload());
+});
 announceCar = (carId) => conn.selectCar(carId);
 if (picker.selected() !== joinedCarId) conn.selectCar(picker.selected());
 const heightField = createHeightField(conn.seed);
@@ -113,9 +161,6 @@ for (const setId of Object.values(PROP_TEXTURE_SETS)) {
   addTexture(`${setId}-normal`, `/textures/${setId}/normal.webp`);
 }
 
-const startGoEl = startEl.querySelector<HTMLElement>('.start-go');
-const startSubEl = startEl.querySelector<HTMLElement>('.start-sub');
-const startSubDefaultText = startSubEl?.textContent ?? '';
 if (startSubEl) startSubEl.textContent = 'Загрузка… 0%';
 const carsNoteEl = carsEl.querySelector<HTMLElement>('.start-cars-note');
 if (!carsNoteEl) throw new Error('Expected a .start-cars-note element in the car picker.');
@@ -124,7 +169,7 @@ const missingCarMessages: string[] = [];
 const loadOptionalCar = async (carId: CarId, missingMessage: string): Promise<{ carId: CarId; model: Group } | null> => {
   const entry = carModelEntry(carId);
   try {
-    const loaded = await loadAssets([entry]);
+    const loaded = await loadAssets([entry], undefined, resolveAsset);
     const model = loaded.models.get(entry.id);
     if (!model) throw new Error(`Expected the "${entry.id}" model to be present in the loaded assets.`);
     return { carId, model };
@@ -143,7 +188,7 @@ let assets: LoadedAssets;
 try {
   assets = await loadAssets(manifest, (fraction) => {
     if (startSubEl) startSubEl.textContent = `Загрузка… ${Math.round(fraction * 100)}%`;
-  });
+  }, resolveAsset);
 } catch (error) {
   const reason = error instanceof Error ? error.message : String(error);
   // A gitignored model is expected to be missing on a fresh clone; its own message says how to build it.

@@ -1,0 +1,31 @@
+# Production: the image is built by CI and pulled from GHCR; nothing is built on the server.
+# deploy/remote-deploy.sh writes IMAGE_TAG into .env next to this file.
+services:
+  game:
+    image: ghcr.io/rachkovartem/dune-rally:${IMAGE_TAG:?IMAGE_TAG is required}
+    container_name: dune-rally
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    environment:
+      PORT: 2567
+      CLIENT_DIST_DIR: /app/dist
+      NODE_ENV: production
+      # Rapier's WASM memory is outside the V8 heap, so the heap cap is well under mem_limit.
+      NODE_OPTIONS: --max-old-space-size=384
+    # The server shares its VPS with other apps: a runaway room restarts only this container.
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    # No published ports: nginx-proxy reaches the container by name on the "web" network.
+    networks:
+      - web
+
+networks:
+  web:
+    external: true

@@ -25,6 +25,8 @@ export interface Connection {
   selectCar(carId: CarId): void;
   onAdd(cb: (id: string, p: NetPlayer) => void): void;
   onRemove(cb: (id: string) => void): void;
+  /** The room is gone. The game has no leave action, so this means the server closed or restarted. */
+  onDropped(cb: () => void): void;
   players(): Map<string, NetPlayer>;
 }
 
@@ -36,6 +38,16 @@ export async function connectToArena(url: string, name: string, carId: CarId): P
   const players = new Map<string, NetPlayer>();
   const addCbs: ((id: string, p: NetPlayer) => void)[] = [];
   const removeCbs: ((id: string) => void)[] = [];
+  const droppedCbs: (() => void)[] = [];
+  // A send on a closed socket only logs a browser error; the page reloads once the server is back.
+  let dropped = false;
+  const sendWhileOpen = (send: () => void): void => {
+    if (!dropped) send();
+  };
+  room.onLeave(() => {
+    dropped = true;
+    for (const cb of droppedCbs) cb();
+  });
 
   room.state.players.onAdd((p: NetPlayer, id: string) => {
     players.set(id, p);
@@ -59,15 +71,19 @@ export async function connectToArena(url: string, name: string, carId: CarId): P
   return {
     sessionId: room.sessionId,
     seed: room.state.seed,
-    sendInput: (i: InputMsg) => room.send('input', i),
-    sendResetCar: () => room.send(RESET_CAR_MESSAGE),
-    sendPose: (pose: PoseMsg) => room.send(POSE_MESSAGE, pose),
+    sendInput: (i: InputMsg) => sendWhileOpen(() => room.send('input', i)),
+    sendResetCar: () => sendWhileOpen(() => room.send(RESET_CAR_MESSAGE)),
+    sendPose: (pose: PoseMsg) => sendWhileOpen(() => room.send(POSE_MESSAGE, pose)),
     selectCar: (selectedCarId: CarId) => {
       const message: SelectCarMsg = { carId: selectedCarId };
-      room.send('selectCar', message);
+      sendWhileOpen(() => room.send('selectCar', message));
     },
     onAdd: (cb) => addCbs.push(cb),
     onRemove: (cb) => removeCbs.push(cb),
+    onDropped: (cb) => {
+      droppedCbs.push(cb);
+      if (dropped) cb();
+    },
     players: () => players,
   };
 }

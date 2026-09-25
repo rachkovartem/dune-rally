@@ -47,10 +47,13 @@ export interface LoadedAssets {
  * Loads every entry in the manifest, reporting combined progress as it goes. An empty manifest
  * resolves immediately at 100% — not a special case bolted on to hide a missing file, just the
  * natural result of an empty Promise.all, used by callers that have nothing to load yet.
+ * Entries hold logical paths; `resolveUrl` turns each into the URL to load, and errors keep the
+ * logical path so callers can still tell which file failed.
  */
 export async function loadAssets(
   manifest: readonly AssetManifestEntry[],
-  onProgress?: (fraction: number) => void,
+  onProgress: ((fraction: number) => void) | undefined,
+  resolveUrl: (path: string) => string,
 ): Promise<LoadedAssets> {
   const models = new Map<string, THREE.Group>();
   const textures = new Map<string, THREE.Texture>();
@@ -82,18 +85,20 @@ export async function loadAssets(
         reportProgress();
       };
       try {
+        const url = resolveUrl(entry.url);
         if (entry.kind === 'model') {
-          const gltf = await gltfLoader.loadAsync(entry.url, onEntryProgress);
+          const gltf = await gltfLoader.loadAsync(url, onEntryProgress);
           models.set(entry.id, gltf.scene);
         } else if (entry.kind === 'hdr') {
-          const hdr = await hdrLoader.loadAsync(entry.url, onEntryProgress);
+          const hdr = await hdrLoader.loadAsync(url, onEntryProgress);
           hdrs.set(entry.id, hdr);
         } else {
-          const texture = await textureLoader.loadAsync(entry.url, onEntryProgress);
+          const texture = await textureLoader.loadAsync(url, onEntryProgress);
           textures.set(entry.id, texture);
         }
       } catch (error) {
         failed = true;
+        if (error instanceof AssetLoadError) throw error;
         const reason = error instanceof Error ? error.message : String(error);
         throw new AssetLoadError(entry.url, reason, error);
       }

@@ -71,7 +71,8 @@ export class AudioManager {
   /** Settles once the manifest and the chosen loops are in; a failure is already reported. */
   readonly ready: Promise<void>;
 
-  constructor() {
+  /** `resolveUrl` maps a logical path under public/ to the URL to fetch (the CDN in production). */
+  constructor(private readonly resolveUrl: (path: string) => string) {
     this.master = this.context.createGain();
     this.master.gain.value = 0.7;
     // Many loops and noise layers sum up; the limiter keeps a full-throttle crash from clipping.
@@ -110,7 +111,7 @@ export class AudioManager {
   // Loaded apart from the asset loader, from page load on: a suspended context still decodes, so
   // the chosen loops are ready by the start click without holding up the world.
   private async loadSound(): Promise<void> {
-    const response = await fetch(SOUND_MANIFEST_URL);
+    const response = await fetch(this.resolveUrl(SOUND_MANIFEST_URL));
     if (!response.ok) throw new SoundLoadError(SOUND_MANIFEST_URL, `HTTP ${response.status}`);
     const manifest = parseSoundManifest(await response.json());
     const parsed = parseSoundSettings(localStorage.getItem(SOUND_SETTINGS_STORAGE_KEY), manifest);
@@ -141,7 +142,9 @@ export class AudioManager {
     const cached = this.loops.get(entry.id);
     if (cached) return cached;
     const url = SOUND_BASE_URL + entry.file;
-    const loading = fetch(url)
+    // Resolved inside the chain, so a file missing from the asset manifest is reported like a failed download.
+    const loading = Promise.resolve()
+      .then(() => fetch(this.resolveUrl(url)))
       .then((response) => {
         if (!response.ok) throw new SoundLoadError(url, `HTTP ${response.status}`);
         return response.arrayBuffer();

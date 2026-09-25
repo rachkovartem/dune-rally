@@ -2,6 +2,7 @@
 import { Room, Client } from '@colyseus/core';
 import { ArenaState, PlayerState } from './state';
 import { ArenaSim, SIM_STEP_SECONDS } from './arenaSim';
+import { ROOM_MAX_CLIENTS } from './config';
 import { dailySeed } from '../src/world/seed';
 import {
   POSE_MESSAGE, RESET_CAR_MESSAGE, sanitizeCarId, sanitizeInput, sanitizePose, TICK_HZ, PATCH_HZ, type JoinOptions,
@@ -11,6 +12,7 @@ import {
 const STEPS_PER_TICK = Math.max(1, Math.round(1 / TICK_HZ / SIM_STEP_SECONDS));
 
 export class ArenaRoom extends Room<ArenaState> {
+  maxClients = ROOM_MAX_CLIENTS;
   private sim!: ArenaSim;
 
   async onCreate(options: { seed?: number }) {

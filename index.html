@@ -106,6 +106,14 @@
         opacity: 0; transition: opacity 0.25s;
       }
       #hud-camera.is-visible { opacity: 1; }
+      #server-restart {
+        position: fixed; inset: 0; z-index: 20;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(10,6,2,0.8);
+        font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
+        font-size: 24px; font-weight: 700; color: #ffd23d;
+      }
+      #server-restart[hidden] { display: none; }
       #hud-error {
         position: absolute; top: 140px; left: 22px; max-width: 60vw;
         font: 12px monospace; color: #ff6b5a; background: rgba(0,0,0,0.6); padding: 4px 8px;
@@ -143,6 +151,7 @@
         <div class="start-go" style="display: none">▶ Нажми, чтобы ехать</div>
       </div>
     </div>
+    <div id="server-restart" hidden>Сервер перезапускается…</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

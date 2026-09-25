@@ -1,0 +1,131 @@
+name: Deploy
+
+# A release is a tag vX.Y.Z. A rollback is a manual run with the tag of an older image:
+# it skips the checks and the image build and only redeploys that image.
+on:
+  push:
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (rollback), for example v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/rachkovartem/dune-rally
+  # CDN origin; the game's files are under /dune-rally/ on it. Not a secret.
+  ASSET_BASE_URL: https://assets.coreplex.cc
+
+jobs:
+  checks:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: Typecheck and build
+        run: npm run build
+      # Assets are uploaded from the owner's machine (wrangler login), never from CI.
+      # This only reads the public manifest and stops the release if a file is missing or stale.
+      - name: Published assets match this commit
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npm run assets:verify
+
+  image:
+    needs: [checks]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            VITE_ASSET_BASE_URL=${{ env.ASSET_BASE_URL }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [checks, image]
+    # On a manual run checks and image are skipped, so the default "all needs succeeded" is replaced.
+    if: >-
+      !cancelled() && !failure() &&
+      (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    environment: PROD
+    timeout-minutes: 15
+    concurrency:
+      group: dune-rally-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every value reaches the shell through env:, never pasted into the script text.
+      - name: Choose the image tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.image_tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then tag="$INPUT_TAG"; else tag="$REF_NAME"; fi
+          if ! printf '%s' "$tag" | grep -Eq '^(v[0-9]+\.[0-9]+\.[0-9]+|sha-[0-9a-f]{40})$'; then
+            echo "image tag must look like v1.2.3 or sha-<40 hex>, got: $tag" >&2
+            exit 1
+          fi
+          echo "image_tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Setup SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          IMAGE_TAG: ${{ steps.tag.outputs.image_tag }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ssh_options=(-i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes)
+          target="$SERVER_USER@$SERVER_HOST"
+          ssh "${ssh_options[@]}" "$target" 'mkdir -p ~/dune-rally'
+          scp "${ssh_options[@]}" docker-compose.prod.yml deploy/remote-deploy.sh "$target:dune-rally/"
+          # The two values are expanded here on purpose, quoted with %q; the token goes over stdin.
+          remote_command="IMAGE_TAG=$(printf '%q' "$IMAGE_TAG") GHCR_USER=$(printf '%q' "$GHCR_USER") bash ~/dune-rally/remote-deploy.sh"
+          # shellcheck disable=SC2029
+          printf '%s' "$GHCR_TOKEN" | ssh "${ssh_options[@]}" "$target" "$remote_command"

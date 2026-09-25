@@ -1,0 +1,16 @@
+node_modules
+dist
+public
+docs
+deploy
+.git
+.github
+.idea
+.vite
+.cache
+.wrangler
+.env*
+*.local
+**/*.test.ts
+Dockerfile
+docker-compose*.yml

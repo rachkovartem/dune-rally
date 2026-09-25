@@ -54,6 +54,39 @@ npm test        # run unit tests
 npm run build   # type-check + production build
 ```
 
+## Deploy
+
+Production: `https://rally.coreplex.cc`. The game server runs in one Docker container on the
+VPS behind `nginx-proxy`; the big files (models, sky, textures, sound) are on Cloudflare R2 at
+`https://assets.coreplex.cc/dune-rally/`, listed in `assets-manifest.json`.
+
+**Publish assets** (from the owner's machine only; CI has no Cloudflare credentials):
+
+```bash
+npx wrangler login               # once per machine
+npm run assets:upload -- --dry-run   # optional: see what would change
+npm run assets:upload            # uploads missing files, then writes the manifest
+```
+
+Run it after every change in `public/` and after every `scripts/convert-*.ts` run. The script
+uploads only files whose content hash is new, so a second run uploads nothing.
+`npm run assets:verify` runs the same check CI does before a release.
+
+**Release:** merge to `main`, then push a tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`.github/workflows/deploy.yml` runs the tests and the build, checks the published assets, builds
+the image `ghcr.io/rachkovartem/dune-rally:<tag>` and deploys it over SSH.
+
+**Rollback:** Actions → Deploy → Run workflow, `image_tag` = an older tag (for example `v0.1.0`).
+On the server, `~/dune-rally/.previous-image-tag` holds the tag that ran before the last deploy.
+
+Local production check: `npm run build && CLIENT_DIST_DIR=dist npm run server:prod`
+(`/health` answers on port 2567).
+
 ## Controls
 
 | Key | Action |
