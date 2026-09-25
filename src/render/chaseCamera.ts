@@ -9,10 +9,12 @@ export const CAMERA_DISTANCE_MAX = 25;
 export const CAMERA_IDLE_RETURN = 2;
 export const CAMERA_GROUND_CLEARANCE = 0.5;
 
-const DEFAULT_PITCH = Math.atan2(4.4, 9.5);
-const DEFAULT_DISTANCE = Math.hypot(4.4, 9.5);
-const TARGET_HEIGHT = 1.2;
-const LOOK_AHEAD = 4;
+// A close, low racing-game chase view: the car fills about a quarter of the screen width
+// and the horizon sits near the upper third, with the ground ahead visible over the roof.
+const DEFAULT_PITCH = Math.atan2(1.7, 4.7);
+const DEFAULT_DISTANCE = Math.hypot(1.7, 4.7);
+const TARGET_HEIGHT = 0;
+const LOOK_AHEAD = 1.5;
 const DRAG_YAW_PER_PIXEL = 0.006;
 const DRAG_PITCH_PER_PIXEL = 0.005;
 const ZOOM_PER_PIXEL = 0.0015;
