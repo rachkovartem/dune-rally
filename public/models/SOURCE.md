@@ -117,3 +117,50 @@ The input is the SketchUp-exported GLB itself (no FBX2glTF step, no textures).
   or calipers, so every corner part rolls with the wheel.
 - Result (2026-09-25): 22 nodes, 126,607 drawn triangles (raw 252,127), 584.9 KB
   (meshopt-compressed). `measuredCarElantra` is copied from the script's printout.
+
+---
+
+# public/models/pajero-sport-2020.glb — source
+
+- **Title:** Mitsubishi Pajero Sport Dakar Facelift 2020 (gen 3 facelift)
+- **Source:** Pajero model provided/approved by the project owner (3D Warehouse, Veyvez Zatha);
+  converted with `scripts/convert-pajero.ts`.
+- **Not committed:** `public/models/pajero-sport-2020.glb` is in `.gitignore`. On a fresh clone the
+  game shows "Pajero model missing — run npx tsx scripts/convert-pajero.ts <glb>" and the Pajero
+  leaves the picker until the file is built locally; other players' Pajeros are drawn as the Forester.
+- The game no longer loads `public/models/pajero-sport.glb` (the razkat90 model above); that file
+  stays only because existing tests still read it.
+
+## Building this file
+
+```sh
+npx tsx scripts/convert-pajero.ts "<dir>/model.glb"
+```
+
+The input is the SketchUp-exported GLB itself (no FBX2glTF step, no textures).
+
+## What the pipeline does
+
+- The source is Y up, front +Z, about 9 % too large (wheelbase 3.060 against the real 2.800 m,
+  length 5.28 against 4.825 m); `PAJERO_SOURCE` in `src/assets/pajeroGen3PartRules.ts` scales it to
+  the real wheelbase and moves it into car space (metres, centred on the body length, ground at y = 0).
+- Every raw primitive is keyed by its node path plus its material name (copies named `…_1` fold onto
+  their original) and classified by `classifyPajeroPart()`; an unknown key, or a rule for a key the
+  source does not have, stops the script.
+- **Removed:** the garage backdrop (walls, floor, ceiling); the rear three-diamond; the "PAJERO SPORT"
+  and "DAKAR" scripts; the three-diamond on the steering wheel with its plate; as a connected
+  component, the three-diamond on the grille; and the LED detail inside the opaque tail-lamp lenses.
+- **Plate:** the source has none. A blank neutral 520 × 112 mm quad is added in the tailgate recess;
+  there is no front plate.
+- The source has no headliner or pillar trim, so a reversed copy of the paint and black-trim
+  triangles inside the cabin box (`PAJERO_CABIN_SHELL`) is added: the roof, pillars and doors show
+  from the driver's seat.
+- Normals are dropped (creased at load time). The paint gets a box-projected UV (4 repeats per metre)
+  for the flake normal map; no other part has a UV set. The two embedded images (a corrugated-metal
+  swatch and the garage asphalt) are not used.
+- Each clean id is welded, simplified to its triangle budget (`PAJERO_TRIANGLE_TARGETS`) and joined
+  into one primitive; wheel parts are centred on their hub. Brake discs and calipers are fixed to the
+  hub; tyre, rim and centre cap roll.
+- Result (2026-09-25): 31 nodes, 140,402 drawn triangles (18,478 of them the added inside faces;
+  raw 305,042), 608.7 KB (meshopt-compressed). `measuredCarPajeroGen3` is copied from the script's
+  printout.

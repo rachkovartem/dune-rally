@@ -44,22 +44,26 @@ export interface VehicleConfig {
 
 const KMH = 1 / 3.6;
 
-// Mitsubishi Pajero Sport 2.5 DI-D (4D56, 178 PS) with the 5-speed automatic: heavy, planted,
-// strong low-rpm torque, stronger than the Forester on soft sand and steep rock.
+// Mitsubishi Pajero Sport gen 3 facelift (2019–), 2.4 4N15 MIVEC turbo-diesel with the 8-speed
+// automatic and Super Select 4WD (AWD in the game). Approximate real data: 181 PS at 3500 rpm, 430 Nm
+// at 2500 rpm, kerb 2050–2100 kg, wheelbase 2.800, track 1.520 / 1.515, 265/60 R18, clearance 0.218.
+// Heavy and planted, strong low-rpm torque, stronger than the Forester on soft sand and steep rock.
 export const PAJERO_CONFIG: VehicleConfig = {
-  chassis: { hx: 1.0, hy: 0.6, hz: 2.1, offsetY: 0, mass: 2000 + 75 },
+  // The box stays high (bottom about 0.55 m at rest) as before: the game's ridges are cut for a car
+  // that crosses them, so the real 0.218 m clearance is only drawn, not collided.
+  chassis: { hx: 0.9, hy: 0.6, hz: 2.1, offsetY: 0, mass: 2100 + 75 },
 
   // Low centre of mass + large angular inertia → heavy, stable, hard to flip. Inertia scales with
   // the mass so the car turns and rolls as it did at 1600 kg.
   com: { x: 0, y: -0.7, z: 0 },
-  inertia: { x: 3760, y: 4020, z: 2200 },
+  inertia: { x: 3940, y: 4210, z: 2310 },
   // Air drag and rolling resistance are real forces now, so no extra linear damping.
   linearDamping: 0,
   angularDamping: 0.9,
 
   wheel: {
-    radius: 0.44,
-    width: 0.45,
+    radius: 0.388,
+    width: 0.265,
     suspensionRestLength: 0.5,
     // Soft enough that at real gravity the spring sags as far as it did at 20 m/s², so the wheels
     // can drop that far over a crest; rebound damps harder than bump so the body does not bounce off.
@@ -70,10 +74,11 @@ export const PAJERO_CONFIG: VehicleConfig = {
     maxSuspensionForce: 60000,
     frictionSlip: 3.4,
     positions: [
-      { x: -1.0, y: -0.40, z: 1.4 },  // front-left
-      { x: 1.0, y: -0.40, z: 1.4 },   // front-right
-      { x: -1.0, y: -0.40, z: -1.4 }, // rear-left
-      { x: 1.0, y: -0.40, z: -1.4 },  // rear-right
+      // The body model's own track (1.514 m), so the wheels sit in its arches with no inset.
+      { x: -0.757, y: -0.40, z: 1.4 },  // front-left
+      { x: 0.757, y: -0.40, z: 1.4 },   // front-right
+      { x: -0.757, y: -0.40, z: -1.4 }, // rear-left
+      { x: 0.757, y: -0.40, z: -1.4 },  // rear-right
     ],
   },
 
@@ -82,41 +87,45 @@ export const PAJERO_CONFIG: VehicleConfig = {
       idleRpm: 750,
       cutOffRpm: 4500,
       torqueCurve: [
-        { rpm: 0, torque: 150 }, { rpm: 750, torque: 170 }, { rpm: 1000, torque: 210 },
-        { rpm: 1500, torque: 290 }, { rpm: 1800, torque: 350 }, { rpm: 3500, torque: 350 },
-        { rpm: 4000, torque: 313 }, { rpm: 4300, torque: 270 }, { rpm: 4500, torque: 0 },
+        { rpm: 0, torque: 170 }, { rpm: 750, torque: 190 }, { rpm: 1000, torque: 230 },
+        { rpm: 1500, torque: 320 }, { rpm: 2000, torque: 400 }, { rpm: 2500, torque: 430 },
+        { rpm: 3000, torque: 405 }, { rpm: 3500, torque: 363 }, { rpm: 4000, torque: 300 },
+        { rpm: 4300, torque: 250 }, { rpm: 4500, torque: 0 },
       ],
     },
     gearbox: {
       kind: 'automatic',
-      ratios: [3.52, 2.042, 1.4, 1.0, 0.716],
+      // Aisin 8-speed ratios as published for the facelift; not checked against a factory sheet.
+      ratios: [4.714, 3.143, 2.106, 1.667, 1.285, 1.0, 0.839, 0.667],
       upshiftRpm: 4000,
       kickdownRpm: 2900,
       coastDownshiftRpm: 1300,
-      shiftSeconds: 0.35,
+      shiftSeconds: 0.45,
       shiftTorqueFactor: 0.5,
       launchRpm: 2300,
       rpmRiseRate: 6000,
       rpmFallRate: 8000,
     },
-    finalDrive: 3.917,
-    reverseRatio: 3.224,
-    converter: { stallMultiplier: 1.9, couplingSpeedRatio: 0.85 },
-    efficiency: 0.85,
-    tyreRadius: 0.389, // 265/70 R16
-    rotatingMassFactor: 1.13,
-    topSpeed: 180 * KMH,
+    // Unverified: about 3.5 for the 8AT, from secondary sources only.
+    finalDrive: 3.5,
+    reverseRatio: 3.317,
+    converter: { stallMultiplier: 1.4, couplingSpeedRatio: 0.85 },
+    efficiency: 0.88,
+    tyreRadius: 0.388, // 265/60 R18
+    rotatingMassFactor: 1.22,
+    topSpeed: 185 * KMH,
     reverseTopSpeed: 30 * KMH,
     engineBrakeForce: 450,
-    dragCoefficient: 0.41,
-    frontalArea: 2.8,
+    dragCoefficient: 0.4,
+    frontalArea: 2.9,
     tyrePeakFriction: 0.9,
   },
   brakeForce: 19000,
   maxSteer: 0.42,
   steerSpeed: 2.2,      // slow steering ramp → heavy, deliberate turn-in
   maxLateralAcceleration: 9,
-  rollMomentArm: 0.45,
+  // Lean scales with arm / track², so the arm shrinks with the real, narrower track (was 2.0 m).
+  rollMomentArm: 0.27,
   steeredWheels: [0, 1],
   drivenWheels: [0, 1, 2, 3], // AWD
   driveLayout: { kind: 'awd' },
@@ -124,6 +133,7 @@ export const PAJERO_CONFIG: VehicleConfig = {
   restitution: 0.12,
   friction: 0.6,
 
+  // All-terrain tyres, low range and more clearance than the Forester: better on loose ground.
   gripOverrides: { sand: 0.75, mud: 0.62, rock: 0.9, gravel: 0.95, salt: 0.95 },
 };
 

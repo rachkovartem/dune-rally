@@ -155,8 +155,9 @@ const within = (value: number | null, low: number, high: number): boolean => val
 const DEGREES_LIMIT: Record<CarId, number> = { forester: 4, pajero: 6, elantra: 3.5 };
 // Elantra AD 2.0 6AT: about 9–10 s and 190–205 km/h (approximate, not one source). Its 200 km/h
 // governor fades the force over a band, so it settles a little above 200.
+// Pajero Sport gen 3 facelift 2.4 8AT: about 11–12.5 s and 180–190 km/h (approximate).
 const ZERO_TO_100: Record<CarId, [number, number]> = { forester: [8.5, 9.5], pajero: [11.0, 12.5], elantra: [9.0, 10.0] };
-const TOP_SPEED: Record<CarId, [number, number]> = { forester: [185, 200], pajero: [170, 180], elantra: [190, 205] };
+const TOP_SPEED: Record<CarId, [number, number]> = { forester: [185, 200], pajero: [180, 190], elantra: [190, 205] };
 // The Elantra value is provisional: the visual fit is set again when its body model lands.
 const RESTING_TARGET: Record<CarId, number> = { forester: 0.481, pajero: 0.353, elantra: 0.293 };
 for (const carId of CAR_IDS) {

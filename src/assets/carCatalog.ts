@@ -2,9 +2,9 @@
 // One entry per selectable car: its display label, model file, measured size and assembly rules.
 import type { CarId } from '../vehicle/cars';
 import type { CarAssemblyRules, MeasuredCarLike } from '../render/carModel';
-import { PAJERO_ASSEMBLY_RULES, measuredCar } from './carPartRules';
 import { ELANTRA_ASSEMBLY_RULES, measuredCarElantra } from './elantraPartRules';
 import { FORESTER_ASSEMBLY_RULES, measuredCarForester } from './foresterPartRules';
+import { PAJERO_GEN3_ASSEMBLY_RULES, measuredCarPajeroGen3 } from './pajeroGen3PartRules';
 
 /** Shown in the start overlay when the Forester GLB fails to load: it is gitignored and built locally. */
 export const FORESTER_MODEL_MISSING_MESSAGE =
@@ -13,6 +13,10 @@ export const FORESTER_MODEL_MISSING_MESSAGE =
 /** Shown in the start overlay when the Elantra GLB fails to load: it is gitignored and built locally. */
 export const ELANTRA_MODEL_MISSING_MESSAGE =
   'Elantra model missing — run npx tsx scripts/convert-elantra.ts <glb>';
+
+/** Shown in the start overlay when the Pajero GLB fails to load: it is gitignored and built locally. */
+export const PAJERO_MODEL_MISSING_MESSAGE =
+  'Pajero model missing — run npx tsx scripts/convert-pajero.ts <glb>';
 
 /** The side of the cabin the steering wheel is on, as the driver sees it. */
 export type DriverSide = 'left' | 'right';
@@ -63,13 +67,13 @@ const CAR_DEFINITIONS: Readonly<Record<CarId, CarDefinition>> = {
   },
   pajero: {
     label: 'Mitsubishi Pajero Sport',
-    modelUrl: '/models/pajero-sport.glb',
-    measured: measuredCar,
-    rules: PAJERO_ASSEMBLY_RULES,
-    // The model has no cabin to measure; the left-hand-drive market version is assumed.
-    driverSide: 'left',
-    hasCabin: false,
-    localModel: null,
+    modelUrl: '/models/pajero-sport-2020.glb',
+    measured: measuredCarPajeroGen3,
+    rules: PAJERO_GEN3_ASSEMBLY_RULES,
+    // Measured on the model's interior: the steering wheel sits right of the centreline (x -0.43).
+    driverSide: 'right',
+    hasCabin: true,
+    localModel: { missingMessage: PAJERO_MODEL_MISSING_MESSAGE, requiredToPlay: false },
   },
 };
 
