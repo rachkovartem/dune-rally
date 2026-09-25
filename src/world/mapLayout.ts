@@ -94,8 +94,41 @@ export const KLEIN_KOPPIES: readonly Koppie[] = [
 
 export const KOPPIES: readonly Koppie[] = [GROOT_KOPPIE, ...KLEIN_KOPPIES];
 
-/** The dome profile is height × (1 − d²)^exponent, d = distance / radius. */
-export const KOPPIE_DOME_EXPONENT = 1.6;
+/**
+ * A koppie from its foot up: apron, a rock band all round, shoulder, tor. Radii and drops are shares
+ * of its radius and height. No car climbs the band (measured: rock up to 0.7 for the Pajero, 0.62 for
+ * the Forester), so the only way onto a shoulder is a track cut through it.
+ */
+export const KOPPIE_PROFILE = {
+  top: { radius: 0.14, drop: 0.06 },
+  tor: { centre: 0.22, width: 0.12, drop: 0.3 },
+  shoulder: { drop: 0.1 },
+  /**
+   * The band rises from its foot at `toeSlope` and rounds over at its top, so its width follows
+   * from its height. The border face uses the same toe (measured: below about 2 a car at speed runs up).
+   */
+  band: { centre: 0.68, drop: 0.34, toeSlope: 3 },
+  /** How much of the height the band gains or loses around the koppie; the shoulder takes the rest. */
+  bandSwing: 0.08,
+  /** How far in (share of the radius) the outline can wander; it never reaches past the radius. */
+  outline: 0.16,
+  /** How far (share of the radius) the band and the tor wander in and out on top of that. */
+  wander: 0.04,
+} as const;
+
+/** Ridged boulder lumps on the koppies (design §12.1): metres high, and their size on the ground. */
+export const KOPPIE_LUMPS = { heightPerMetre: 1 / 18, minHeight: 2, maxHeight: 4, wavelength: 32 } as const;
+
+/**
+ * The rocky spur the Koppie Klim rides from Klein Koppie's shoulder to the Groot Koppie saddle
+ * (design §4): its crest climbs from the koppie ground at one end to the ground at the other.
+ */
+export const KLIM_SPUR = {
+  from: { x: 1640, z: 720 },
+  to: { x: 1570, z: 650 },
+  topHalfWidth: 5,
+  sideSlope: 1.1,
+} as const;
 
 export const TAFELKOP = {
   x: 2450,
@@ -105,6 +138,11 @@ export const TAFELKOP = {
   height: 45,
   /** How far (m) the rim wanders in and out around the hill. */
   edgeWander: 10,
+  /**
+   * The Tafelkop Pas climbs a talus on the west-south-west side: there the skirt widens to
+   * `skirt` metres around `angle` (degrees from +x toward +z), fading out over `halfAngle`.
+   */
+  talus: { angle: 165, halfAngle: 40, skirt: 110 },
 } as const;
 
 export const DOLERITE_RIDGE = {
@@ -183,9 +221,64 @@ export const WIT_DUINE = {
   brinkRadius: 12,
 } as const;
 
-export const GRUISGAT = { x: 1820, z: 1060, width: 140, depth: 100, pitDepth: 6 } as const;
+// ── Gruisgat: the old gravel quarry, the stunt park (design §3 Z11, §9 J7) ─────────────
+export type CompassDirection = 'north' | 'east' | 'south' | 'west';
 
-export const KLIPSPRINGER_POORT = { minX: 2340, maxX: 2410, narrowest: 12, wallHeight: 25 } as const;
+export interface QuarryHeap {
+  /** Top of the heap above its base, metres (J7: 2.5 / 3.5 / 4 / 6). */
+  height: number;
+  /** The lip, where a car leaves the heap. */
+  lip: Point2;
+  /** The way a car flies off the lip. */
+  launch: CompassDirection;
+  /** On the pit floor, or on the plain at the rim (it then throws a car into the pit). */
+  base: 'floor' | 'rim';
+}
+
+export interface QuarryRamp {
+  /** The rim side the ramp climbs out through. */
+  side: CompassDirection;
+  /** Position along that side: z on the west and east sides, x on the north and south sides. */
+  at: number;
+}
+
+export const GRUISGAT = {
+  x: 1820,
+  z: 1060,
+  /** The rim, a rounded rectangle. */
+  width: 140,
+  depth: 100,
+  pitDepth: 6,
+  /** Metres from the rim to the flat floor (and the rim's corner radius); the wall is steepest (0.45) half way down. */
+  wallWidth: 20,
+  ramp: { halfWidth: 5, slope: 0.2, sideSlope: 0.6 },
+  ramps: [{ side: 'west', at: 1078 }, { side: 'east', at: 1045 }] satisfies QuarryRamp[],
+  heap: { rampSlope: 0.3, backSlope: 0.75, sideSlope: 0.8, topHalfWidth: 3 },
+  heaps: [
+    { height: 6, lip: { x: 1845, z: 1045 }, launch: 'west', base: 'floor' },
+    { height: 4, lip: { x: 1790, z: 1078 }, launch: 'east', base: 'floor' },
+    { height: 3.5, lip: { x: 1815, z: 1010 }, launch: 'south', base: 'rim' },
+    { height: 2.5, lip: { x: 1890, z: 1062 }, launch: 'west', base: 'rim' },
+  ] satisfies QuarryHeap[],
+  /** Every heap has at least this much clear floor straight ahead of its lip (plan v3 J7). */
+  minLanding: 55,
+} as const;
+
+// ── Klipspringer Poort: the canyon through the dolerite ridge (design §3 Z10, §9 J8) ──
+export const KLIPSPRINGER_POORT = {
+  /** Floor width where the canyon is widest and where it is tightest, metres. */
+  width: { wide: 26, narrowest: 12 },
+  /** Share of the canyon's length where it is tightest, and over how much of it it narrows. */
+  tightestAt: 0.5,
+  tighteningLength: 0.35,
+  wallSlope: 2.4,
+  /** The rock steps a car drops down going south, in order (J8). Positions are shares of the canyon. */
+  steps: [{ at: 0.3, height: 0.5 }, { at: 0.55, height: 0.65 }, { at: 0.78, height: 0.8 }],
+  /** Horizontal metres each step face takes. */
+  stepRun: 1.6,
+  /** The canyon runs this far past where the ridge starts to rise, at each end. */
+  endMargin: 25,
+} as const;
 
 // ── routes (design §4) ─────────────────────────────────────────────────────────────────
 export type RouteKind = 'road' | 'track' | 'line';
@@ -203,6 +296,54 @@ const TAFELKOP_FOOT: Point2 = { x: 2250, z: 760 };
 export const ROAD_WIDTH = 7;
 export const ROAD_SHOULDER_WIDTH = 2;
 export const TRACK_WIDTH = 4;
+/** Track centre lines are smoothed and resampled at this step, metres (tighter than roads: hairpins). */
+export const TRACK_SPACING = 2;
+
+export type TrackCover = 'gravel' | 'dirt';
+
+/** How a track is graded into the ground (plan v3 S3-1). */
+export interface TrackGrading {
+  /** Half the width of the running surface, metres. */
+  halfWidth: number;
+  /** Steepest grade along the line before any rock step. */
+  maxGrade: number;
+  /**
+   * Where the ground is uneven the line goes between the highest (fill) and lowest (cut) line the
+   * grade allows: 0 cuts all the way, 1 fills all the way.
+   */
+  fillShare: number;
+  /** Beside the running surface: the cut face rises at `cutSlope`, the fill falls at `fillSlope`. */
+  cutSlope: number;
+  fillSlope: number;
+  cover: TrackCover;
+  /** Waypoint indices between which the line climbs at one steady grade, whatever the ground. */
+  steadyClimb: { from: number; to: number } | null;
+  /** Waypoint indices of hairpin apexes, where the running surface widens to `hairpinHalfWidth`. */
+  hairpins: readonly number[];
+  hairpinHalfWidth: number;
+  /** Rock steps along the line: how many, how high, how long each face is, and between which waypoints. */
+  rockSteps: { count: number; height: number; run: number; from: number; to: number } | null;
+}
+
+export const TRACK_GRADING: Readonly<Record<string, TrackGrading>> = {
+  // Design §4: rock and gravel, boulder steps, slope up to 0.35 (steps included).
+  'Koppie Klim': {
+    halfWidth: 2.5, maxGrade: 0.24, fillShare: 0.65, cutSlope: 1.2, fillSlope: 1.0, cover: 'gravel',
+    steadyClimb: null, hairpins: [], hairpinHalfWidth: 2.5,
+    rockSteps: { count: 5, height: 0.35, run: 1.2, from: 2, to: 4 },
+  },
+  // Design §4: 45 m at 10–15 %, three hairpins, a drop on the outside.
+  'Tafelkop Pas': {
+    halfWidth: 2.5, maxGrade: 0.145, fillShare: 0.5, cutSlope: 1.3, fillSlope: 0.9, cover: 'gravel',
+    steadyClimb: { from: 1, to: 19 }, hairpins: [6, 12, 18], hairpinHalfWidth: 7, rockSteps: null,
+  },
+  // Design §4: dirt, then the canyon floor with its rock steps. Its sides stay as gentle as the
+  // dunes it crosses, so the dune field keeps its slope limit.
+  'Klipspringer Poort': {
+    halfWidth: 2.5, maxGrade: 0.12, fillShare: 0.5, cutSlope: 0.5, fillSlope: 0.5, cover: 'dirt',
+    steadyClimb: null, hairpins: [], hairpinHalfWidth: 2.5, rockSteps: null,
+  },
+};
 
 export const ROUTES: readonly Route[] = [
   { name: 'Spine', kind: 'road', points: [FARM_GATE, { x: 1560, z: 1800 }, { x: 1560, z: 1340 }, KOPPIE_JUNCTION] },
@@ -229,7 +370,17 @@ export const ROUTES: readonly Route[] = [
       { x: 2390, z: 2330 }, { x: 2420, z: 2560 },
     ],
   },
-  { name: 'Tafelkop Pas', kind: 'track', points: [TAFELKOP_FOOT, { x: 2380, z: 630 }, { x: 2370, z: 600 }] },
+  // Three hairpins on the talus of the west-south-west face, each a 180° turn of about 7 m radius,
+  // then along the top to the overlook. The radii follow the talus, so the cuts and fills stay small.
+  {
+    name: 'Tafelkop Pas', kind: 'track', points: [
+      TAFELKOP_FOOT, { x: 2271, z: 645 }, { x: 2265, z: 622 }, { x: 2261, z: 598 }, { x: 2260, z: 575 },
+      { x: 2262, z: 553 }, { x: 2267, z: 536 }, { x: 2276, z: 551 }, { x: 2283, z: 569 }, { x: 2292, z: 585 },
+      { x: 2303, z: 601 }, { x: 2315, z: 615 }, { x: 2329, z: 622 }, { x: 2326, z: 607 }, { x: 2318, z: 592 },
+      { x: 2312, z: 577 }, { x: 2308, z: 561 }, { x: 2305, z: 546 }, { x: 2311, z: 532 }, { x: 2319, z: 543 },
+      { x: 2348, z: 561 }, { x: 2366, z: 591 }, { x: 2370, z: 600 },
+    ],
+  },
   {
     name: 'Koppie Klim', kind: 'track', points: [
       KOPPIE_JUNCTION, { x: 1640, z: 860 }, { x: 1600, z: 780 }, { x: 1640, z: 720 }, { x: 1570, z: 650 },
@@ -293,6 +444,8 @@ export const PADS: readonly PadDef[] = [
     rise: DORP_YARD.rise,
   },
   { name: 'Tafelkop overlook', shape: { kind: 'circle', x: 2370, z: 600, radius: 12 }, blend: 10, rise: 0.3 },
+  // Where the Koppie Klim ends: a place to stop and look south over the dam to the pan (design §8).
+  { name: 'Koppie saddle', shape: { kind: 'circle', x: 1570, z: 650, radius: 8 }, blend: 8, rise: 0.2 },
   // The pan start line (M5) has no pad: it lies on Die Myl where the road leans down to the salt,
   // and a level pad there would put a sharp crest in the flat-out line. The graded road is its flat.
 ];

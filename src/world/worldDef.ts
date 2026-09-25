@@ -14,9 +14,13 @@ import { panInsideDistance } from './terrain/pan';
 import { bedHalfWidthAt, DIE_SPRONG_FRAME, riverSampleAt } from './terrain/river';
 import { inDuneField } from './terrain/dunes';
 import { WHOOPS_END_X, WHOOPS_START_X } from './terrain/crests';
+import { nearestTrack } from './terrain/tracks';
+import { inQuarryLane, poortSampleAt } from './terrain/cuts';
+import { applyLandforms } from './terrain/landforms';
 
 export { smoothstep, lerp } from './blend';
 export { borderDistance, borderFaceDepth } from './terrain/border';
+export { rockKindAt, type RockKind } from './terrain/landforms';
 
 export const WORLD_SIZE = MAP_SIZE;
 export const WORLD_CHUNKS = WORLD_SIZE / CHUNK_SIZE;
@@ -84,16 +88,40 @@ function inDieSprongCorridor(x: number, z: number): boolean {
     && across <= frame.landingEdge + 3 * DIE_SPRONG.landingLength;
 }
 
+/** Room kept clear on each side of a track's running surface. */
+const TRACK_CLEARANCE = 2;
+
 /**
  * True where no natural prop may stand: the spawn top, pads, the salt, the river bed, the dune
- * field (design: no solids there), and the run-ins and landings of J1, J4 and J6.
+ * field (design: no solids there), the run-ins and landings of J1, J4, J6 and the quarry heaps (J7),
+ * the quarry ramps, and the running surface of every track.
  */
 export function isPropExcluded(x: number, z: number): boolean {
   if (Math.hypot(x - SPAWN_RISE.x, z - SPAWN_RISE.z) < SPAWN_RISE.top + SPAWN_CLEARANCE) return true;
   if (panInsideDistance(x, z) >= 0 || padAt(x, z) !== null || inEersteBultLanding(x, z)) return true;
   if (inDuneField(x, z) || inWhoopsLane(x, z) || inDieSprongCorridor(x, z)) return true;
+  if (inQuarryLane(x, z) || nearestTrack(x, z, TRACK_CLEARANCE) !== null) return true;
   const river = riverSampleAt(x, z);
   return river !== null && river.distance <= bedHalfWidthAt(river.along);
+}
+
+// ── rock zones (plan v3 S3-2 reads them for its prop densities) ───────────────────────
+export type RockZone = 'koppie' | 'poort' | 'ridge';
+
+/** A landform counts as its rock zone from this share of its height up. */
+const ROCK_ZONE_SHARE = 0.05;
+
+/**
+ * Which rocky zone (x, z) is in: a koppie or the Klim spur, the floor and walls of the Klipspringer
+ * Poort, or the rest of the dolerite ridge. Null elsewhere.
+ */
+export function rockZoneAt(x: number, z: number): RockZone | null {
+  const canyon = poortSampleAt(x, z);
+  const landform = applyLandforms(0, x, z);
+  if (canyon && landform.kind === 'ridge' && canyon.surface < landform.height + canyon.floor) return 'poort';
+  if (landform.kind === 'spur' || (landform.kind === 'koppie' && landform.share > ROCK_ZONE_SHARE)) return 'koppie';
+  if (landform.kind === 'ridge' && landform.share > ROCK_ZONE_SHARE) return 'ridge';
+  return null;
 }
 
 // ── roads ─────────────────────────────────────────────────────────────

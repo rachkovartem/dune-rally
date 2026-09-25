@@ -4,6 +4,7 @@
 import type { Point2 } from './polyline';
 import { DIE_SPRONG, EERSTE_BULT, NURSERY_WHOOPS, SANDRIVIER, WIT_DUINE, type JumpId } from './mapLayout';
 import { whoopsCrestRadius } from './terrain/crests';
+import { HEAP_LANDINGS, POORT_LENGTH, POORT_STEPS } from './terrain/cuts';
 
 /** Speed (m/s) at which a car on a convex crest of `radius` metres goes light: v = √(g·R). */
 export function crestLiftSpeed(radius: number, gravity: number): number {
@@ -28,7 +29,7 @@ export function ballisticRange(speed: number, angle: number, launchHeight: numbe
   return Math.max(0, along * flightTime);
 }
 
-export type JumpKind = 'roadCrest' | 'driftEdge' | 'whoops' | 'duneBrink' | 'gapJump';
+export type JumpKind = 'roadCrest' | 'driftEdge' | 'whoops' | 'duneBrink' | 'gapJump' | 'heapKicker' | 'rockStep';
 
 export interface JumpDef {
   id: JumpId;
@@ -46,7 +47,7 @@ const DRIFT_LANDING = 30;
 const WHOOPS_LANDING = 60;
 const BRINK_LANDING = 40;
 
-/** The jumps built so far (J3, J7 and J8 come with the dam, the quarry and the poort). */
+/** The jumps built so far (J3 comes with the dam). */
 export const JUMPS: readonly JumpDef[] = [
   { id: 'J1', kind: 'roadCrest', position: { x: EERSTE_BULT.x, z: EERSTE_BULT.z }, radius: EERSTE_BULT.radius, landingLength: EERSTE_BULT.landingLength },
   ...SANDRIVIER.drifts.map((drift): JumpDef => ({ id: 'J2', kind: 'driftEdge', position: drift, radius: DRIFT_EDGE_RADIUS, landingLength: DRIFT_LANDING })),
@@ -59,4 +60,13 @@ export const JUMPS: readonly JumpDef[] = [
   },
   { id: 'J5', kind: 'duneBrink', position: { x: WIT_DUINE.bigDaddy.x, z: WIT_DUINE.bigDaddy.z }, radius: WIT_DUINE.brinkRadius, landingLength: BRINK_LANDING },
   { id: 'J6', kind: 'gapJump', position: { x: DIE_SPRONG.x, z: DIE_SPRONG.z }, radius: null, landingLength: DIE_SPRONG.landingLength },
+  ...HEAP_LANDINGS.map((landing): JumpDef => ({ id: 'J7', kind: 'heapKicker', position: landing.heap.lip, radius: null, landingLength: landing.clearLength })),
+  // Each rock step drops the poort floor; the clear ground after it runs to the next step.
+  ...POORT_STEPS.map((step, index): JumpDef => ({
+    id: 'J8',
+    kind: 'rockStep',
+    position: step.point,
+    radius: null,
+    landingLength: (index + 1 < POORT_STEPS.length ? POORT_STEPS[index + 1].along : POORT_LENGTH) - step.along,
+  })),
 ];

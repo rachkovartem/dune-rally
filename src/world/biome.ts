@@ -3,12 +3,14 @@ import { createNoise2D } from 'simplex-noise';
 import { mulberry32 } from './rng';
 import { DAM, SPAWN_RISE } from './mapLayout';
 import { plainHeight } from './terrain/basePlain';
-import { applyLandforms } from './terrain/landforms';
+import { applyLandforms, isDoleriteAt } from './terrain/landforms';
 import { borderAt } from './terrain/border';
 import { inDuneField } from './terrain/dunes';
 import { panWeight } from './terrain/pan';
 import { padAt } from './terrain/pads';
 import { riverSampleAt, RIVER_LINE } from './terrain/river';
+import { inPoort, quarryPartAt } from './terrain/cuts';
+import { nearestTrack, onTrackStep } from './terrain/tracks';
 import { nearestRoad, ROAD_HALF, ROAD_SHOULDER } from './worldDef';
 
 // Coverage palette (hex; converted to vertex colours by the mesh builder).
@@ -74,6 +76,8 @@ const DELTA_FAN = { radius: 140, wander: 40 };
 const BANK_TOLERANCE = 0.25;
 const RIVER_END = RIVER_LINE[RIVER_LINE.length - 1];
 const BAR_PATCH_FREQUENCY = 1 / 45;
+/** A rock step on a track reads as bare rock this far before and after it. */
+const TRACK_STEP_ROCK = 1.5;
 
 export function createBiome(seed: number): Biome {
   // A little fixed-feel variation for the open desert ground (kept seed-deterministic).
@@ -91,6 +95,15 @@ export function createBiome(seed: number): Biome {
     if (padAt(x, z)) return 'gravel';
     const road = nearestRoad(x, z, ROAD_HALF + ROAD_SHOULDER);
     if (road) return road.dist <= ROAD_HALF ? 'gravel' : 'dirt';
+
+    // A track's running surface has the track's own cover, bare rock on its rock steps and in the
+    // poort. Beside it, the cut and fill faces take the cover of the ground they are part of.
+    const canyon = inPoort(x, z, height);
+    const track = nearestTrack(x, z, 0);
+    if (track) return canyon || onTrackStep(track, TRACK_STEP_ROCK) ? 'rock' : track.line.grading.cover;
+    if (canyon) return 'rock';
+    const quarry = quarryPartAt(x, z);
+    if (quarry) return quarry === 'wall' && slope > STEEP_ROCK ? 'rock' : 'gravel';
 
     // The salt first: where the river opens onto the pan, its sand spreads out as a fan.
     const pan = panWeight(x, z);
@@ -117,6 +130,7 @@ export function createBiome(seed: number): Biome {
     if (landform.kind === 'tafelkop' && landform.share > 0.97) return vary(x * 0.02, z * 0.02) > 0 ? 'gravel' : 'dryGrass';
     if (slope > STEEP_ROCK) return 'rock';
     if (landform.kind === 'koppie' && landform.share > 0.15) return slope > STEEP_GRAVEL ? 'rock' : 'gravel';
+    if (landform.kind === 'spur') return slope > STEEP_GRAVEL ? 'rock' : 'gravel';
     if (slope > STEEP_GRAVEL) return 'gravel';
 
     // The open plain: sand with patches of dry grass and hard dirt.
@@ -161,11 +175,8 @@ export function surfaceTintAt(x: number, z: number, cover: Cover): SurfaceTintId
     case 'salt': return 'salt';
     case 'gravel': return 'gravel';
     case 'mud': return 'mud';
-    case 'rock': {
-      // The dolerite ridge is darker than the granite koppies and the border ranges.
-      const landform = applyLandforms(0, x, z);
-      return landform.kind === 'ridge' && landform.share > 0.1 ? 'dolerite' : 'plain';
-    }
+    // The dolerite ridge (and the poort cut into it) is darker than the granite koppies and the ranges.
+    case 'rock': return isDoleriteAt(x, z) ? 'dolerite' : 'plain';
     default: return 'plain';
   }
 }
