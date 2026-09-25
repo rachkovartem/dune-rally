@@ -1,10 +1,10 @@
 // server/arenaSim.test.ts
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  ArenaSim, INPUT_TIMEOUT_SECONDS, lowestFreeSlot, POSE_SNAP_ANGLE, POSE_SNAP_DISTANCE, releasedInput, SIM_STEP_SECONDS, type PlayerTransform,
+  ArenaSim, lowestFreeSlot, POSE_SNAP_ANGLE, POSE_SNAP_DISTANCE, releasedInput, SIM_STEP_SECONDS, type PlayerTransform,
 } from './arenaSim';
 import { forwardAxisOf, RESET_LIFT, upAxisOf } from '../shared/vehiclePhysics';
-import type { InputMsg, PoseMsg } from '../shared/protocol';
+import { INPUT_TIMEOUT_SECONDS, type InputMsg, type PoseMsg } from '../shared/protocol';
 import { SPAWN_SLOT_COUNT, spawnPoseFor } from '../src/world/worldDef';
 import { borderFaceDepth } from '../src/world/terrain/border';
 import { createHeightField } from '../src/world/noise';

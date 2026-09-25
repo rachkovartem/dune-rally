@@ -12,7 +12,7 @@ import { addChunkCollider, addFeatureColliders, addPropColliders } from '../src/
 import { propPlacementsInChunk } from '../src/world/propPlacement';
 import { createVehiclePhysics, RESET_LIFT, type VehiclePhysics } from '../shared/vehiclePhysics';
 import { WORLD_GRAVITY } from '../shared/drivetrain';
-import type { InputMsg, PoseMsg } from '../shared/protocol';
+import { INPUT_TIMEOUT_SECONDS, type InputMsg, type PoseMsg } from '../shared/protocol';
 import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
 import type { CarId } from '../src/vehicle/cars';
 import { createBiome, type Biome } from '../src/world/biome';
@@ -50,9 +50,9 @@ interface Player {
   spawnSlot: number;
 }
 
-// A client sends its input every frame. A hidden or frozen tab sends nothing, and the copy must not
-// keep driving on the pedals it last saw: after this long it gets pedals and steering released.
-export const INPUT_TIMEOUT_SECONDS = 0.5;
+// A client sends its input at most once per tick, plus a 150 ms heartbeat when it is unchanged.
+// A hidden or frozen tab sends nothing, and the copy must not keep driving on the pedals it last
+// saw: after INPUT_TIMEOUT_SECONDS (shared/protocol.ts) it gets pedals and steering released.
 const INPUT_TIMEOUT_STEPS = Math.round(INPUT_TIMEOUT_SECONDS / SIM_STEP_SECONDS);
 
 /** The last input with the pedals and steering released; the traction control and drive mode stay. */

@@ -6,6 +6,10 @@ export const SERVER_PORT = 2567;
 export const TICK_HZ = 30;
 export const PATCH_HZ = 20;
 
+// The server releases the pedals after this long without input; the client heartbeat interval
+// is derived from it (src/net/inputSendPolicy.ts), so both sides share one number.
+export const INPUT_TIMEOUT_SECONDS = 0.5;
+
 export interface InputMsg {
   throttle: number;
   brake: number;

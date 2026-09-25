@@ -1,6 +1,5 @@
 // src/net/inputSendPolicy.ts
-import { TICK_HZ, type InputMsg } from '../../shared/protocol';
-import { INPUT_TIMEOUT_SECONDS } from '../../server/arenaSim';
+import { INPUT_TIMEOUT_SECONDS, TICK_HZ, type InputMsg } from '../../shared/protocol';
 
 /** The server reads input once per tick, so sending faster only fills the socket. */
 export const MIN_INPUT_INTERVAL_MS = 1000 / TICK_HZ;
