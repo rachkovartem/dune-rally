@@ -19,13 +19,26 @@ export class Keyboard {
   private onDown = (e: KeyboardEvent) => this.keys.add(this.token(e));
   private onUp = (e: KeyboardEvent) => this.keys.delete(this.token(e));
 
+  // A key held while the page loses focus never gets its keyup, so it would stay held forever.
+  releaseAll = () => this.keys.clear();
+
+  private onVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') this.releaseAll();
+  };
+
   constructor() {
     window.addEventListener('keydown', this.onDown);
     window.addEventListener('keyup', this.onUp);
+    window.addEventListener('blur', this.releaseAll);
+    window.addEventListener('pagehide', this.releaseAll);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
 
   dispose() {
     window.removeEventListener('keydown', this.onDown);
     window.removeEventListener('keyup', this.onUp);
+    window.removeEventListener('blur', this.releaseAll);
+    window.removeEventListener('pagehide', this.releaseAll);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
   }
 }
