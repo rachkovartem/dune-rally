@@ -57,9 +57,11 @@ export const PAJERO_CONFIG: VehicleConfig = {
     radius: 0.44,
     width: 0.45,
     suspensionRestLength: 0.5,
-    suspensionStiffness: 34,
-    suspensionCompression: 0.85,
-    suspensionRelaxation: 0.9,
+    // Soft enough that at real gravity the spring sags as far as it did at 20 m/s², so the wheels
+    // can drop that far over a crest; rebound damps harder than bump so the body does not bounce off.
+    suspensionStiffness: 17,
+    suspensionCompression: 1.5,
+    suspensionRelaxation: 3,
     maxSuspensionTravel: 0.55,
     maxSuspensionForce: 60000,
     frictionSlip: 3.4,
@@ -110,14 +112,14 @@ export const PAJERO_CONFIG: VehicleConfig = {
   maxSteer: 0.42,
   steerSpeed: 2.2,      // slow steering ramp → heavy, deliberate turn-in
   maxLateralAcceleration: 9,
-  rollMomentArm: 0.7,
+  rollMomentArm: 0.45,
   steeredWheels: [0, 1],
   drivenWheels: [0, 1, 2, 3], // AWD
 
   restitution: 0.12,
   friction: 0.6,
 
-  gripOverrides: { sand: 0.75, mud: 0.62, rock: 0.95, gravel: 0.95 },
+  gripOverrides: { sand: 0.75, mud: 0.62, rock: 0.9, gravel: 0.95 },
 };
 
 // Subaru Forester 2.5i (SK, FB25, Lineartronic CVT, symmetrical AWD). Wheel geometry is the
@@ -134,9 +136,9 @@ export const FORESTER_CONFIG: VehicleConfig = {
     radius: 0.36,
     width: 0.25,
     suspensionRestLength: 0.6,
-    suspensionStiffness: 42,
-    suspensionCompression: 1.0,
-    suspensionRelaxation: 1.1,
+    suspensionStiffness: 21,
+    suspensionCompression: 1.5,
+    suspensionRelaxation: 3,
     maxSuspensionTravel: 0.45,
     maxSuspensionForce: 50000,
     frictionSlip: 3.2,
@@ -187,7 +189,7 @@ export const FORESTER_CONFIG: VehicleConfig = {
   maxSteer: 0.5,
   steerSpeed: 3.2,
   maxLateralAcceleration: 11,
-  rollMomentArm: 0.3,
+  rollMomentArm: 0.17,
   steeredWheels: [0, 1],
   drivenWheels: [0, 1, 2, 3],
 

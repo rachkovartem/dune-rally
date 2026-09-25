@@ -3,9 +3,9 @@
 // numbers drive the local car, the server copy and the bench, and the rpm/gear can feed engine sound.
 
 export const STANDARD_GRAVITY = 9.81;
-// Downward pull of every Rapier world in the game (client, server, bench), m/s². It is arcade
-// strength, about twice the real value, and it sets how far the suspension sags at rest.
-export const WORLD_GRAVITY = 20;
+// Downward pull of every Rapier world in the game (client, server, bench), m/s². It is the real
+// value, so the tyre forces and the bodies fall under the same gravity.
+export const WORLD_GRAVITY = STANDARD_GRAVITY;
 export const AIR_DENSITY = 1.225;
 
 const RAD_PER_SEC_TO_RPM = 60 / (2 * Math.PI);
@@ -246,16 +246,17 @@ export function driveForce(
 /**
  * The tyre force to hand to a rigid body of plain mass so that, while driving, the car
  * accelerates as if it had mass × rotatingMassFactor. Top speed is unchanged: at a steady speed
- * the net force is 0 either way. `aeroAlongNose` is the signed air drag along the nose.
+ * the net force is 0 either way. `externalAlongNose` is the signed sum of the forces along the nose
+ * that Rapier applies by itself: air drag and the pull of gravity on a slope.
  */
 export function withRotatingMass(
   spec: DrivetrainSpec,
   tyreForce: number,
-  aeroAlongNose: number,
+  externalAlongNose: number,
   intent: PedalIntent,
 ): number {
   if (intent.drive <= 0) return tyreForce;
-  return (tyreForce + aeroAlongNose) / spec.rotatingMassFactor - aeroAlongNose;
+  return (tyreForce + externalAlongNose) / spec.rotatingMassFactor - externalAlongNose;
 }
 
 export function aeroDragForce(spec: DrivetrainSpec, speed: number): number {

@@ -4,7 +4,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import type { VehicleConfig } from '../src/vehicle/vehicleConfig';
 import type { InputMsg } from './protocol';
 import {
-  STANDARD_GRAVITY,
+  WORLD_GRAVITY,
   aeroDragForce,
   createDrivetrainState,
   driveForce,
@@ -176,8 +176,13 @@ export function createVehiclePhysics(
       // All tyre forces go through the wheels that touch the ground: a car on its roof gets no push.
       const drivenInContact = config.drivenWheels.filter((wheelIndex) => controller.wheelIsInContact(wheelIndex));
       const contacts = wheelsInContact();
-      const normalForce = (config.chassis.mass * STANDARD_GRAVITY * contacts) / wheelCount;
+      // On a slope only the part of the weight across the ground presses the tyres down, so
+      // traction and rolling resistance shrink with cos θ and a steep face cannot be climbed.
+      const uprightShare = Math.max(0, upAxisOf(body.rotation()).y);
+      const normalForce = (config.chassis.mass * WORLD_GRAVITY * uprightShare * contacts) / wheelCount;
       const aeroAlongNose = airSpeed > 1e-3 ? (-aeroDrag * alongNose) / airSpeed : 0;
+      // Without the slope pull here, a steady climb would lose the rotating-mass share of its traction.
+      const gravityAlongNose = -config.chassis.mass * WORLD_GRAVITY * forwardAxisOf(body.rotation()).y;
       const tyreForce = drivenInContact.length === 0 ? 0 : withRotatingMass(spec, longitudinalForce(spec, {
         driveForce: driveForce(spec, drivetrainState, intent, alongNose),
         intent,
@@ -188,7 +193,7 @@ export function createVehiclePhysics(
         brakeForce: config.brakeForce,
         mass: config.chassis.mass,
         dt,
-      }), aeroAlongNose, intent);
+      }), aeroAlongNose + gravityAlongNose, intent);
       // Negative engine force drives the chassis toward its own front (+Z, away from the chase camera).
       const perWheel = drivenInContact.length === 0 ? 0 : -tyreForce / drivenInContact.length;
       for (const wheelIndex of config.drivenWheels) {

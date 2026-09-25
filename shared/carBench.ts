@@ -10,7 +10,7 @@ import { WORLD_GRAVITY } from './drivetrain';
 
 // Same step as the game's client and server worlds.
 const BENCH_STEP = 1 / 60;
-const SETTLE_SECONDS = 1.5;
+const SETTLE_SECONDS = 3;
 const GROUND_HALF_SIZE = 5000;
 const KMH = 1 / 3.6;
 
@@ -21,15 +21,24 @@ export interface BenchCar {
   time: number;
 }
 
-/** A settled car standing on a flat, endless ground, heading +Z. */
-export function createBenchCar(config: VehicleConfig): BenchCar {
+function createBenchWorld(): RAPIER.World {
   const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY, z: 0 });
   world.timestep = BENCH_STEP;
+  return world;
+}
+
+function addFlatGround(world: RAPIER.World): void {
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(GROUND_HALF_SIZE, 0.5, GROUND_HALF_SIZE).setTranslation(0, -0.5, 0),
     ground,
   );
+}
+
+/** A settled car standing on a flat, endless ground, heading +Z. */
+export function createBenchCar(config: VehicleConfig): BenchCar {
+  const world = createBenchWorld();
+  addFlatGround(world);
   const vehicle = createVehiclePhysics(world, { x: 0, y: 2.5, z: 0 }, config);
   const car: BenchCar = { world, vehicle, time: 0 };
   for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, 1);
@@ -227,4 +236,209 @@ export function runRollover(config: VehicleConfig, heading: number, slideSpeed: 
     headingAfterReset,
     progressAlongNose,
   };
+}
+
+/** Holds a forward speed with full throttle below it and none above it. */
+function throttleToHold(car: BenchCar, speed: number): number {
+  return car.vehicle.forwardSpeed() < speed ? 1 : 0;
+}
+
+const isUpsideDown = (rotation: Quaternion): boolean => 1 - 2 * (rotation.x * rotation.x + rotation.z * rotation.z) < 0;
+
+// Road profile of a crest across +Z: a concave arc from flat into a straight ramp, a convex arc of
+// the asked radius over the top, and the same shape down. Heights in metres at a distance z.
+const CREST_RAMP_ANGLE = (10 * Math.PI) / 180;
+const CREST_RAMP_LENGTH = 15;
+const CREST_START_Z = 600;
+const CREST_SAMPLE_STEP = 0.25;
+const CREST_HALF_WIDTH = 20;
+
+interface CrestProfile {
+  heightAt(z: number): number;
+  /** Where the convex arc over the top starts and ends. */
+  convexStartZ: number;
+  convexEndZ: number;
+  endZ: number;
+}
+
+function crestProfile(radius: number): CrestProfile {
+  const angle = CREST_RAMP_ANGLE;
+  // The concave foot uses the same radius as the crest, so the shape is symmetric in curvature.
+  const arcRun = radius * Math.sin(angle);
+  const arcRise = radius * (1 - Math.cos(angle));
+  const rampRun = CREST_RAMP_LENGTH * Math.cos(angle);
+  const rampRise = CREST_RAMP_LENGTH * Math.sin(angle);
+  const footEnd = CREST_START_Z + arcRun;
+  const rampEnd = footEnd + rampRun;
+  const top = rampEnd + arcRun;
+  const topHeight = arcRise + rampRise + arcRise;
+  const halfLength = top - CREST_START_Z;
+  const risingHeight = (distance: number): number => {
+    if (distance <= 0) return 0;
+    const z = CREST_START_Z + distance;
+    if (z <= footEnd) return radius - Math.sqrt(radius * radius - distance * distance);
+    if (z <= rampEnd) return arcRise + (z - footEnd) * Math.tan(angle);
+    const fromTop = Math.min(radius, top - z);
+    return topHeight - (radius - Math.sqrt(radius * radius - fromTop * fromTop));
+  };
+  return {
+    heightAt(z: number): number {
+      const distance = z - CREST_START_Z;
+      if (distance <= halfLength) return risingHeight(distance);
+      return risingHeight(Math.max(0, 2 * halfLength - distance));
+    },
+    convexStartZ: rampEnd,
+    convexEndZ: top + arcRun,
+    endZ: CREST_START_Z + 2 * halfLength,
+  };
+}
+
+function addProfileGround(world: RAPIER.World, heightAt: (z: number) => number, fromZ: number, toZ: number): void {
+  const vertices: number[] = [];
+  const indices: number[] = [];
+  const rows = Math.ceil((toZ - fromZ) / CREST_SAMPLE_STEP);
+  for (let row = 0; row <= rows; row++) {
+    const z = fromZ + row * CREST_SAMPLE_STEP;
+    const y = heightAt(z);
+    vertices.push(-CREST_HALF_WIDTH, y, z, CREST_HALF_WIDTH, y, z);
+    if (row > 0) {
+      const base = (row - 1) * 2;
+      indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+    }
+  }
+  const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(vertices), new Uint32Array(indices)), ground);
+}
+
+export interface CrestResult {
+  /** Fewest wheels touching the ground at any step while the car crossed the convex top. */
+  minWheelsInContact: number;
+  /** Seconds with no wheel on the ground over the whole crest. */
+  airSeconds: number;
+  flipped: boolean;
+}
+
+/**
+ * Drives straight at `speed` over a crest whose top is a circular arc of `crestRadius` (10° ramps
+ * each side). The throttle holds the speed on the way up, so the car arrives at the top near it.
+ */
+export function runCrest(config: VehicleConfig, crestRadius: number, speed: number): CrestResult {
+  const profile = crestProfile(crestRadius);
+  const world = createBenchWorld();
+  addProfileGround(world, profile.heightAt, -50, profile.endZ + 400);
+  const vehicle = createVehiclePhysics(world, { x: 0, y: 2.5, z: 0 }, config);
+  const car: BenchCar = { world, vehicle, time: 0 };
+  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, 1);
+  while (vehicle.forwardSpeed() < speed) {
+    if (car.time > 120 || vehicle.body.translation().z > CREST_START_Z) {
+      throw new Error(`runCrest: the car did not reach ${speed} m/s before the crest`);
+    }
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, 1);
+  }
+  let minWheelsInContact = config.wheel.positions.length;
+  let airSeconds = 0;
+  let flipped = false;
+  const startTime = car.time;
+  while (vehicle.body.translation().z < profile.endZ + 60) {
+    if (car.time - startTime > 60) throw new Error('runCrest: the car did not cross the crest within 60 s');
+    stepBenchCar(car, { throttle: throttleToHold(car, speed), brake: 0, steer: 0 }, 1);
+    const z = vehicle.body.translation().z;
+    const contacts = vehicle.wheelsInContact();
+    if (z >= profile.convexStartZ && z <= profile.convexEndZ) minWheelsInContact = Math.min(minWheelsInContact, contacts);
+    if (contacts === 0 && z >= CREST_START_Z) airSeconds += BENCH_STEP;
+    if (isUpsideDown(vehicle.body.rotation())) flipped = true;
+  }
+  return { minWheelsInContact, airSeconds, flipped };
+}
+
+const HILL_HALF_WIDTH = 20;
+const HILL_RISE = 12;
+const HILL_SECONDS = 30;
+
+export interface HillClimbResult {
+  reachedTop: boolean;
+  /** Highest point the car reached, as metres of height above the foot of the slope. */
+  bestProgress: number;
+}
+
+/**
+ * Full throttle from a standstill up a straight slope of `slope` (rise over run, tan θ) that
+ * climbs HILL_RISE metres, with the car's grip for that ground. The car starts on the slope.
+ */
+export function runHillClimb(config: VehicleConfig, slope: number, grip: number): HillClimbResult {
+  const angle = Math.atan(slope);
+  const length = HILL_RISE / Math.sin(angle);
+  const world = createBenchWorld();
+  const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  const tilt = { x: -Math.sin(angle / 2), y: 0, z: 0, w: Math.cos(angle / 2) };
+  const normal = { y: Math.cos(angle), z: -Math.sin(angle) };
+  // The slope box's top face runs from (0, 0, 0) up to the top edge; its centre sits half a
+  // thickness below the middle of that face.
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(HILL_HALF_WIDTH, 0.5, length / 2)
+      .setRotation(tilt)
+      .setTranslation(0, (length / 2) * Math.sin(angle) - 0.5 * normal.y, (length / 2) * Math.cos(angle) - 0.5 * normal.z),
+    ground,
+  );
+  const topZ = length * Math.cos(angle);
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(HILL_HALF_WIDTH, 0.5, 100).setTranslation(0, HILL_RISE - 0.5, topZ + 100),
+    ground,
+  );
+  world.createCollider(RAPIER.ColliderDesc.cuboid(HILL_HALF_WIDTH, 0.5, 100).setTranslation(0, -0.5, -100), ground);
+
+  const startAlong = 4;
+  const lift = 1.2;
+  const vehicle = createVehiclePhysics(world, {
+    x: 0,
+    y: startAlong * Math.sin(angle) + lift * normal.y,
+    z: startAlong * Math.cos(angle) + lift * normal.z,
+  }, config);
+  vehicle.body.setRotation(tilt, true);
+  const car: BenchCar = { world, vehicle, time: 0 };
+  const footHeight = 0;
+  let bestProgress = 0;
+  while (car.time < HILL_SECONDS) {
+    stepBenchCar(car, { throttle: 1, brake: 0, steer: 0 }, grip);
+    const position = vehicle.body.translation();
+    // Height of the ground under the car's centre, so a car lying on the slope still counts.
+    const groundHeight = Math.min(HILL_RISE, Math.max(footHeight, position.z * slope));
+    bestProgress = Math.max(bestProgress, groundHeight);
+    if (position.z > topZ + 5) return { reachedTop: true, bestProgress: HILL_RISE };
+  }
+  return { reachedTop: false, bestProgress };
+}
+
+export interface DropSettleResult {
+  /** Seconds from the release until the body stays within 5 mm of its resting height. */
+  settleSeconds: number;
+  /** Highest rebound above the resting height after the first compression, metres. */
+  maxBounce: number;
+}
+
+const SETTLE_BAND = 0.005;
+const DROP_RUN_SECONDS = 5;
+
+/** Lifts a settled car by `dropHeight`, lets it fall on flat ground and watches it come to rest. */
+export function runDropSettle(config: VehicleConfig, dropHeight: number): DropSettleResult {
+  const car = createBenchCar(config);
+  for (let step = 0; step < SETTLE_SECONDS / BENCH_STEP; step++) stepBenchCar(car, IDLE, 1);
+  const body = car.vehicle.body;
+  const restingY = body.translation().y;
+  const start = body.translation();
+  body.setTranslation({ x: start.x, y: restingY + dropHeight, z: start.z }, true);
+  body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  const releaseTime = car.time;
+  let lastOutsideBand = 0;
+  let compressed = false;
+  let maxBounce = 0;
+  while (car.time - releaseTime < DROP_RUN_SECONDS) {
+    stepBenchCar(car, IDLE, 1);
+    const offset = body.translation().y - restingY;
+    if (offset < 0) compressed = true;
+    if (compressed) maxBounce = Math.max(maxBounce, offset);
+    if (Math.abs(offset) > SETTLE_BAND) lastOutsideBand = car.time - releaseTime;
+  }
+  return { settleSeconds: lastOutsideBand, maxBounce };
 }
