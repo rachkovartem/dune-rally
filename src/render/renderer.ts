@@ -49,6 +49,9 @@ export function createRenderer(canvas: HTMLCanvasElement, sky: SkyTextures): Ren
   renderer.shadowMap.type = THREE.VSMShadowMap;
 
   const scene = new THREE.Scene();
+  // The root never moves. Left on, its per-frame matrix update forces every object in the world to
+  // recompute its world matrix, which was most of the main thread once the map filled with props.
+  scene.matrixAutoUpdate = false;
   const camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, CAMERA_NEAR, QUALITY_TIERS[DEFAULT_QUALITY].cameraFar);
   camera.position.set(0, 30, 40);
   camera.lookAt(0, 0, 0);

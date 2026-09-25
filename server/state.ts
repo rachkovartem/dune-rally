@@ -6,12 +6,15 @@ export class PlayerState extends Schema {
   qx = 0; qy = 0; qz = 0; qw = 1;
   name = '';
   carId = '';
+  /** Where the car started (spawnPoseFor); -1 until the server has given the player a slot. */
+  spawnSlot = -1;
 }
 defineTypes(PlayerState, {
   x: 'number', y: 'number', z: 'number',
   qx: 'number', qy: 'number', qz: 'number', qw: 'number',
   name: 'string',
   carId: 'string',
+  spawnSlot: 'number',
 });
 
 export class ArenaState extends Schema {

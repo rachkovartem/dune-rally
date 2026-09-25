@@ -8,7 +8,8 @@ import type { SolidProp } from '../render/polyProps';
 import type { Knockables } from '../render/knockables';
 import type { Biome } from './biome';
 import type { Height2D } from './noise';
-import type { TerrainChunkJob, TerrainChunkResult } from './terrainWorker';
+import type { TerrainChunkJob, TerrainChunkResult, TerrainFarJob, TerrainWorkerResult } from './terrainWorker';
+import type { FarGrid } from './farGrid';
 import type { MovingCar } from '../../shared/chunkDemand';
 
 export interface TerrainPhysicsHooks {
@@ -83,6 +84,8 @@ export class TerrainManager {
   private readonly meshTimings = new Timings();
   private readonly colliderTimings = new Timings();
   private mostBuildsInOneFrame = 0;
+  private readonly drawnChunks = new Map<string, ChunkCoord>();
+  private readonly drawnListeners: ((chunk: ChunkCoord, drawn: boolean) => void)[] = [];
 
   constructor(
     private seed: number,
@@ -93,7 +96,34 @@ export class TerrainManager {
     private physics?: TerrainPhysicsHooks,
   ) {
     this.worker = new Worker(new URL('./terrainWorker.ts', import.meta.url), { type: 'module' });
-    this.worker.onmessage = (event: MessageEvent<TerrainChunkResult>) => this.onChunk(event.data);
+    this.worker.onmessage = (event: MessageEvent<TerrainWorkerResult>) => {
+      if (event.data.kind !== 'chunk') throw new Error(`TerrainManager: the chunk worker answered a "${event.data.kind}" job it was never sent`);
+      this.onChunk(event.data);
+    };
+  }
+
+  /** Builds the coarse whole-map grid on a worker of its own, so the chunk queue near the car does not wait behind it. */
+  requestFarGrid(step: number, margin: number): Promise<FarGrid> {
+    const farWorker = new Worker(new URL('./terrainWorker.ts', import.meta.url), { type: 'module' });
+    return new Promise<FarGrid>((resolve, reject) => {
+      farWorker.onmessage = (event: MessageEvent<TerrainWorkerResult>) => {
+        farWorker.terminate();
+        if (event.data.kind === 'far') resolve(event.data.grid);
+        else reject(new Error(`TerrainManager: the far-grid worker answered with a "${event.data.kind}" result`));
+      };
+      farWorker.onerror = (event) => {
+        farWorker.terminate();
+        reject(new Error(`TerrainManager: the far-grid worker failed: ${event.message}`));
+      };
+      const job: TerrainFarJob = { kind: 'far', seed: this.seed, step, margin };
+      farWorker.postMessage(job);
+    });
+  }
+
+  /** Called with every chunk whose near mesh is added to or removed from the scene, in that same frame. */
+  onDrawnChange(listener: (chunk: ChunkCoord, drawn: boolean) => void): void {
+    this.drawnListeners.push(listener);
+    for (const chunk of this.drawnChunks.values()) listener(chunk, true);
   }
 
   private onChunk(result: TerrainChunkResult) {
@@ -162,6 +192,8 @@ export class TerrainManager {
     const mesh = buildTerrainMesh({ heights, covers }, origin.x, origin.z);
     this.scene.add(mesh);
     this.meshes.set(key, mesh);
+    this.drawnChunks.set(key, { cx, cz });
+    for (const listener of this.drawnListeners) listener({ cx, cz }, true);
     this.heights.set(key, heights);
 
     const scatter = createChunkScatter(cx, cz, this.seed, this.heightField, this.biome);
@@ -197,6 +229,11 @@ export class TerrainManager {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
       this.meshes.delete(key);
+    }
+    const drawn = this.drawnChunks.get(key);
+    if (drawn) {
+      this.drawnChunks.delete(key);
+      for (const listener of this.drawnListeners) listener(drawn, false);
     }
     const scatter = this.scatter.get(key);
     if (scatter) {

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { buildChunkGeometry } from '../world/chunkGeometry';
 import { coverFromIndex, type Cover } from '../world/biome';
 import type { ChunkSurface } from '../world/chunkSurface';
-import { borderDepth, smoothstep } from '../world/worldDef';
+import { borderFaceDepth, smoothstep } from '../world/worldDef';
 import { visualTerrainHeight } from './horizonShape';
 import { VERTS_PER_SIDE } from '../world/heightfieldData';
 
@@ -109,7 +109,7 @@ function withSkirts(geometry: THREE.BufferGeometry, verticesPerSide: number): vo
  * Smooth normals of a regular height grid from height differences to the neighbours (one-sided
  * on the chunk edge). A tenth of the cost of `computeVertexNormals`, which was most of a chunk build.
  */
-function gridNormals(positions: Float32Array, verticesPerSide: number): Float32Array {
+export function gridNormals(positions: Float32Array, verticesPerSide: number): Float32Array {
   const normals = new Float32Array(positions.length);
   const last = verticesPerSide - 1;
   const heightAt = (row: number, column: number): number => positions[(row * verticesPerSide + column) * 3 + 1];
@@ -134,9 +134,9 @@ function gridNormals(positions: Float32Array, verticesPerSide: number): Float32A
   return normals;
 }
 
-/** How much of the rock layer a vertex shows: the whole border slope, and steep faces anywhere. */
-function rockWeightAt(outside: number, slope: number): number {
-  return Math.max(smoothstep(0.5, 4, outside), smoothstep(0.45, 0.9, slope));
+/** How much of the rock layer a vertex shows: the border face from its foot outward, and steep faces anywhere. */
+export function rockWeightAt(x: number, z: number, slope: number): number {
+  return Math.max(smoothstep(0.5, 4, borderFaceDepth(x, z)), smoothstep(0.45, 0.9, slope));
 }
 
 /**
@@ -171,7 +171,7 @@ export function buildTerrainMesh(surface: ChunkSurface, originX: number, originZ
 
     const normalY = normals.getY(vertex);
     const slope = Math.hypot(normals.getX(vertex), normals.getZ(vertex)) / Math.max(Math.abs(normalY), 1e-4);
-    const rockWeight = rockWeightAt(borderDepth(x, z), slope);
+    const rockWeight = rockWeightAt(x, z, slope);
     rockWeights[vertex] = rockWeight;
     const tint = A_STEP_TINT_BY_COVER[coverFromIndex(surface.covers[vertex])] * (1 - rockWeight) + rockWeight;
     colors[vertex * 3] = tint;

@@ -7,6 +7,10 @@ import { restingSuspensionLength, vehicleConfigFor, type VehicleConfig } from '.
 import type { CarId } from './cars';
 import type { InputMsg } from '../../shared/protocol';
 import type { DrivetrainState } from '../../shared/drivetrain';
+import { rotationForYaw, type SpawnPose } from '../world/worldDef';
+
+/** Where a car is put: a spawn or reset pose plus the height of its body. */
+export type StandingPose = SpawnPose & { y: number };
 
 // Rapier leaves a wheel with no ground under it at the full rest length, well below its resting
 // pose, so a car on its roof looks like its wheels came off. The drawn wheel hangs only this far
@@ -26,11 +30,12 @@ export class Buggy {
   constructor(
     private readonly world: RAPIER.World,
     scene: THREE.Scene,
-    spawn: { x: number; y: number; z: number },
+    pose: StandingPose,
     carId: CarId,
   ) {
     this.config = vehicleConfigFor(carId);
-    this.vehicle = createVehiclePhysics(world, spawn, this.config);
+    this.vehicle = createVehiclePhysics(world, pose, this.config);
+    this.vehicle.body.setRotation(rotationForYaw(pose.yaw), true);
     this.restingLength = restingSuspensionLength(this.config.wheel);
     this.shownSuspension = this.config.wheel.positions.map(() => this.restingLength);
 
@@ -146,6 +151,14 @@ export class Buggy {
   /** Engine rpm and gear, for engine sound and the HUD. */
   drivetrain(): Readonly<DrivetrainState> {
     return this.vehicle.drivetrain();
+  }
+
+  /** Put the car at a pose, upright, standing still, facing the pose's heading (the border safety net). */
+  placeAt(pose: StandingPose) {
+    this.vehicle.body.setTranslation({ x: pose.x, y: pose.y, z: pose.z }, true);
+    this.vehicle.body.setRotation(rotationForYaw(pose.yaw), true);
+    this.vehicle.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
 
   /** Move the car to a point, upright, at rest, facing where its nose pointed. */

@@ -7,7 +7,9 @@ import { createHeightField } from '../src/world/noise';
 import { createBiome } from '../src/world/biome';
 import { generateChunkHeights } from '../src/world/heightfieldData';
 import { generateChunkSurface } from '../src/world/chunkSurface';
-import { PLAYABLE_MAX, PLAYABLE_MIN, SPAWN, WORLD_CHUNKS } from '../src/world/worldDef';
+import { SPAWN, WORLD_CHUNKS, WORLD_SIZE } from '../src/world/worldDef';
+import { generateFarGrid } from '../src/world/farGrid';
+import { BORDER } from '../src/world/mapLayout';
 import type { ChunkCoord } from '../src/world/chunk';
 import { ArenaSim, SIM_STEP_SECONDS } from '../server/arenaSim';
 import { TICK_HZ } from '../shared/protocol';
@@ -17,7 +19,11 @@ const SEED = 1;
 const MEASURED_CHUNKS = 200;
 const WARM_UP_CHUNKS = 20;
 const DRIVE_SPEED = 53; // m/s, about 190 km/h: the fastest a car gets on this map
+// The inner corners of the playable area: just inside the widest reach of the border apron.
+const PLAYABLE_MIN = BORDER.apronStart + BORDER.apronWander;
+const PLAYABLE_MAX = WORLD_SIZE - PLAYABLE_MIN;
 const CORNER_INSET = 24;
+const FAR_GRID = { step: 8, margin: 128 };
 const TELEPORT_LIFT = 1;
 const STEPS_PER_TICK = Math.max(1, Math.round(1 / TICK_HZ / SIM_STEP_SECONDS));
 const MEGABYTE = 1024 * 1024;
@@ -25,6 +31,7 @@ const MEGABYTE = 1024 * 1024;
 const BUDGET = {
   heightP95Ms: 5,
   surfaceP95Ms: 8,
+  farGridMs: 1000,
   startMs: 1000,
   slowestTickMs: 25,
   rssMegabytes: 200,
@@ -65,15 +72,21 @@ const players = playerCountFromArguments();
 const height = createHeightField(SEED);
 const biome = createBiome(SEED);
 
-// A square of chunks around the playable area, so border and outside chunks are measured too.
+// Chunks spread evenly over the map and one chunk past its edge, so the border is measured too.
 const side = Math.ceil(Math.sqrt(MEASURED_CHUNKS));
+const spacing = (WORLD_CHUNKS + 2) / side;
 const measured: ChunkCoord[] = [];
-for (let index = 0; index < MEASURED_CHUNKS; index++) measured.push({ cx: (index % side) - 3, cz: Math.floor(index / side) - 3 });
+for (let index = 0; index < MEASURED_CHUNKS; index++) {
+  measured.push({ cx: Math.floor((index % side) * spacing) - 1, cz: Math.floor(Math.floor(index / side) * spacing) - 1 });
+}
 const heightCost = timePerChunk(measured, (chunk) => generateChunkHeights(height, chunk));
 const surfaceCost = timePerChunk(measured, (chunk) => generateChunkSurface(height, biome, chunk));
 console.log(`height per chunk: p50 ${heightCost.p50.toFixed(2)} ms, p95 ${heightCost.p95.toFixed(2)} ms (${MEASURED_CHUNKS} chunks)`);
 console.log(`surface per chunk: p50 ${surfaceCost.p50.toFixed(2)} ms, p95 ${surfaceCost.p95.toFixed(2)} ms`);
-console.log('far grid: not measured, generateFarGrid does not exist before step S1');
+const farStart = performance.now();
+const farGrid = generateFarGrid(height, biome, FAR_GRID);
+const farGridMs = performance.now() - farStart;
+console.log(`far grid: ${farGrid.verticesPerSide}² vertices (step ${FAR_GRID.step} m, margin ${FAR_GRID.margin} m) in ${farGridMs.toFixed(0)} ms`);
 
 const beforeStart = memory();
 const startTime = performance.now();
@@ -95,7 +108,7 @@ const routes = Array.from({ length: players }, (_unused, index) => {
   const length = Math.hypot(target.x - SPAWN.x, target.z - SPAWN.z);
   return { id: `driver-${index}`, target, length, directionX: (target.x - SPAWN.x) / length, directionZ: (target.z - SPAWN.z) / length };
 });
-for (const [index, route] of routes.entries()) sim.addPlayer(route.id, CAR_IDS[index % CAR_IDS.length]);
+for (const [index, route] of routes.entries()) sim.addPlayer(route.id, CAR_IDS[index % CAR_IDS.length], sim.nextFreeSpawnSlot());
 
 let travelled = 0;
 let slowestTick = 0;
@@ -131,6 +144,7 @@ const verdict = (label: string, pass: boolean, value: string): void => {
 };
 verdict(`height p95 ≤ ${BUDGET.heightP95Ms} ms per chunk`, heightCost.p95 <= BUDGET.heightP95Ms, `${heightCost.p95.toFixed(2)} ms`);
 verdict(`surface p95 ≤ ${BUDGET.surfaceP95Ms} ms per chunk`, surfaceCost.p95 <= BUDGET.surfaceP95Ms, `${surfaceCost.p95.toFixed(2)} ms`);
+verdict(`far grid ≤ ${BUDGET.farGridMs} ms`, farGridMs <= BUDGET.farGridMs, `${farGridMs.toFixed(0)} ms`);
 verdict(`server start < ${BUDGET.startMs} ms`, startMs < BUDGET.startMs, `${startMs.toFixed(0)} ms`);
 verdict(`slowest tick < ${BUDGET.slowestTickMs} ms`, slowestTick < BUDGET.slowestTickMs, `${slowestTick.toFixed(1)} ms`);
 verdict(`RSS after the drive < ${BUDGET.rssMegabytes} MB`, afterDrive.rss < BUDGET.rssMegabytes, `${afterDrive.rss.toFixed(0)} MB`);

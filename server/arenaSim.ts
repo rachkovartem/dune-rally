@@ -3,11 +3,15 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { createHeightField, type Height2D } from '../src/world/noise';
 import { generateChunkHeights } from '../src/world/heightfieldData';
 import { chunkOrigin, chunksInRadius, worldToChunk, type ChunkCoord } from '../src/world/chunk';
-import { featuresInChunk, SPAWN, WORLD_CHUNKS } from '../src/world/worldDef';
+import {
+  featuresInChunk, rotationForYaw, spawnPoseFor, SPAWN, SPAWN_LIFT, SPAWN_SLOT_COUNT, WORLD_CHUNKS, type SpawnPose,
+} from '../src/world/worldDef';
+import { borderEscapeTarget } from '../src/world/borderSafety';
+import { terrainSurfaceHeight } from '../src/world/chunkGeometry';
 import { addChunkCollider, addFeatureColliders } from '../src/physics/physicsWorld';
 import { createVehiclePhysics, RESET_LIFT, type VehiclePhysics } from '../shared/vehiclePhysics';
 import { WORLD_GRAVITY } from '../shared/drivetrain';
-import type { InputMsg } from '../shared/protocol';
+import type { InputMsg, PoseMsg } from '../shared/protocol';
 import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
 import type { CarId } from '../src/vehicle/cars';
 import { createBiome, type Biome } from '../src/world/biome';
@@ -40,11 +44,24 @@ interface Player {
   vehicle: VehiclePhysics;
   input: InputMsg;
   carId: CarId;
+  spawnSlot: number;
 }
+
+/** The lowest slot no one holds; when every slot is taken, cars share one (`used.size` mod `count`). */
+export function lowestFreeSlot(used: ReadonlySet<number>, count: number): number {
+  if (!Number.isInteger(count) || count < 1) throw new Error(`lowestFreeSlot: bad slot count ${count}`);
+  for (let slot = 0; slot < count; slot++) {
+    if (!used.has(slot)) return slot;
+  }
+  return used.size % count;
+}
+
+// The server copy follows its own physics until the driver's own car is this far away from it.
+export const POSE_SNAP_DISTANCE = 2;
+export const POSE_SNAP_ANGLE = (20 * Math.PI) / 180;
 
 export class ArenaSim {
   private players = new Map<string, Player>();
-  private spawnIndex = 0;
 
   private readonly streamer: ColliderStreamer;
 
@@ -79,15 +96,34 @@ export class ArenaSim {
     return this.streamer.builtCount();
   }
 
-  addPlayer(id: string, carId: CarId): void {
-    // Deterministic spread of spawn points across the flat top of the spawn knoll (golden-angle spiral).
-    const n = this.spawnIndex++;
-    const ang = n * 2.39996;
-    const r = 4 + (n % 4) * 4;
-    const x = SPAWN.x + Math.cos(ang) * r;
-    const z = SPAWN.z + Math.sin(ang) * r;
-    const vehicle = createVehiclePhysics(this.world, { x, y: this.height(x, z) + 4, z }, vehicleConfigFor(carId));
-    this.players.set(id, { vehicle, input: { throttle: 0, brake: 0, steer: 0 }, carId });
+  /** The slot the next player gets: the lowest one no player in the room holds. */
+  nextFreeSpawnSlot(): number {
+    return lowestFreeSlot(new Set([...this.players.values()].map((player) => player.spawnSlot)), SPAWN_SLOT_COUNT);
+  }
+
+  spawnSlotOf(id: string): number | undefined {
+    return this.players.get(id)?.spawnSlot;
+  }
+
+  /** Adds a car standing in its spawn slot, facing north; the client builds its own car there too. */
+  addPlayer(id: string, carId: CarId, spawnSlot: number): void {
+    if (this.players.has(id)) throw new Error(`addPlayer: player ${id} is already in the arena`);
+    const pose = spawnPoseFor(spawnSlot);
+    const vehicle = createVehiclePhysics(this.world, { x: pose.x, y: this.standingHeight(pose), z: pose.z }, vehicleConfigFor(carId));
+    this.placeAt(vehicle, pose);
+    this.players.set(id, { vehicle, input: { throttle: 0, brake: 0, steer: 0 }, carId, spawnSlot });
+  }
+
+  private standingHeight(pose: SpawnPose): number {
+    return terrainSurfaceHeight(this.height, pose.x, pose.z) + SPAWN_LIFT;
+  }
+
+  /** Puts a car at a pose, upright, standing still, SPAWN_LIFT above the ground. */
+  private placeAt(vehicle: VehiclePhysics, pose: SpawnPose): void {
+    vehicle.body.setTranslation({ x: pose.x, y: this.standingHeight(pose), z: pose.z }, true);
+    vehicle.body.setRotation(rotationForYaw(pose.yaw), true);
+    vehicle.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
 
   /** Swap a player's car in place: same position and rotation, standing still. */
@@ -99,7 +135,7 @@ export class ArenaSim {
     this.destroyVehicle(p.vehicle);
     const vehicle = createVehiclePhysics(this.world, translation, vehicleConfigFor(carId));
     vehicle.body.setRotation(rotation, true);
-    this.players.set(id, { vehicle, input: p.input, carId });
+    this.players.set(id, { vehicle, input: p.input, carId, spawnSlot: p.spawnSlot });
   }
 
   carIdOf(id: string): CarId | undefined {
@@ -123,6 +159,27 @@ export class ArenaSim {
     p.vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
 
+  /**
+   * Moves the server copy to where its driver's car is when the two have drifted apart by more than
+   * POSE_SNAP_DISTANCE or POSE_SNAP_ANGLE; closer than that the copy keeps its own physics. Returns
+   * whether it moved the copy. The spin is cleared, so a copy tumbling on its own stops tumbling.
+   */
+  applyClientPose(id: string, pose: PoseMsg): boolean {
+    const p = this.players.get(id);
+    if (!p) return false;
+    const position = p.vehicle.body.translation();
+    const rotation = p.vehicle.body.rotation();
+    const positionError = Math.hypot(pose.x - position.x, pose.y - position.y, pose.z - position.z);
+    const dot = Math.abs(pose.qx * rotation.x + pose.qy * rotation.y + pose.qz * rotation.z + pose.qw * rotation.w);
+    const rotationError = 2 * Math.acos(Math.min(1, dot));
+    if (positionError <= POSE_SNAP_DISTANCE && rotationError <= POSE_SNAP_ANGLE) return false;
+    p.vehicle.body.setTranslation({ x: pose.x, y: pose.y, z: pose.z }, true);
+    p.vehicle.body.setRotation({ x: pose.qx, y: pose.qy, z: pose.qz, w: pose.qw }, true);
+    p.vehicle.body.setLinvel({ x: pose.vx, y: pose.vy, z: pose.vz }, true);
+    p.vehicle.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    return true;
+  }
+
   /** The server copy of the client's R: the same upright rule, so other players see the car recover. */
   resetPlayer(id: string): void {
     this.players.get(id)?.vehicle.resetUpright(RESET_LIFT);
@@ -141,6 +198,13 @@ export class ArenaSim {
   }
 
   step(): void {
+    // The same net the client runs on its own car, so both put a car that got over a crest back
+    // at the same safe spot.
+    for (const p of this.players.values()) {
+      const position = p.vehicle.body.translation();
+      const escape = borderEscapeTarget(position.x, position.y, position.z, this.height);
+      if (escape) this.placeAt(p.vehicle, escape);
+    }
     // Before the physics step, so a car never stands over a chunk that has no collider yet.
     this.streamer.update([...this.players.values()].map((p) => movingCarOf(p.vehicle)));
     for (const p of this.players.values()) p.vehicle.applyInput(p.input, this.gripUnder(p));

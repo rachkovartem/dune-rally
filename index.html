@@ -26,6 +26,30 @@
         background: rgba(0,0,0,0.35); padding: 6px 12px; border-radius: 999px;
       }
       #hud-players b { color: #ffd23d; }
+      #hud-compass {
+        position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+        display: flex; flex-direction: column; align-items: center;
+      }
+      #hud-compass .compass-window {
+        position: relative; height: 30px; overflow: hidden;
+        background: rgba(0,0,0,0.35); border-radius: 10px;
+        -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+        mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+      }
+      #hud-compass .compass-strip { position: absolute; top: 0; left: 0; height: 100%; will-change: transform; }
+      #hud-compass .compass-tick {
+        position: absolute; top: 0; width: 2px; height: 8px; margin-left: -1px;
+        background: rgba(255,255,255,0.75);
+      }
+      #hud-compass .compass-tick-label {
+        width: 40px; height: auto; margin-left: -20px; background: none;
+        text-align: center; font-size: 16px; font-weight: 800; line-height: 30px;
+      }
+      #hud-compass .compass-centre {
+        position: absolute; top: 0; left: 50%; width: 2px; height: 100%; margin-left: -1px;
+        background: #ffd23d;
+      }
+      #hud-compass .compass-degrees { margin-top: 4px; font-size: 14px; font-weight: 700; color: #ffd23d; }
       #hud-speed {
         position: absolute; bottom: 18px; right: 24px; text-align: right;
         font-weight: 800; line-height: 1;
@@ -74,6 +98,13 @@
       }
       #start .car-option:hover { background: rgba(0,0,0,0.6); }
       #start .car-option.is-selected { border-color: #ffd23d; color: #ffd23d; }
+      #hud-camera {
+        position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%);
+        font-size: 15px; font-weight: 700; color: #ffd23d;
+        background: rgba(0,0,0,0.35); padding: 4px 12px; border-radius: 8px;
+        opacity: 0; transition: opacity 0.25s;
+      }
+      #hud-camera.is-visible { opacity: 1; }
       #hud-error {
         position: absolute; top: 140px; left: 22px; max-width: 60vw;
         font: 12px monospace; color: #ff6b5a; background: rgba(0,0,0,0.6); padding: 4px 8px;
@@ -85,11 +116,13 @@
     <div id="hud">
       <div id="hud-title">DUNE RALLY</div>
       <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b></div>
+      <div id="hud-compass"></div>
       <div id="hud-speed"><span id="speed">0</span><span class="unit">км/ч</span></div>
       <div id="hud-controls">
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> — рулить &nbsp;·&nbsp; <kbd>R</kbd> — сброс &nbsp;·&nbsp;
-        мышь — осмотреться &nbsp;·&nbsp; колесо — зум &nbsp;·&nbsp; <kbd>C</kbd> — камера
+        мышь — осмотреться &nbsp;·&nbsp; колесо — зум &nbsp;·&nbsp; <kbd>C</kbd> — камера (режим)
       </div>
+      <div id="hud-camera"></div>
       <div id="hud-error" hidden></div>
     </div>
     <div id="start">

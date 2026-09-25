@@ -9,7 +9,6 @@ import { surfaceSampleAt } from '../world/surfaceSample';
 import * as W from '../world/worldDef';
 import type { Height2D } from '../world/noise';
 import type { Biome, Cover } from '../world/biome';
-import { isPropAllowedAt } from './scatter';
 import type { QualityTier } from './qualityTiers';
 
 const BLOCK_SIZE = 20;
@@ -128,8 +127,7 @@ export class Grass {
   }
 
   private allowedAt(x: number, z: number): boolean {
-    if (W.borderDepth(x, z) > 0 || !isPropAllowedAt(x, z)) return false;
-    if (W.townDist(x, z) < W.TOWN.plaza + 4) return false;
+    if (W.borderFaceDepth(x, z) > 0 || W.isPropExcluded(x, z)) return false;
     const road = W.nearestRoad(x, z);
     if (road && road.dist < ROAD_CLEARANCE) return false;
     const { height, slope } = surfaceSampleAt(this.heightField, x, z);

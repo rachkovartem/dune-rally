@@ -1,7 +1,10 @@
 // src/world/biome.ts
 import { createNoise2D } from 'simplex-noise';
 import { mulberry32 } from './rng';
-import * as W from './worldDef';
+import { DAM, SPAWN_RISE } from './mapLayout';
+import { plainHeight } from './terrain/basePlain';
+import { applyLandforms } from './terrain/landforms';
+import { borderAt } from './terrain/border';
 
 // Coverage palette (hex; converted to vertex colours by the mesh builder).
 export const COVER = {
@@ -43,6 +46,7 @@ export function coverFromIndex(index: number): Cover {
 }
 
 export interface Biome {
+  /** Level of the dam water (the only water on the map; its bowl lands in plan v3 step S4). */
   waterLevel: number;
   /** Coverage TYPE at a world point (authored zones + height/slope). */
   coverAt(x: number, z: number, h: number, slope: number): Cover;
@@ -50,49 +54,37 @@ export interface Biome {
   colorAt(x: number, z: number, h: number, slope: number): number;
 }
 
-// Wet band around the lake's waterline: covers both the visible shoreline and the submerged bed.
-const SHORE_BAND_ABOVE_WATERLEVEL = 0.9;
+const STEEP_ROCK = 0.55;
+const STEEP_GRAVEL = 0.3;
+/** Cover patches of the plain are 100–400 m across. */
+const PATCH_FREQUENCY = 1 / 260;
+const SPAWN_TOP_GRAVEL = 8;
 
 export function createBiome(seed: number): Biome {
   // A little fixed-feel variation for the open desert ground (kept seed-deterministic).
   const vary = createNoise2D(mulberry32((seed ^ 0x85ebca6b) >>> 0));
-  const waterLevel = W.LAKE.waterLevel;
+  const waterLevel = plainHeight(DAM.water.x, DAM.water.z) - DAM.waterBelowPlain;
 
-  const coverAt = (x: number, z: number, h: number, slope: number): Cover => {
-    // Road network: flat corridor + gravel shoulder, on the carved geometry.
-    const rd = W.nearestRoad(x, z, W.ROAD_HALF + W.ROAD_SHOULDER);
-    if (rd) {
-      if (rd.dist < W.ROAD_HALF) return 'road';
-      if (rd.dist < W.ROAD_HALF + W.ROAD_SHOULDER) return 'gravel';
+  const coverAt = (x: number, z: number, _height: number, slope: number): Cover => {
+    // The border ranges: rock from the foot of the face outward, a gravel apron before it.
+    const border = borderAt(x, z);
+    if (border.faceDepth > 0) return 'rock';
+    if (border.inApron) return slope > STEEP_ROCK ? 'rock' : 'gravel';
+
+    const landform = applyLandforms(0, x, z);
+    if (landform.kind === 'spawnRise' && Math.hypot(x - SPAWN_RISE.x, z - SPAWN_RISE.z) < SPAWN_RISE.top + SPAWN_TOP_GRAVEL) {
+      return 'gravel';
     }
-    // Hub-town plaza: packed earth between the buildings.
-    if (W.townDist(x, z) < W.TOWN.plaza) return 'dirt';
+    if (landform.kind === 'ridge' && landform.share > 0.1) return 'rock';
+    if (landform.kind === 'tafelkop' && landform.share > 0.97) return vary(x * 0.02, z * 0.02) > 0 ? 'gravel' : 'dryGrass';
+    if (slope > STEEP_ROCK) return 'rock';
+    if (landform.kind === 'koppie' && landform.share > 0.15) return slope > STEEP_GRAVEL ? 'rock' : 'gravel';
+    if (slope > STEEP_GRAVEL) return 'gravel';
 
-    // Lake shoreline + bed: a wet band from the waterline outward, inside the carve's own
-    // footprint only — a low point far from the lake is never mistaken for its shore.
-    if (W.lakeDist(x, z) < W.LAKE.radius + W.LAKE.feather && h < waterLevel + SHORE_BAND_ABOVE_WATERLEVEL) {
-      return 'mud';
-    }
-
-    // Border slope + steep faces.
-    if (W.borderDepth(x, z) > 0) return 'rock';
-    if (slope > 0.55) return 'rock';
-    if (slope > 0.3) return 'gravel';
-
-    // Mesa plateau and its upper skirt. Measured on the mesa's own rise: the rolling basin floor
-    // sits above 0, so an absolute height would paint dune crests as high ground.
-    const mesaRise = W.mesaHeight(x, z);
-    if (mesaRise > 12) return 'gravel';
-    if (mesaRise > 7) return 'dryGrass';
-
-    // Themed flats.
-    if (W.inSaltFlat(x, z)) return 'beach';     // pale salt straight
-    if (W.inDuneSea(x, z)) return 'sand';       // golden dunes
-
-    // Open desert basin with gentle variation.
-    const v = vary(x * 0.01, z * 0.01);
-    if (v > 0.45) return 'dryGrass';
-    if (v < -0.5) return 'dirt';
+    // The open plain: sand with patches of dry grass and hard dirt.
+    const patch = vary(x * PATCH_FREQUENCY, z * PATCH_FREQUENCY) + 0.35 * vary(x * PATCH_FREQUENCY * 3 + 40, z * PATCH_FREQUENCY * 3 - 17);
+    if (patch > 0.45) return 'dryGrass';
+    if (patch < -0.55) return 'dirt';
     return 'sand';
   };
 

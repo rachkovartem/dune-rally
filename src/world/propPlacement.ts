@@ -58,33 +58,19 @@ function pick(cover: Cover, rng: Random): PolyPropId | null {
 // The prototype's scatter scale range, and the bigger boulders it lined its long straight with.
 const PROP_SCALE = { min: 0.8, max: 1.7 };
 // The HDRI hills are heaps of these same boulders, so the border is heaped with them too: loose
-// ones at the foot, big ones over the face and the crest, which form the skyline.
-const CLIFF_FOOT = { from: 0.5, to: 4, scaleMin: 2.5, scaleMax: 5 };
-const CLIFF_FACE = { from: 4, to: 22, scaleMin: 3, scaleMax: 7 };
+// ones around the foot of the face, big ones up the face, measured past the face foot.
+const CLIFF_FOOT = { from: -4, to: 4, scaleMin: 2.5, scaleMax: 5 };
+const CLIFF_FACE = { from: 4, to: 26, scaleMin: 3, scaleMax: 7 };
 const CLIFF_ATTEMPTS = 120;
 const EXTRA_ATTEMPTS = 10;
 // Sinks a boulder's flat base into a slope so no edge of it hangs in the air.
 const SLOPE_SINK = 0.25;
 const BASE_ATTEMPTS = 14;
 
-/** Margin added to the lake's own footprint (radius + feather) before a prop may be placed — the
- * lake bed and its wet shore must stay loop-able, per the spec's "nothing placed inside the
- * lake's footprint". */
-const LAKE_PROP_MARGIN = 2;
-
-/** Whether a natural prop may be placed at (x, z) — false inside the lake's footprint plus margin. */
-export function isPropAllowedAt(x: number, z: number): boolean {
-  return W.lakeDist(x, z) >= W.LAKE.radius + W.LAKE.feather + LAKE_PROP_MARGIN;
-}
-
-function keepsClear(x: number, z: number, feats: W.ChunkFeatures): boolean {
+function keepsClear(x: number, z: number): boolean {
+  if (W.isPropExcluded(x, z)) return true;
   const road = W.nearestRoad(x, z, W.ROAD_HALF + W.ROAD_SHOULDER + 2);
-  if (road && road.dist < W.ROAD_HALF + W.ROAD_SHOULDER + 2) return true;
-  if (W.townDist(x, z) < W.TOWN.plaza + 4) return true;
-  if (W.spawnDist(x, z) < W.SPAWN_KNOLL.top) return true;
-  if (W.inSaltFlat(x, z)) return true;
-  if (!isPropAllowedAt(x, z)) return true;
-  return feats.ramps.some((ramp) => Math.hypot(x - ramp.x, z - ramp.z) < ramp.len + 6);
+  return road !== null;
 }
 
 export function propPlacementsInChunk(input: PlacementInput): PropPlacement[] {
@@ -93,14 +79,12 @@ export function propPlacementsInChunk(input: PlacementInput): PropPlacement[] {
   const rng = mulberry32(((cx * 73856093) ^ (cz * 19349663) ^ seed) >>> 0);
   const ox = cx * CHUNK_SIZE;
   const oz = cz * CHUNK_SIZE;
-  const feats = W.featuresInChunk(cx, cz);
 
   for (let i = 0; i < BASE_ATTEMPTS; i++) {
     const x = ox + rng() * CHUNK_SIZE;
     const z = oz + rng() * CHUNK_SIZE;
-    // Keep roads, town plaza, salt flats, the stunt ramps and the lake clear of natural props.
-    // The border slope is dressed by its own loop below.
-    if (keepsClear(x, z, feats) || W.borderDepth(x, z) > 0) continue;
+    // The border face is dressed by its own loop below.
+    if (keepsClear(x, z) || W.borderFaceDepth(x, z) > 0) continue;
     const { height: groundHeight, slope } = surfaceSampleAt(height, x, z);
     const id = pick(biome.coverAt(x, z, groundHeight, slope), rng);
     if (!id) continue;
@@ -114,10 +98,10 @@ export function propPlacementsInChunk(input: PlacementInput): PropPlacement[] {
   for (let i = 0; i < CLIFF_ATTEMPTS; i++) {
     const x = ox + cliffRng() * CHUNK_SIZE;
     const z = oz + cliffRng() * CHUNK_SIZE;
-    const outside = W.borderDepth(x, z);
-    const band = outside >= CLIFF_FOOT.from && outside <= CLIFF_FOOT.to ? CLIFF_FOOT
-      : outside > CLIFF_FACE.from && outside <= CLIFF_FACE.to ? CLIFF_FACE : null;
-    if (!band || keepsClear(x, z, feats)) continue;
+    const faceDepth = W.borderFaceDepth(x, z);
+    const band = faceDepth >= CLIFF_FOOT.from && faceDepth <= CLIFF_FOOT.to ? CLIFF_FOOT
+      : faceDepth > CLIFF_FACE.from && faceDepth <= CLIFF_FACE.to ? CLIFF_FACE : null;
+    if (!band || keepsClear(x, z)) continue;
     const scale = between(cliffRng, band.scaleMin, band.scaleMax);
     const groundY = input.drawnHeight(terrainSurfaceHeight(height, x, z), x, z) - SLOPE_SINK * scale;
     const id = anyBoulder(cliffRng);
@@ -131,7 +115,7 @@ export function propPlacementsInChunk(input: PlacementInput): PropPlacement[] {
   for (let i = 0; i < EXTRA_ATTEMPTS; i++) {
     const x = ox + extraRng() * CHUNK_SIZE;
     const z = oz + extraRng() * CHUNK_SIZE;
-    if (keepsClear(x, z, feats) || W.borderDepth(x, z) > 0) continue;
+    if (keepsClear(x, z) || W.borderFaceDepth(x, z) > 0) continue;
     const { height: groundHeight, slope } = surfaceSampleAt(height, x, z);
     const cover = biome.coverAt(x, z, groundHeight, slope);
     if (cover !== 'sand' && cover !== 'dirt' && cover !== 'dryGrass') continue;

@@ -41,3 +41,41 @@ export interface JoinOptions {
 export function sanitizeCarId(raw: unknown): CarId {
   return isCarId(raw) ? raw : DEFAULT_CAR_ID;
 }
+
+// The driver's own car, sent a few times a second, so the server copy others see can be corrected.
+export const POSE_MESSAGE = 'pose';
+export const POSE_HZ = 10;
+
+export interface PoseMsg {
+  x: number; y: number; z: number;
+  qx: number; qy: number; qz: number; qw: number;
+  vx: number; vy: number; vz: number;
+}
+
+const POSE_KEYS = ['x', 'y', 'z', 'qx', 'qy', 'qz', 'qw', 'vx', 'vy', 'vz'] as const;
+// Far outside any place a car can be, so a hostile value can never blow up the physics world.
+const POSE_POSITION_LIMIT = 1e5;
+const POSE_SPEED_LIMIT = 300;
+const QUATERNION_LENGTH = { min: 0.9, max: 1.1 };
+
+function finiteField(raw: object, key: string): number | null {
+  const value: unknown = Reflect.get(raw, key);
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** A pose from the wire, or null when any field is missing, not a finite number, or out of range. */
+export function sanitizePose(raw: unknown): PoseMsg | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const values: number[] = [];
+  for (const key of POSE_KEYS) {
+    const value = finiteField(raw, key);
+    if (value === null) return null;
+    values.push(value);
+  }
+  const [x, y, z, qx, qy, qz, qw, vx, vy, vz] = values;
+  if (Math.max(Math.abs(x), Math.abs(y), Math.abs(z)) > POSE_POSITION_LIMIT) return null;
+  if (Math.hypot(vx, vy, vz) > POSE_SPEED_LIMIT) return null;
+  const length = Math.hypot(qx, qy, qz, qw);
+  if (length < QUATERNION_LENGTH.min || length > QUATERNION_LENGTH.max) return null;
+  return { x, y, z, qx: qx / length, qy: qy / length, qz: qz / length, qw: qw / length, vx, vy, vz };
+}

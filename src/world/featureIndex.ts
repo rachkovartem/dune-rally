@@ -58,6 +58,7 @@ export function createFeatureIndex<T>(
 
   return {
     query(x: number, z: number): readonly T[] {
+      if (!Number.isFinite(x) || !Number.isFinite(z)) throw new Error(`FeatureIndex.query: point is not finite: ${x}, ${z}`);
       const cellX = Math.floor(x / cellSize);
       const cellZ = Math.floor(z / cellSize);
       if (cellX < minCellX || cellX > maxCellX || cellZ < minCellZ || cellZ > maxCellZ) return NO_ITEMS;

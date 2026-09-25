@@ -12,5 +12,7 @@ declare global {
     __audio?: () => unknown;
     /** Client terrain streaming: chunk counts and main-thread build times. */
     __terrain?: () => TerrainStats;
+    /** Far terrain layer: worker and main-thread build milliseconds, null until it is built. */
+    __farTerrain?: { gridMs: number; meshMs: number } | null;
   }
 }

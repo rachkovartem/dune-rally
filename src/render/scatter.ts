@@ -11,8 +11,6 @@ import type { PropMaterials } from './propMaterials';
 import { placePolyProp, type SolidProp } from './polyProps';
 import { visualTerrainHeight } from './horizonShape';
 
-export { isPropAllowedAt } from '../world/propPlacement';
-
 function standardMaterial(color: number): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0 });
 }
@@ -167,6 +165,12 @@ export function setHighTierPropsVisible(visible: boolean): void {
   for (const group of highTierGroups) group.visible = visible;
 }
 
+/** Props that never move keep the world matrix they were placed with, so the per-frame scene update skips them. */
+function freezeInPlace(object: THREE.Object3D): void {
+  object.updateMatrixWorld(true);
+  object.traverse((node) => { node.matrixAutoUpdate = false; });
+}
+
 export function releaseChunkScatter(scatter: ChunkScatter): void {
   highTierGroups.delete(scatter.highTier);
   for (const prop of scatter.culled) culledProps.delete(prop);
@@ -193,6 +197,8 @@ export function createChunkScatter(
   const highTier = new THREE.Group();
   highTier.visible = highTierVisible;
   g.add(highTier);
+  g.matrixAutoUpdate = false;
+  highTier.matrixAutoUpdate = false;
   highTierGroups.add(highTier);
   const knockables: THREE.Object3D[] = [];
   const solids: SolidProp[] = [];
@@ -209,6 +215,7 @@ export function createChunkScatter(
     }
     if (placed.solid) solids.push(placed.solid);
     if (placement.knockable) knockables.push(placed.object);
+    else freezeInPlace(placed.object);
   };
 
   const placements = propPlacementsInChunk({ cx, cz, seed, height, biome, drawnHeight: visualTerrainHeight });
@@ -221,6 +228,7 @@ export function createChunkScatter(
     obj.rotation.y = yaw;
     obj.traverse((o) => { if (o instanceof THREE.Mesh) o.castShadow = true; });
     g.add(obj);
+    freezeInPlace(obj);
   };
   for (const b of feats.buildings) place(building(b, brng), b.x, b.z, b.yaw);
   for (const r of feats.ramps) place(ramp(r), r.x, r.z, r.yaw);

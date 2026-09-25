@@ -1,58 +1,41 @@
 // src/world/noise.ts
-import { createNoise2D } from 'simplex-noise';
-import { mulberry32 } from './rng';
-import * as W from './worldDef';
+import { lerp, smoothstep } from './blend';
+import { microRelief, plainHeight } from './terrain/basePlain';
+import { applyLandforms } from './terrain/landforms';
+import { borderAt, carveGorge } from './terrain/border';
 
 export type Height2D = (x: number, z: number) => number;
 
+/** Metres past the face foot over which the range stops following the plain's relief. */
+const FACE_BASIS_BLEND = 12;
+/** Metres before the face foot over which landforms fade out. */
+const LANDFORM_FADE = 80;
+
 /**
- * The authored unique world's height field. The macro shape (rolling basin, border slope, mesa,
- * dune sea, spawn knoll) is hand-defined in worldDef; a fixed-seed micro-noise adds subtle surface
- * texture; roads and the town plaza are graded to the local average ground level, so a flat never
- * sits below its surroundings as a hole. The seed argument is ignored for shape — the world is the
- * SAME unique place for everyone — but the signature is kept so the whole terrain → trimesh →
- * physics → multiplayer pipeline is unchanged. Only the lake carve goes below the water level.
+ * Klipfontein's ground height, the same on every client, worker and the server. Past the foot of a
+ * face the range stands on one plain level per inward ray, so the plain's relief never makes a dip.
+ */
+export function klipfonteinHeight(x: number, z: number): number {
+  const natural = plainHeight(x, z) + microRelief(x, z);
+  const border = borderAt(x, z);
+  // A landform that reaches the ranges sinks into the apron, so it never makes a dip on the face.
+  const landformFade = 1 - smoothstep(-LANDFORM_FADE, 0, border.faceDepth);
+  let height = natural + (applyLandforms(natural, x, z).height - natural) * landformFade;
+  if (border.surface !== null) {
+    if (border.faceDepth > 0) {
+      const basis = lerp(natural, border.basis, smoothstep(0, FACE_BASIS_BLEND, border.faceDepth));
+      height = Math.max(basis + height - natural, border.surface);
+    } else {
+      height = Math.max(height, border.surface);
+    }
+  }
+  return carveGorge(height, x, z);
+}
+
+/**
+ * The world's height field. The seed argument is ignored for the shape: the world is the same
+ * place for everyone, and the signature stays so every caller keeps working.
  */
 export function createHeightField(_seed: number): Height2D {
-  // Fixed seed → identical micro-detail on every client and the server.
-  const micro = createNoise2D(mulberry32(0x5eed1234));
-
-  const base = (x: number, z: number): number => {
-    let h = micro(x * 0.025, z * 0.025) * 0.6;
-    h += W.rollingGroundHeight(x, z);
-    h += W.mesaHeight(x, z);
-    h += W.duneHeight(x, z);
-    const cliff = W.cliffHeight(x, z);
-    return cliff > h ? cliff : h;
-  };
-
-  const ROAD_INFL = W.ROAD_HALF + W.ROAD_SHOULDER + W.ROAD_RAMP;
-  const PAD_INFL = W.TOWN.plaza + W.TOWN.skirt;
-  const plazaLevel = W.groundLevel(W.TOWN.x, W.TOWN.z);
-
-  return (x: number, z: number): number => {
-    let h = base(x, z);
-
-    // Town plaza: flatten to the ground level at the town centre with a smooth skirt.
-    const td = W.townDist(x, z);
-    if (td < PAD_INFL) {
-      h = W.lerp(h, plazaLevel, 1 - W.smoothstep(W.TOWN.plaza, PAD_INFL, td));
-    }
-
-    // Roads: grade toward the authored height above the ground level at the closest centre-line
-    // point (so the cross-section stays level), with a ramped shoulder so the corridor is a flat
-    // drivable strip with gentle edges (no vertical cut).
-    const rd = W.nearestRoad(x, z, ROAD_INFL);
-    if (rd && rd.dist < ROAD_INFL) {
-      const roadH = W.groundLevel(rd.x, rd.z) + W.lerp(rd.ya, rd.yb, rd.t);
-      h = W.lerp(h, roadH, 1 - W.smoothstep(W.ROAD_HALF, ROAD_INFL, rd.dist));
-    }
-
-    // Lake: carve a basin toward lakeDepthAt near the centre, blending back to natural terrain
-    // by the outer feather — same late-blend shape as the town plaza and road grading above.
-    const li = W.lakeInfluence(x, z);
-    if (li > 0) h = W.lerp(h, W.lakeDepthAt(x, z), li);
-
-    return h;
-  };
+  return klipfonteinHeight;
 }

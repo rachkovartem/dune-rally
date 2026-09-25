@@ -5,7 +5,8 @@ import { createHeightField } from './world/noise';
 import { createBiome } from './world/biome';
 import { surfaceSampleAt } from './world/surfaceSample';
 import { CHUNK_SIZE, chunkKey, chunkOrigin, chunksInRadius, worldToChunk, type ChunkCoord } from './world/chunk';
-import { featuresInChunk, SPAWN } from './world/worldDef';
+import { featuresInChunk, spawnPoseFor, SPAWN_LIFT, type SpawnPose } from './world/worldDef';
+import { borderEscapeTarget } from './world/borderSafety';
 import { TerrainManager } from './world/terrainManager';
 import { initPhysics, addChunkCollider, addFeatureColliders, addSolidPropColliders, removeCollider } from './physics/physicsWorld';
 import { Buggy } from './vehicle/buggy';
@@ -14,14 +15,13 @@ import { CAR_IDS, type CarId } from './vehicle/cars';
 import { terrainSurfaceHeight } from './world/chunkGeometry';
 import { Keyboard } from './input/keyboard';
 import { controlsFromKeys } from './input/controls';
-import { ChaseCamera } from './render/chaseCamera';
+import { CAMERA_MODE_LABELS, CameraRig, readSavedCameraMode, saveCameraMode } from './render/cameraModes';
 import { connectToArena, type NetPlayer } from './net/connection';
 import { PlayerViews } from './net/playerViews';
 import { TireTracks } from './render/groundDecals';
-import { Water } from './render/water';
 import { Knockables } from './render/knockables';
 import { AudioManager, type RemoteCarPose } from './audio/audio';
-import { sanitizeCarId, sanitizeInput, SERVER_PORT } from '../shared/protocol';
+import { POSE_HZ, sanitizeCarId, sanitizeInput, SERVER_PORT, type PoseMsg } from '../shared/protocol';
 import { terrainGripFor } from '../shared/terrainGrip';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { RESET_LIFT } from '../shared/vehiclePhysics';
@@ -36,6 +36,7 @@ import { setTerrainMaterial } from './render/terrainMesh';
 import { createPropMaterials } from './render/propMaterials';
 import { setHighTierPropsVisible, setPropMaterials, updatePropVisibility } from './render/scatter';
 import { boulderRockTexture, GRASS_MODEL_ID, POLY_PROP_IDS, polyPropUrl, registerPolyProps } from './render/polyProps';
+import { FarTerrain, meanTextureColor, type LinearColor } from './render/farTerrain';
 import { Grass } from './render/grass';
 import { otherQuality } from './render/qualityTiers';
 import { SRGBColorSpace, RepeatWrapping, Object3D, Vector3, type DataTexture, type Group, type Texture } from 'three';
@@ -44,6 +45,8 @@ import { createCarPicker } from './ui/carPicker';
 import { createFrameGuard } from './debug/frameGuard';
 import { debugModeEnabled } from './render/devOverlay';
 import { formatDebugReadout } from './ui/debugReadout';
+import { createCompass } from './ui/compass';
+import { createCameraModeBanner } from './ui/cameraModeBanner';
 import type { Cover } from './world/biome';
 
 const canvas = document.getElementById('app');
@@ -163,7 +166,8 @@ for (const texture of [sandSet.color, sandSet.normal, sandSet.arm]) {
   texture.anisotropy = 8;
 }
 registerPolyProps((propId) => loadedModel(`prop:${propId}`));
-setTerrainMaterial(createTerrainMaterial(sandSet, boulderRockTexture()));
+const rockTexture = boulderRockTexture();
+setTerrainMaterial(createTerrainMaterial(sandSet, rockTexture));
 
 const propTextureSetFor = (kind: PropKind) => ({
   color: colorMap(`${PROP_TEXTURE_SETS[kind]}-color`),
@@ -178,9 +182,9 @@ setPropMaterials(createPropMaterials({
   wood: propTextureSetFor('wood'),
 }));
 
-// The local player's buggy is simulated LOCALLY at 60fps for smooth, instant control; inputs are
-// also sent to the server so other players see us. The server stays authoritative for everyone
-// else (full prediction + reconciliation that ties the two together is Plan 2b).
+// The local player's buggy is simulated LOCALLY at 60fps for smooth, instant control. Inputs go to
+// the server, and so does the car's pose a few times a second, so the server can pull its copy (the
+// car other players see) back to where the driver really is.
 const world = await initPhysics();
 const colliders = new Map<string, RAPIER.Collider>();
 const featureColliders = new Map<string, RAPIER.Collider[]>();
@@ -203,22 +207,62 @@ const terrain = new TerrainManager(conn.seed, ctx.scene, biome, heightField, kno
   },
 });
 
-// Spawn the local car on the authored spawn knoll. (The server places each player on a small
-// spawn spiral there too; with no reconciliation yet, the local car is what our own camera follows.)
-const spawnX = SPAWN.x;
-const spawnZ = SPAWN.z;
-terrain.update(spawnX, spawnZ, 0, 0); // request colliders around the spawn before the buggy drops
-// Spawn above the surface so the car lands on its wheels (a too-low spawn lands on the chassis
-// belly → wheels never grip). The start gate below waits for the colliders it lands on.
-const spawn = { x: spawnX, y: heightField(spawnX, spawnZ) + 8, z: spawnZ };
+// The far layer: the whole map on a coarse grid, so the landforms and the ranges stand on the
+// horizon past the streamed chunks. It is built once, and the start gate waits for it.
+const FAR_GRID_STEP = 8;
+const FAR_GRID_MARGIN = 128;
+// The near sand's normal and occlusion maps darken it a little against a flat colour; measured
+// at the near/far seam from the spawn, the plain mean was 4 % too bright.
+const FAR_SAND_SHADING = 0.96;
+const sandImageMean = meanTextureColor(sandSet.color);
+const sandMean: LinearColor = { r: sandImageMean.r * FAR_SAND_SHADING, g: sandImageMean.g * FAR_SAND_SHADING, b: sandImageMean.b * FAR_SAND_SHADING };
+// The near rock layer is the rock image times (0.55 + 0.9 × a second sample of it); this is its mean.
+const rockImageMean = meanTextureColor(rockTexture);
+const rockLayerMean = (channel: number): number => channel * (0.55 + 0.9 * channel);
+const rockMean: LinearColor = { r: rockLayerMean(rockImageMean.r), g: rockLayerMean(rockImageMean.g), b: rockLayerMean(rockImageMean.b) };
+let farTerrain: FarTerrain | null = null;
+window.__farTerrain = null;
+const farGridRequestedAt = performance.now();
+terrain.requestFarGrid(FAR_GRID_STEP, FAR_GRID_MARGIN).then((grid) => {
+  const gridMs = performance.now() - farGridRequestedAt;
+  const meshStartedAt = performance.now();
+  const far = new FarTerrain(grid, { sandMean, rockMean });
+  ctx.scene.add(far.mesh);
+  terrain.onDrawnChange((chunk, drawn) => far.setNearChunkDrawn(chunk, drawn));
+  farTerrain = far;
+  window.__farTerrain = { gridMs, meshMs: performance.now() - meshStartedAt };
+}, (error: unknown) => {
+  const reason = error instanceof Error ? error.message : String(error);
+  if (startSubEl) {
+    startSubEl.textContent = `Ошибка загрузки мира: ${reason}`;
+    startSubEl.style.color = '#ff6b5a';
+  }
+  console.error('[far terrain]', error);
+});
 
-// The car drops onto the ground within its first second, so the chunks it can reach by then must
-// have colliders before it exists; otherwise it falls through and never stops.
-const spawnAreaChunkKeys = chunksInRadius(worldToChunk(spawn.x, spawn.z), 1).map(chunkKey);
+// Each player starts in the spawn slot the server gave them, so the local car and the server's
+// copy of it start at the same spot, facing north.
+function ownSpawnSlot(): number | null {
+  const slot = conn.players().get(conn.sessionId)?.spawnSlot;
+  return slot !== undefined && slot >= 0 ? slot : null;
+}
+// Until the own slot arrives, the start screen looks north from the front of the grid.
+const PREVIEW_SLOT = 0;
+function currentSpawnPose(): SpawnPose & { y: number } {
+  const pose = spawnPoseFor(ownSpawnSlot() ?? PREVIEW_SLOT);
+  return { ...pose, y: terrainSurfaceHeight(heightField, pose.x, pose.z) + SPAWN_LIFT };
+}
+let spawn = currentSpawnPose();
+terrain.update(spawn.x, spawn.z, 0, 0); // request colliders around the spawn before the buggy drops
+
 let readyToDrive = false;
 if (startSubEl) startSubEl.textContent = 'Загрузка мира…';
-function openStartGateWhenGroundIsSolid(): void {
-  if (readyToDrive || !spawnAreaChunkKeys.every((key) => colliders.has(key))) return;
+// The car drops onto the ground within its first second, so the chunks it can reach by then must
+// have colliders before it exists; otherwise it falls through and never stops.
+function openStartGateWhenReady(): void {
+  if (readyToDrive || farTerrain === null || ownSpawnSlot() === null) return;
+  const spawnAreaChunkKeys = chunksInRadius(worldToChunk(spawn.x, spawn.z), 1).map(chunkKey);
+  if (!spawnAreaChunkKeys.every((key) => colliders.has(key))) return;
   readyToDrive = true;
   if (startSubEl) startSubEl.textContent = startSubDefaultText;
   if (startGoEl) startGoEl.style.display = '';
@@ -240,9 +284,6 @@ interface LocalCar {
   grip: number;
   /** Surface cover under the car from that same sample. */
   cover: Cover;
-  /** Where the car was last frame, for the velocity the terrain streamer looks ahead with. */
-  lastX: number;
-  lastZ: number;
 }
 // Built on the start click, so the car the player picked is the one that drives.
 let localCar: LocalCar | null = null;
@@ -274,7 +315,8 @@ window.__dbg = () => {
       });
       return { carId, pos: { x: +group.position.x.toFixed(1), y: +group.position.y.toFixed(2), z: +group.position.z.toFixed(1) }, wheelClearance };
     }),
-    orbit: { ...chase.orbit },
+    cameraMode: cameraRig.mode(),
+    orbit: { ...cameraRig.chase.orbit },
     cameraClearance: +(ctx.camera.position.y - terrainSurfaceHeight(heightField, ctx.camera.position.x, ctx.camera.position.z)).toFixed(2),
   };
 };
@@ -283,12 +325,22 @@ window.__tp = (x, z) => {
   localCar?.buggy.teleport(x, heightField(x, z) + 3, z);
   tracks.breakChains();
 };
-const chase = new ChaseCamera(ctx.camera, (x, z) => terrainSurfaceHeight(heightField, x, z));
-chase.bindInput(canvas);
-window.__orbit = chase.orbit;
+const cameraBannerEl = document.getElementById('hud-camera');
+if (!cameraBannerEl) throw new Error('Expected a #hud-camera element in the HUD.');
+const cameraBanner = createCameraModeBanner(cameraBannerEl);
+const cameraRig = new CameraRig(ctx.camera, (x, z) => terrainSurfaceHeight(heightField, x, z), readSavedCameraMode(localStorage), (mode) => {
+  saveCameraMode(localStorage, mode);
+  cameraBanner.show(CAMERA_MODE_LABELS[mode]);
+});
+cameraRig.bindInput(canvas);
+window.__orbit = cameraRig.chase.orbit;
 // What the camera looks at while the start overlay is up and no car exists yet.
 const spawnViewTarget = new Object3D();
-spawnViewTarget.position.set(spawn.x, heightField(spawn.x, spawn.z), spawn.z);
+function aimSpawnView(): void {
+  spawnViewTarget.position.set(spawn.x, spawn.y - SPAWN_LIFT, spawn.z);
+  spawnViewTarget.rotation.y = spawn.yaw;
+}
+aimSpawnView();
 const tracks = new TireTracks(ctx.scene, heightField, biome, sandSet, 4);
 const grass = new Grass(ctx.scene, loadedModel(`prop:${GRASS_MODEL_ID}`), heightField, biome);
 ctx.onQualityChange((tier) => {
@@ -298,15 +350,30 @@ ctx.onQualityChange((tier) => {
 window.addEventListener('keydown', (event) => {
   if (!event.repeat && event.code === 'KeyQ') ctx.setQuality(otherQuality(ctx.quality()));
 });
-const water = new Water(ctx.scene, biome.waterLevel);
 const playerCountEl = document.getElementById('player-count');
 const speedEl = document.getElementById('speed');
 const hudErrorEl = document.getElementById('hud-error');
+const compassEl = document.getElementById('hud-compass');
+if (!compassEl) throw new Error('Expected a #hud-compass element in the HUD.');
+const compass = createCompass(compassEl);
+const cameraForward = new Vector3();
 const showErrorsInHud = debugModeEnabled();
 const showDebugReadout = debugModeEnabled();
 // The readout is text for a person; ten updates a second are enough and keep layout work low.
 const READOUT_INTERVAL_MS = 100;
 let lastReadoutAt = -Infinity;
+let lastPoseSentAt = -Infinity;
+
+function poseOf(buggy: Buggy): PoseMsg {
+  const position = buggy.position();
+  const rotation = buggy.mesh.quaternion;
+  const velocity = buggy.debug().v;
+  return {
+    x: position.x, y: position.y, z: position.z,
+    qx: rotation.x, qy: rotation.y, qz: rotation.z, qw: rotation.w,
+    vx: velocity.x, vy: velocity.y, vz: velocity.z,
+  };
+}
 
 const addRemote = (id: string, player: NetPlayer) => {
   if (id !== conn.sessionId) views.add(id, sanitizeCarId(player.carId));
@@ -317,10 +384,11 @@ conn.onRemove((id) => views.remove(id));
 
 function startDriving(carId: CarId): void {
   const config = vehicleConfigFor(carId);
+  spawn = currentSpawnPose();
   const surface = surfaceSampleAt(heightField, spawn.x, spawn.z);
   const cover = biome.coverAt(spawn.x, spawn.z, surface.height, surface.slope);
   const grip = terrainGripFor(cover, config);
-  localCar = { buggy: new Buggy(world, ctx.scene, spawn, carId), carId, config, grip, cover, lastX: spawn.x, lastZ: spawn.z };
+  localCar = { buggy: new Buggy(world, ctx.scene, spawn, carId), carId, config, grip, cover };
 }
 
 startEl.addEventListener('click', () => {
@@ -379,6 +447,20 @@ function recoverIfFallenThrough(buggy: Buggy): void {
   tracks.breakChains();
 }
 
+/** The same border net the server runs on its copy: a car over a crest or out of the map goes back to the valley. */
+function catchEscapeOverBorder(buggy: Buggy): void {
+  const position = buggy.position();
+  const target = borderEscapeTarget(position.x, position.y, position.z, heightField);
+  if (target === null) return;
+  const landing = { ...target, y: terrainSurfaceHeight(heightField, target.x, target.z) + SPAWN_LIFT };
+  console.info(
+    `[border safety] the car got over the border at x=${position.x.toFixed(1)} y=${position.y.toFixed(1)} `
+    + `z=${position.z.toFixed(1)}; placed at x=${landing.x.toFixed(1)} z=${landing.z.toFixed(1)}`,
+  );
+  buggy.placeAt(landing);
+  tracks.breakChains();
+}
+
 const guard = createFrameGuard((subsystem, message) => {
   console.error(`[frame] ${subsystem} failed: ${message}`);
   if (showErrorsInHud && hudErrorEl) {
@@ -416,22 +498,25 @@ function frame() {
       }
     });
     guard.run('fall guard', () => recoverIfFallenThrough(buggy));
+    guard.run('border safety', () => catchEscapeOverBorder(buggy));
+    if (now - lastPoseSentAt >= 1000 / POSE_HZ) {
+      lastPoseSentAt = now;
+      guard.run('network pose', () => conn.sendPose(poseOf(buggy)));
+    }
 
     const p = buggy.position();
     guard.run('terrain', () => {
-      const velocityX = dt > 0 ? (p.x - car.lastX) / dt : 0;
-      const velocityZ = dt > 0 ? (p.z - car.lastZ) / dt : 0;
-      car.lastX = p.x;
-      car.lastZ = p.z;
-      terrain.update(p.x, p.z, velocityX, velocityZ);
+      // The body's own velocity: above 60 fps some frames run no physics step, and a position
+      // difference would make the look-ahead ring jump between the car and far ahead.
+      const velocity = buggy.debug().v;
+      terrain.update(p.x, p.z, velocity.x, velocity.z);
     });
     guard.run('tyre tracks', () => {
       const forward = new Vector3(0, 0, 1).applyQuaternion(buggy.mesh.quaternion);
       tracks.update(buggy.wheelContacts(), p.x, p.z, Math.atan2(forward.x, forward.z), buggy.tyreWidth());
     });
-    guard.run('water', () => water.update(p.x, p.z));
     guard.run('sun', () => ctx.focusSun(p.x, p.y, p.z));
-    guard.run('camera', () => chase.update(buggy.mesh, dt));
+    guard.run('camera', () => cameraRig.update(buggy.mesh, dt, car.carId));
 
     // knock over trees/cacti the car ploughs through (fall toward travel direction)
     guard.run('knockables', () => {
@@ -485,12 +570,16 @@ function frame() {
       });
     }
   } else {
+    guard.run('spawn view', () => {
+      spawn = currentSpawnPose();
+      aimSpawnView();
+    });
     guard.run('terrain', () => terrain.update(spawn.x, spawn.z, 0, 0));
-    guard.run('start gate', openStartGateWhenGroundIsSolid);
+    guard.run('start gate', openStartGateWhenReady);
     // The world is not stepped until a car exists, so the remote wheels' ground rays need this.
     guard.run('scene queries', () => world.updateSceneQueries());
     guard.run('sun', () => ctx.focusSun(spawn.x, spawn.y, spawn.z));
-    guard.run('camera', () => chase.update(spawnViewTarget, dt));
+    guard.run('camera', () => cameraRig.update(spawnViewTarget, dt, null));
   }
 
   // Remote players from the server, interpolated a little in the past.
@@ -515,6 +604,10 @@ function frame() {
     if (playerCountEl) playerCountEl.textContent = String(conn.players().size);
   });
 
+  guard.run('compass', () => {
+    ctx.camera.getWorldDirection(cameraForward);
+    compass.update(cameraForward.x, cameraForward.z);
+  });
   guard.run('grass', () => grass.update(ctx.camera.position));
   guard.run('prop draw distance', () => updatePropVisibility(ctx.camera.position.x, ctx.camera.position.z));
   guard.run('render', () => ctx.render());

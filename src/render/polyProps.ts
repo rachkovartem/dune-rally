@@ -2,6 +2,7 @@
 // The drive prototype's Poly Haven props: prepared once from the loaded GLBs, cloned per placement.
 // Clones share geometry and materials, so a chunk that unloads disposes nothing.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { POLY_PROP_IDS, type PolyPropId } from '../world/propIds';
 
 export { POLY_PROP_IDS } from '../world/propIds';
@@ -54,6 +55,54 @@ function prepareMaterial(material: THREE.Material, id: PolyPropId): void {
   }
 }
 
+/** The GLBs are quantized (normalized integer attributes); a matrix can only be baked into plain floats. */
+function floatGeometry(source: THREE.BufferGeometry): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  const index = source.getIndex();
+  if (index !== null) geometry.setIndex(index.clone());
+  for (const [name, attribute] of Object.entries(source.attributes)) {
+    const values = new Float32Array(attribute.count * attribute.itemSize);
+    for (let item = 0; item < attribute.count; item++) {
+      for (let component = 0; component < attribute.itemSize; component++) {
+        values[item * attribute.itemSize + component] = attribute.getComponent(item, component);
+      }
+    }
+    geometry.setAttribute(name, new THREE.BufferAttribute(values, attribute.itemSize));
+  }
+  return geometry;
+}
+
+/**
+ * One mesh per material, with the GLB's node transforms baked into the geometry. A placed prop is
+ * then a group of a few meshes instead of a copy of the whole GLB node tree, which kept the main
+ * thread busy walking tens of thousands of nodes every frame once the open map filled with props.
+ */
+function flattenByMaterial(root: THREE.Object3D): THREE.Group {
+  root.updateMatrixWorld(true);
+  const rootInverse = root.matrixWorld.clone().invert();
+  const geometriesByMaterial = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    if (Array.isArray(object.material)) throw new Error(`polyProps: mesh "${object.name}" has several materials; flattening expects one`);
+    const geometry = floatGeometry(object.geometry).applyMatrix4(new THREE.Matrix4().multiplyMatrices(rootInverse, object.matrixWorld));
+    const list = geometriesByMaterial.get(object.material) ?? [];
+    list.push(geometry);
+    geometriesByMaterial.set(object.material, list);
+  });
+  const flat = new THREE.Group();
+  for (const [material, geometries] of geometriesByMaterial) {
+    // Parts whose attribute sets differ cannot share one buffer; they stay separate meshes.
+    const merged = geometries.length === 1 ? geometries[0] : mergeGeometries(geometries);
+    for (const geometry of merged ? [merged] : geometries) {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      flat.add(mesh);
+    }
+  }
+  return flat;
+}
+
 /** Takes the loaded GLB scene of every prop; call once before the first chunk is scattered. */
 export function registerPolyProps(loaded: (id: PolyPropId) => THREE.Object3D): void {
   for (const id of POLY_PROP_IDS) {
@@ -71,7 +120,8 @@ export function registerPolyProps(loaded: (id: PolyPropId) => THREE.Object3D): v
       }
     });
     root.updateMatrixWorld(true);
-    templates.set(id, { root, bounds: new THREE.Box3().setFromObject(root) });
+    const bounds = new THREE.Box3().setFromObject(root);
+    templates.set(id, { root: flattenByMaterial(root), bounds });
   }
 }
 

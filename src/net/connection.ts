@@ -1,6 +1,6 @@
 // src/net/connection.ts
 import { Client, Room } from 'colyseus.js';
-import { RESET_CAR_MESSAGE, type InputMsg, type JoinOptions, type SelectCarMsg } from '../../shared/protocol';
+import { POSE_MESSAGE, RESET_CAR_MESSAGE, type InputMsg, type JoinOptions, type PoseMsg, type SelectCarMsg } from '../../shared/protocol';
 import type { CarId } from '../vehicle/cars';
 
 export interface NetPlayer {
@@ -9,6 +9,8 @@ export interface NetPlayer {
   carId: string;
   x: number; y: number; z: number;
   qx: number; qy: number; qz: number; qw: number;
+  /** This player's place in the spawn grid; −1 until the server has given one. */
+  spawnSlot: number;
 }
 
 export interface Connection {
@@ -17,6 +19,8 @@ export interface Connection {
   sendInput(i: InputMsg): void;
   /** Tell the server the player pressed R, so its copy of the car stands up too. */
   sendResetCar(): void;
+  /** Where this player's car really is, so the server can correct the copy other players see. */
+  sendPose(pose: PoseMsg): void;
   /** Swap this player's car on the server, so other players see the new model. */
   selectCar(carId: CarId): void;
   onAdd(cb: (id: string, p: NetPlayer) => void): void;
@@ -57,6 +61,7 @@ export async function connectToArena(url: string, name: string, carId: CarId): P
     seed: room.state.seed,
     sendInput: (i: InputMsg) => room.send('input', i),
     sendResetCar: () => room.send(RESET_CAR_MESSAGE),
+    sendPose: (pose: PoseMsg) => room.send(POSE_MESSAGE, pose),
     selectCar: (selectedCarId: CarId) => {
       const message: SelectCarMsg = { carId: selectedCarId };
       room.send('selectCar', message);
