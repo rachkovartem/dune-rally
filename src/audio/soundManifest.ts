@@ -1,5 +1,5 @@
 // src/audio/soundManifest.ts
-import { CAR_IDS, type CarId } from '../vehicle/cars';
+import { CAR_IDS, mapCarIds, type CarId } from '../vehicle/cars';
 
 export const SOUND_MANIFEST_URL = '/sound/manifest.json';
 export const SOUND_BASE_URL = '/sound/';
@@ -85,7 +85,7 @@ export function parseSoundManifest(json: unknown): SoundManifest {
       return entry;
     });
   };
-  const sets: Record<CarId, SoundEntry[]> = { forester: parseSet('forester'), pajero: parseSet('pajero') };
+  const sets = mapCarIds(parseSet);
   for (const carId of CAR_IDS) {
     for (const name of LAYER_NAMES) {
       if (!sets[carId].some((entry) => entry.layer === name)) throw new SoundManifestError(`sets.${carId} has no "${name}" loop`);

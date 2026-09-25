@@ -1,6 +1,6 @@
 // src/ui/carChoice.ts
 import { carDefinitionFor } from '../assets/carCatalog';
-import type { CarId } from '../vehicle/cars';
+import { mapCarIds, type CarId } from '../vehicle/cars';
 import { sanitizeCarId } from '../../shared/protocol';
 
 export const CAR_CHOICE_STORAGE_KEY = 'dune-rally.carId';
@@ -14,7 +14,4 @@ export function saveCarId(storage: Pick<Storage, 'setItem'>, carId: CarId): void
   storage.setItem(CAR_CHOICE_STORAGE_KEY, carId);
 }
 
-export const CAR_LABELS: Readonly<Record<CarId, string>> = {
-  forester: carDefinitionFor('forester').label,
-  pajero: carDefinitionFor('pajero').label,
-};
+export const CAR_LABELS: Readonly<Record<CarId, string>> = mapCarIds((carId) => carDefinitionFor(carId).label);

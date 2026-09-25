@@ -1,5 +1,5 @@
 // src/audio/soundChoice.ts
-import { CAR_IDS, type CarId } from '../vehicle/cars';
+import { CAR_IDS, mapCarIds, type CarId } from '../vehicle/cars';
 import { LAYER_NAMES, soundEntryFor, type LayerName, type SoundManifest } from './soundManifest';
 
 export const SOUND_SETTINGS_STORAGE_KEY = 'dune-rally.sound-v1';
@@ -30,7 +30,7 @@ export function defaultCarChoice(carId: CarId): CarSoundChoice {
 }
 
 export function defaultSoundSettings(): SoundSettings {
-  return { volume: DEFAULT_VOLUME, choices: { forester: defaultCarChoice('forester'), pajero: defaultCarChoice('pajero') } };
+  return { volume: DEFAULT_VOLUME, choices: mapCarIds(defaultCarChoice) };
 }
 
 export const isValidRecordedRpm = (value: number): boolean =>
@@ -91,10 +91,7 @@ export function parseSoundSettings(stored: string | null, manifest: SoundManifes
   if (typeof raw.volume === 'number' && raw.volume >= 0 && raw.volume <= 1) volume = raw.volume;
   else if (raw.volume !== undefined) warnings.push(`saved volume ${String(raw.volume)} is ignored`);
   const savedChoices = isRecord(raw.choices) ? raw.choices : {};
-  const choices = {
-    forester: parseCarChoice(savedChoices.forester, 'forester', manifest, warnings),
-    pajero: parseCarChoice(savedChoices.pajero, 'pajero', manifest, warnings),
-  };
+  const choices = mapCarIds((carId) => parseCarChoice(savedChoices[carId], carId, manifest, warnings));
   return { settings: { volume, choices }, warnings };
 }
 
