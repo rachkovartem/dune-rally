@@ -132,6 +132,142 @@
         position: absolute; top: 140px; left: 22px; max-width: 60vw;
         font: 12px monospace; color: #ff6b5a; background: rgba(0,0,0,0.6); padding: 4px 8px;
       }
+
+      /* Minimap */
+      #hud-minimap {
+        position: absolute; bottom: 22px; left: 22px;
+        pointer-events: auto;
+        user-select: none;
+      }
+      .minimap-radar-wrapper {
+        position: relative; width: 200px; height: 200px;
+        border-radius: 50%;
+        background: #15100a;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.65), 0 0 0 2px rgba(255, 210, 61, 0.45);
+        overflow: hidden; cursor: pointer;
+        transition: box-shadow 0.2s, transform 0.2s;
+      }
+      .minimap-radar-wrapper:hover {
+        box-shadow: 0 8px 28px rgba(0,0,0,0.8), 0 0 0 2px rgba(255, 210, 61, 0.8);
+      }
+      .minimap-canvas {
+        display: block; width: 100%; height: 100%; border-radius: 50%;
+      }
+      .minimap-overlay {
+        position: absolute; inset: 0; pointer-events: none;
+      }
+      .minimap-north {
+        position: absolute; width: 18px; height: 18px; line-height: 18px;
+        text-align: center; font-size: 11px; font-weight: 800;
+        color: #1a1208; background: #ffd23d; border-radius: 50%;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.6);
+        pointer-events: auto; cursor: pointer;
+      }
+      .minimap-north.is-fixed-north {
+        background: #fff;
+      }
+      .minimap-controls {
+        position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+        display: flex; gap: 4px; pointer-events: auto;
+      }
+      .minimap-btn {
+        background: rgba(18, 12, 6, 0.75); color: #ffd23d;
+        border: 1px solid rgba(255, 210, 61, 0.35); border-radius: 6px;
+        font: inherit; font-size: 10px; font-weight: 700;
+        padding: 2px 7px; cursor: pointer; outline: none;
+        backdrop-filter: blur(2px);
+      }
+      .minimap-btn:hover {
+        background: rgba(255, 210, 61, 0.25); border-color: #ffd23d;
+      }
+
+      /* Expanded map modal */
+      #hud-map-modal {
+        position: fixed; inset: 0; z-index: 15;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(10, 6, 2, 0.85); backdrop-filter: blur(6px);
+        pointer-events: auto; font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
+      }
+      #hud-map-modal[hidden] { display: none; }
+      .map-modal-card {
+        background: rgba(24, 17, 10, 0.95);
+        border: 2px solid rgba(255, 210, 61, 0.5); border-radius: 14px;
+        box-shadow: 0 12px 40px rgba(0,0,0,0.85);
+        padding: 16px 20px; color: #fff;
+        max-width: 90vw; max-height: 94vh;
+        display: flex; flex-direction: column;
+      }
+      .map-modal-header {
+        display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
+      }
+      .map-modal-title {
+        font-size: 20px; font-weight: 800; letter-spacing: 2px; color: #ffd23d;
+      }
+      .map-modal-close {
+        background: none; border: none; color: #ff6b5a; font-size: 22px; font-weight: 800;
+        cursor: pointer; padding: 2px 8px; border-radius: 6px;
+      }
+      .map-modal-close:hover { background: rgba(255, 107, 90, 0.2); }
+      .map-modal-body {
+        display: flex; gap: 16px; align-items: flex-start;
+      }
+      .map-modal-canvas {
+        width: 540px; height: 540px; max-width: 65vh; max-height: 65vh;
+        border-radius: 8px; border: 1px solid rgba(255, 210, 61, 0.3);
+        box-shadow: inset 0 0 16px rgba(0,0,0,0.6);
+      }
+      .map-modal-sidebar {
+        width: 200px; display: flex; flex-direction: column; gap: 8px;
+      }
+      .map-modal-players-title {
+        font-size: 13px; font-weight: 800; letter-spacing: 1px; color: #ffd23d;
+        border-bottom: 1px solid rgba(255, 210, 61, 0.25); padding-bottom: 4px;
+      }
+      .map-modal-players-list {
+        display: flex; flex-direction: column; gap: 6px; max-height: 480px; overflow-y: auto;
+      }
+      .modal-player-row {
+        display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
+        background: rgba(0,0,0,0.35); padding: 5px 8px; border-radius: 6px;
+      }
+      .modal-player-row.is-self {
+        border: 1px solid rgba(255, 210, 61, 0.4);
+      }
+      .modal-player-empty {
+        font-size: 12px; opacity: 0.6; font-style: italic; padding: 8px 4px;
+      }
+      .player-dot {
+        width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+      }
+      .player-name {
+        flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .player-name small { opacity: 0.7; font-weight: normal; margin-left: 2px; }
+      .player-dist, .player-coord {
+        font-size: 12px; font-weight: 700; color: #ffd23d;
+      }
+      .map-modal-footer {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-top: 12px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.1);
+        font-size: 12px;
+      }
+      .map-modal-legend {
+        display: flex; gap: 14px; align-items: center; opacity: 0.9;
+      }
+      .map-modal-legend span { display: inline-flex; align-items: center; gap: 4px; }
+      .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+      .legend-dot.legend-self { background: #ffd23d; }
+      .legend-dot.legend-player { background: #38bdf8; }
+      .legend-dot.legend-dam { background: #246b8f; }
+      .legend-dot.legend-pan { background: #eeeae2; border: 1px solid #aaa; }
+      .legend-line { width: 14px; height: 3px; border-radius: 2px; }
+      .legend-line.legend-road { background: #fbf0dc; }
+      .legend-line.legend-track { background: #d4af7d; border-top: 1px dashed #fff; }
+      .map-modal-hint { opacity: 0.75; }
+      .map-modal-hint kbd {
+        background: #ffd23d; color: #1a1208; border-radius: 4px;
+        padding: 1px 5px; font-weight: 800;
+      }
     </style>
   </head>
   <body>
@@ -140,6 +276,8 @@
       <div id="hud-title">DUNE RALLY</div>
       <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b></div>
       <div id="hud-compass"></div>
+      <div id="hud-minimap"></div>
+      <div id="hud-map-modal" hidden></div>
       <div id="hud-speed"><span id="speed">0</span><span class="unit">км/ч</span></div>
       <div id="hud-drive" hidden>
         <div class="drive-warning" hidden></div>
@@ -148,7 +286,7 @@
       </div>
       <div id="hud-controls">
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> — рулить &nbsp;·&nbsp; <kbd>R</kbd> — сброс &nbsp;·&nbsp;
-        мышь — осмотреться &nbsp;·&nbsp; колесо — зум &nbsp;·&nbsp; <kbd>C</kbd> — камера (режим)<span id="hud-controls-drive"></span>
+        мышь — осмотреться &nbsp;·&nbsp; колесо — зум &nbsp;·&nbsp; <kbd>C</kbd> — камера (режим) &nbsp;·&nbsp; <kbd>M</kbd> — карта<span id="hud-controls-drive"></span>
       </div>
       <div id="hud-camera"></div>
       <div id="hud-error" hidden></div>
@@ -158,7 +296,7 @@
         <div class="start-title">DUNE RALLY</div>
         <div class="start-sub">Багги-покатушки по процедурной пустыне · мультиплеер</div>
         <div class="start-controls">
-          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp; <kbd>S</kbd> — тормоз &nbsp;·&nbsp; <kbd>R</kbd> — сброс
+          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp; <kbd>S</kbd> — тормоз &nbsp;·&nbsp; <kbd>R</kbd> — сброс &nbsp;·&nbsp; <kbd>M</kbd> — карта
         </div>
         <div class="start-cars">
           <div class="start-cars-label">Выбери машину</div>

@@ -56,6 +56,8 @@ import { formatDebugReadout, formatSurfaceReadout } from './ui/debugReadout';
 import { createDriveHud, driveKeyHints, FIXED_DRIVE_LABELS, nextDriveModeInCycle, TRACTION_OFF_LABEL, TRACTION_ON_LABEL } from './ui/driveHud';
 import { createCompass } from './ui/compass';
 import { createCameraModeBanner } from './ui/cameraModeBanner';
+import { createMinimap, type Minimap, type MinimapRemotePlayer } from './ui/minimap';
+import type { FarGrid } from './world/farGrid';
 import { surfaceTintAt, type Cover } from './world/biome';
 
 const canvas = document.getElementById('app');
@@ -303,6 +305,8 @@ const rockLayerMean = (channel: number): number => channel * (0.55 + 0.9 * chann
 const rockMean: LinearColor = rockLookMean({ r: rockLayerMean(rockImageMean.r), g: rockLayerMean(rockImageMean.g), b: rockLayerMean(rockImageMean.b) });
 let farTerrain: FarTerrain | null = null;
 window.__farTerrain = null;
+let cachedFarGrid: FarGrid | null = null;
+let minimap: Minimap | null = null;
 const farGridRequestedAt = performance.now();
 terrain.requestFarGrid(FAR_GRID_STEP, FAR_GRID_MARGIN).then((grid) => {
   const gridMs = performance.now() - farGridRequestedAt;
@@ -312,6 +316,8 @@ terrain.requestFarGrid(FAR_GRID_STEP, FAR_GRID_MARGIN).then((grid) => {
   terrain.onDrawnChange((chunk, drawn) => far.setNearChunkDrawn(chunk, drawn));
   farTerrain = far;
   window.__farTerrain = { gridMs, meshMs: performance.now() - meshStartedAt };
+  cachedFarGrid = grid;
+  minimap?.setTerrain(grid);
 }, (error: unknown) => {
   const reason = error instanceof Error ? error.message : String(error);
   if (startSubEl) {
@@ -480,6 +486,11 @@ if (!driveHudEl || !driveKeysFound) throw new Error('Expected #hud-drive and #hu
 // Typed apart from the lookup, because the function that fills it is hoisted above the check.
 const driveKeysEl: HTMLElement = driveKeysFound;
 const driveHud = createDriveHud(driveHudEl);
+const minimapEl = document.getElementById('hud-minimap');
+const mapModalEl = document.getElementById('hud-map-modal');
+if (!minimapEl || !mapModalEl) throw new Error('Expected #hud-minimap and #hud-map-modal elements in the page.');
+minimap = createMinimap({ container: minimapEl, modalContainer: mapModalEl });
+if (cachedFarGrid) minimap.setTerrain(cachedFarGrid);
 const cameraForward = new Vector3();
 const showErrorsInHud = debugModeEnabled();
 const showDebugReadout = debugModeEnabled();
@@ -574,6 +585,18 @@ window.addEventListener('keydown', (event) => {
   const next = nextDriveModeInCycle(drive.requested);
   localCar.requestedDriveMode = next;
   cameraBanner.show(`привод ${next}`);
+});
+
+// M toggles the full landscape map overlay; Escape closes it.
+window.addEventListener('keydown', (event) => {
+  if (event.repeat || !minimap) return;
+  if (event.code === 'KeyM') {
+    minimap.toggleExpanded();
+    return;
+  }
+  if (event.code === 'Escape' && minimap.isExpanded()) {
+    minimap.setExpanded(false);
+  }
 });
 
 // Below the drawn ground by this much, the car can only have fallen through a missing collider.
@@ -807,6 +830,41 @@ function frame() {
   guard.run('compass', () => {
     ctx.camera.getWorldDirection(cameraForward);
     compass.update(cameraForward.x, cameraForward.z);
+  });
+  guard.run('minimap', () => {
+    if (!minimap) return;
+    const p = car ? car.buggy.position() : spawn;
+    let forwardX = 0;
+    let forwardZ = -1;
+    if (car) {
+      const cq = car.buggy.mesh.quaternion;
+      forwardX = 2 * (cq.x * cq.z + cq.w * cq.y);
+      forwardZ = 1 - 2 * (cq.x * cq.x + cq.y * cq.y);
+    }
+    const remotes: MinimapRemotePlayer[] = [];
+    for (const [id, player] of conn.players()) {
+      if (id !== conn.sessionId) {
+        const group = views.group(id);
+        const pos = group ? group.position : { x: player.x, z: player.z };
+        const carId = views.carIdOf(id) ?? sanitizeCarId(player.carId);
+        let heading: number | undefined;
+        if (group) {
+          const rq = group.quaternion;
+          const rfx = 2 * (rq.x * rq.z + rq.w * rq.y);
+          const rfz = 1 - 2 * (rq.x * rq.x + rq.y * rq.y);
+          heading = Math.atan2(rfx, -rfz);
+        }
+        remotes.push({
+          id,
+          name: player.name || carId,
+          carId,
+          x: pos.x,
+          z: pos.z,
+          heading,
+        });
+      }
+    }
+    minimap.update({ x: p.x, z: p.z, forwardX, forwardZ }, remotes);
   });
   guard.run('grass', () => grass.update(ctx.camera.position));
   guard.run('prop draw distance', () => updatePropVisibility(ctx.camera.position.x, ctx.camera.position.z));
