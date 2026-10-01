@@ -21,6 +21,10 @@ import { applyLandforms } from './terrain/landforms';
 export { smoothstep, lerp } from './blend';
 export { borderDistance, borderFaceDepth, SOLID_FOOT_DEPTH } from './terrain/border';
 export { rockKindAt, type RockKind } from './terrain/landforms';
+import { DORP_BUILDINGS } from './dorpLayout';
+import { treesInChunk, type TreeFeature } from './forestTrees';
+
+export { type TreeFeature } from './forestTrees';
 
 export const WORLD_SIZE = MAP_SIZE;
 export const WORLD_CHUNKS = WORLD_SIZE / CHUNK_SIZE;
@@ -223,7 +227,20 @@ export function nearestRoad(x: number, z: number, maxDistance = Infinity): RoadH
 }
 
 // ── placed features (meshes + solid colliders) ────────────────────────
-export interface BuildingBox { x: number; z: number; w: number; d: number; h: number; yaw: number; }
+export interface BuildingBox {
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+  h: number;
+  yaw: number;
+  id?: string;
+  name?: string;
+  roofKind?: 'tiles' | 'metal' | 'planks';
+  stories?: 1 | 2;
+  hasPorch?: boolean;
+}
+
 export interface Landmark { kind: 'beacon' | 'windmill'; x: number; z: number; yaw: number; }
 
 /** Solid-collider footprint of a landmark (matches its mesh base). */
@@ -236,9 +253,30 @@ export function landmarkBox(landmark: Landmark): BuildingBox {
 export interface ChunkFeatures {
   buildings: BuildingBox[];
   landmarks: Landmark[];
+  trees: TreeFeature[];
 }
 
-/** Features whose centre lies in chunk (cx, cz). Klipfontein has none until the dorp lands (S4). */
-export function featuresInChunk(_cx: number, _cz: number): ChunkFeatures {
-  return { buildings: [], landmarks: [] };
+const AUTHORED_LANDMARKS: readonly Landmark[] = [
+  { kind: 'windmill', x: 1570, z: 1345, yaw: 0 },
+  { kind: 'beacon', x: 2470, z: 480, yaw: 0 },
+];
+
+/** Features whose centre lies in chunk (cx, cz). */
+export function featuresInChunk(cx: number, cz: number): ChunkFeatures {
+  const minX = cx * CHUNK_SIZE;
+  const maxX = minX + CHUNK_SIZE;
+  const minZ = cz * CHUNK_SIZE;
+  const maxZ = minZ + CHUNK_SIZE;
+
+  const buildings = DORP_BUILDINGS.filter(
+    (b) => b.x >= minX && b.x < maxX && b.z >= minZ && b.z < maxZ,
+  );
+
+  const landmarks = AUTHORED_LANDMARKS.filter(
+    (l) => l.x >= minX && l.x < maxX && l.z >= minZ && l.z < maxZ,
+  );
+
+  const trees = treesInChunk(cx, cz);
+
+  return { buildings: [...buildings], landmarks: [...landmarks], trees };
 }

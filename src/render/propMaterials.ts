@@ -29,6 +29,7 @@ export interface PropMaterials {
   beaconMetal: THREE.MeshStandardMaterial;
   windmillTower: THREE.MeshStandardMaterial;
   blade: THREE.MeshStandardMaterial;
+  wood: THREE.MeshStandardMaterial;
 }
 
 function texturedMaterial(set: PropTextureSet, tint: number, roughness: number): THREE.MeshStandardMaterial {
@@ -61,5 +62,6 @@ export function createPropMaterials(sets: PropTextureSets): PropMaterials {
     beaconMetal: texturedMaterial(sets.metal, 0xb6bcc4, 0.35),
     windmillTower: texturedMaterial(sets.stucco, 0xcdb9a0, 0.85),
     blade: texturedMaterial(sets.metal, 0x3a3a3a, 0.4),
+    wood: texturedMaterial(sets.wood, 0x9a7b5a, 0.85),
   };
 }

@@ -5,7 +5,7 @@ import { borderAt, borderFaceDepth } from '../terrain/border';
 import { applyLandforms } from '../terrain/landforms';
 import { nearestOnPolyline } from '../polyline';
 import { nearestRoad } from '../worldDef';
-import { DAM, DORP_YARD, GRUISGAT, SANDRIVIER, SOUTPAN, SOUTPAN_BLEND, WIT_DUINE, type Box } from '../mapLayout';
+import { BOSVELD, DAM, DORP_YARD, GRUISGAT, SANDRIVIER, SOUTPAN, SOUTPAN_BLEND, WIT_DUINE, type Box } from '../mapLayout';
 
 const CLEARANCE = 100;
 const RIVER_SEGMENTS = SANDRIVIER.line.slice(0, -1).map((_point, segmentIndex) => segmentIndex);
@@ -25,6 +25,7 @@ export function isOpenPlain(x: number, z: number): boolean {
   const panZ = (z - SOUTPAN.z) / (SOUTPAN.radiusZ + SOUTPAN_BLEND + CLEARANCE);
   if (panX * panX + panZ * panZ < 1) return false;
   if (nearBox(WIT_DUINE.area, x, z, WIT_DUINE.feather + CLEARANCE)) return false;
+  if (nearBox(BOSVELD.area, x, z, CLEARANCE)) return false;
   if (nearPoint(DAM.water, x, z, DAM.wall.length + CLEARANCE)) return false;
   if (nearPoint(DORP_YARD, x, z, DORP_YARD.width + CLEARANCE)) return false;
   if (nearPoint(GRUISGAT, x, z, GRUISGAT.width + CLEARANCE)) return false;

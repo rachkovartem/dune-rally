@@ -3,7 +3,7 @@
 // roads, landmarks, and positions of the local player and other players in real-time.
 // Supports local radar mode (tracking car with heading/north-up) and expanded full map mode.
 
-import { MAP_SIZE, ROUTES, DAM, SOUTPAN, MAP_LANDMARKS } from '../world/mapLayout';
+import { MAP_SIZE, ROUTES, DAM, SOUTPAN, MAP_LANDMARKS, BOSVELD, DORP_YARD } from '../world/mapLayout';
 import { COVER, coverFromIndex } from '../world/biome';
 import type { FarGrid } from '../world/farGrid';
 import type { CarId } from '../vehicle/cars';
@@ -258,6 +258,34 @@ export function bakeTerrainCanvas(grid: FarGrid, textureSize = 512): HTMLCanvasE
   ctx.strokeStyle = '#47a8d8';
   ctx.lineWidth = 2;
   ctx.stroke();
+  ctx.restore();
+
+  // Draw Bosveld (forest biome) organic wash
+  const bosU = BOSVELD.x / MINIMAP_WORLD_SIZE;
+  const bosV = BOSVELD.z / MINIMAP_WORLD_SIZE;
+  const bosRx = (BOSVELD.radiusX / MINIMAP_WORLD_SIZE) * textureSize;
+  const bosRy = (BOSVELD.radiusZ / MINIMAP_WORLD_SIZE) * textureSize;
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(bosU * textureSize, bosV * textureSize, bosRx, bosRy, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(45, 90, 35, 0.28)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(55, 110, 42, 0.45)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+
+  // Draw Dorp yard (town settlement footprint)
+  const dorpU = (DORP_YARD.x - DORP_YARD.width / 2) / MINIMAP_WORLD_SIZE;
+  const dorpV = (DORP_YARD.z - DORP_YARD.depth / 2) / MINIMAP_WORLD_SIZE;
+  const dorpW = (DORP_YARD.width / MINIMAP_WORLD_SIZE) * textureSize;
+  const dorpH = (DORP_YARD.depth / MINIMAP_WORLD_SIZE) * textureSize;
+  ctx.save();
+  ctx.fillStyle = 'rgba(70, 55, 40, 0.45)';
+  ctx.fillRect(dorpU * textureSize, dorpV * textureSize, dorpW, dorpH);
+  ctx.strokeStyle = 'rgba(255, 210, 61, 0.6)';
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(dorpU * textureSize, dorpV * textureSize, dorpW, dorpH);
   ctx.restore();
 
   // Draw roads and tracks

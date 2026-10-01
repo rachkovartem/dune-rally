@@ -12,6 +12,7 @@ import { riverSampleAt, RIVER_LINE } from './terrain/river';
 import { inPoort, quarryPartAt } from './terrain/cuts';
 import { nearestTrack, onTrackStep } from './terrain/tracks';
 import { nearestRoad, ROAD_HALF, ROAD_SHOULDER } from './worldDef';
+import { forestWeight } from './terrain/forest';
 
 // Coverage palette (hex; converted to vertex colours by the mesh builder).
 export const COVER = {
@@ -132,6 +133,13 @@ export function createBiome(seed: number): Biome {
     if (landform.kind === 'koppie' && landform.share > 0.15) return slope > STEEP_GRAVEL ? 'rock' : 'gravel';
     if (landform.kind === 'spur') return slope > STEEP_GRAVEL ? 'rock' : 'gravel';
     if (slope > STEEP_GRAVEL) return 'gravel';
+
+    // The Bosveld forest biome: deep green forest ground with grass clearings
+    const fw = forestWeight(x, z);
+    if (fw > 0.15) {
+      const clearings = vary(x * 0.015, z * 0.015);
+      return clearings > 0.35 ? 'grass' : 'forest';
+    }
 
     // The open plain: sand with patches of dry grass and hard dirt.
     const patch = vary(x * PATCH_FREQUENCY, z * PATCH_FREQUENCY) + 0.35 * vary(x * PATCH_FREQUENCY * 3 + 40, z * PATCH_FREQUENCY * 3 - 17);

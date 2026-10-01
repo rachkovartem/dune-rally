@@ -29,6 +29,11 @@ let M_BEACON: THREE.Material = standardMaterial(0xb6bcc4);
 let M_WIND_TOWER: THREE.Material = standardMaterial(0xcdb9a0);
 let M_WIND_BLADE: THREE.Material = standardMaterial(0x3a3a3a);
 const M_BEACON_LIGHT: THREE.Material = standardMaterial(0xff5a3c); // emissive-ish warning light, no PBR set
+let M_BARK: THREE.Material = standardMaterial(0x4a3424);
+let M_LEAF: THREE.Material = standardMaterial(0x2d5225);
+let M_BUSH: THREE.Material = standardMaterial(0x3e6b2c);
+let M_WOOD: THREE.Material = standardMaterial(0x8a6d48);
+const M_WINDOW: THREE.Material = new THREE.MeshStandardMaterial({ color: 0x1a2228, roughness: 0.2, metalness: 0.8 });
 
 /** Swaps every shared prop/building material for its loaded PBR version. One instance per kind
  * (rule: no per-instance material) — reassigning these bindings updates every mesh built after
@@ -39,22 +44,198 @@ export function setPropMaterials(materials: PropMaterials): void {
   M_BEACON = materials.beaconMetal;
   M_WIND_TOWER = materials.windmillTower;
   M_WIND_BLADE = materials.blade;
+  M_BARK = materials.bark;
+  M_LEAF = materials.leaf;
+  M_BUSH = materials.bush;
+  M_WOOD = materials.wood ?? standardMaterial(0x8a6d48);
 }
 
-// ── Town buildings (unit cube scaled per building → bounded memory) ────
+// ── Town buildings (realistic houses, porches, pitched roofs) ────
 const G_UNIT = new THREE.BoxGeometry(1, 1, 1);
 
 function building(b: W.BuildingBox, rng: () => number): THREE.Object3D {
   const g = new THREE.Group();
-  const wall = new THREE.Mesh(G_UNIT, M_WALL[Math.floor(rng() * M_WALL.length)]);
+  const wallMat = M_WALL[Math.floor(rng() * M_WALL.length)];
+  const roofMat = b.roofKind === 'metal' ? M_BEACON : b.roofKind === 'planks' ? M_WOOD : M_ROOF;
+
+  // 1. Main wall structure
+  const wall = new THREE.Mesh(G_UNIT, wallMat);
   wall.scale.set(b.w, b.h, b.d);
   wall.position.y = b.h / 2;
+  wall.castShadow = true;
+  wall.receiveShadow = true;
   g.add(wall);
-  const roofH = Math.max(0.4, b.h * 0.14);
-  const roof = new THREE.Mesh(G_UNIT, M_ROOF);
-  roof.scale.set(b.w * 1.08, roofH, b.d * 1.08);
-  roof.position.y = b.h + roofH / 2 - 0.05;
-  g.add(roof);
+
+  // 2. Realistic pitched / gable roof with eaves overhang
+  const roofHeight = Math.max(1.0, Math.min(2.4, b.w * 0.18));
+  const halfSpan = b.w * 0.54;
+  const slopeLen = Math.hypot(halfSpan, roofHeight);
+  const pitchAngle = Math.atan2(roofHeight, halfSpan);
+
+  // Left slope
+  const leftSlope = new THREE.Mesh(G_UNIT, roofMat);
+  leftSlope.scale.set(slopeLen, 0.12, b.d * 1.06);
+  leftSlope.position.set(-halfSpan * 0.5, b.h + roofHeight * 0.5, 0);
+  leftSlope.rotation.z = pitchAngle;
+  leftSlope.castShadow = true;
+  leftSlope.receiveShadow = true;
+  g.add(leftSlope);
+
+  // Right slope
+  const rightSlope = new THREE.Mesh(G_UNIT, roofMat);
+  rightSlope.scale.set(slopeLen, 0.12, b.d * 1.06);
+  rightSlope.position.set(halfSpan * 0.5, b.h + roofHeight * 0.5, 0);
+  rightSlope.rotation.z = -pitchAngle;
+  rightSlope.castShadow = true;
+  rightSlope.receiveShadow = true;
+  g.add(rightSlope);
+
+  // Gable end walls (closing the triangular ends under the roof)
+  const gableFront = new THREE.Mesh(G_UNIT, wallMat);
+  gableFront.scale.set(b.w * 0.98, roofHeight * 0.85, 0.1);
+  gableFront.position.set(0, b.h + roofHeight * 0.42, b.d * 0.5);
+  gableFront.castShadow = true;
+  g.add(gableFront);
+
+  const gableBack = new THREE.Mesh(G_UNIT, wallMat);
+  gableBack.scale.set(b.w * 0.98, roofHeight * 0.85, 0.1);
+  gableBack.position.set(0, b.h + roofHeight * 0.42, -b.d * 0.5);
+  gableBack.castShadow = true;
+  g.add(gableBack);
+
+  // 3. Front Porch / Veranda (for houses with porches)
+  if (b.hasPorch) {
+    const porchDepth = 2.4;
+    const porchWidth = b.w * 0.88;
+    const porchH = Math.min(2.6, b.h * 0.48);
+
+    // Porch floor deck
+    const deck = new THREE.Mesh(G_UNIT, M_WOOD);
+    deck.scale.set(porchWidth, 0.18, porchDepth);
+    deck.position.set(0, 0.09, b.d / 2 + porchDepth / 2);
+    deck.castShadow = true;
+    deck.receiveShadow = true;
+    g.add(deck);
+
+    // Porch awning roof
+    const awning = new THREE.Mesh(G_UNIT, roofMat);
+    awning.scale.set(porchWidth * 1.04, 0.1, porchDepth * 1.05);
+    awning.position.set(0, porchH, b.d / 2 + porchDepth / 2);
+    awning.rotation.x = 0.06; // slight forward drainage tilt
+    awning.castShadow = true;
+    awning.receiveShadow = true;
+    g.add(awning);
+
+    // Wooden support posts
+    const postCount = 3;
+    for (let p = 0; p < postCount; p++) {
+      const px = -porchWidth / 2 + (porchWidth / (postCount - 1)) * p;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, porchH, 6), M_WOOD);
+      post.position.set(px, porchH / 2, b.d / 2 + porchDepth - 0.1);
+      post.castShadow = true;
+      g.add(post);
+    }
+  }
+
+  // 4. Entrance door on front facade
+  const door = new THREE.Mesh(G_UNIT, M_WOOD);
+  door.scale.set(1.4, 2.2, 0.1);
+  door.position.set(0, 1.1, b.d / 2 + 0.05);
+  door.castShadow = true;
+  g.add(door);
+
+  // 5. Windows
+  const windowCount = Math.max(2, Math.floor(b.w / 4));
+  for (let w = 0; w < windowCount; w++) {
+    const wx = -b.w * 0.38 + (b.w * 0.76 / (windowCount - 1)) * w;
+    if (Math.abs(wx) < 1.0) continue; // don't overlap door
+    // Ground floor window
+    const win = new THREE.Mesh(G_UNIT, M_WINDOW);
+    win.scale.set(1.1, 1.3, 0.08);
+    win.position.set(wx, 1.4, b.d / 2 + 0.05);
+    g.add(win);
+
+    // Second story windows if applicable
+    if (b.stories === 2 && b.h > 5.5) {
+      const win2 = new THREE.Mesh(G_UNIT, M_WINDOW);
+      win2.scale.set(1.1, 1.3, 0.08);
+      win2.position.set(wx, b.h * 0.7, b.d / 2 + 0.05);
+      g.add(win2);
+    }
+  }
+
+  // 6. Chimney on tile roofs
+  if (b.roofKind !== 'metal' && rng() < 0.7) {
+    const chimney = new THREE.Mesh(G_UNIT, M_WALL[0]);
+    chimney.scale.set(0.7, 1.6, 0.7);
+    chimney.position.set(b.w * 0.28, b.h + roofHeight * 0.6, 0);
+    chimney.castShadow = true;
+    g.add(chimney);
+  }
+
+  return g;
+}
+
+// ── Forest Trees (Pine & Broadleaf) ──────────────────────────────────
+function treeMesh(t: W.TreeFeature): THREE.Object3D {
+  const g = new THREE.Group();
+  const trunkH = t.height * 0.55;
+
+  // Trunk
+  const trunkGeo = new THREE.CylinderGeometry(t.trunkRadius * 0.65, t.trunkRadius, trunkH, 7);
+  const trunk = new THREE.Mesh(trunkGeo, M_BARK);
+  trunk.position.y = trunkH / 2;
+  trunk.castShadow = true;
+  trunk.receiveShadow = true;
+  g.add(trunk);
+
+  // Canopy
+  if (t.kind === 'pine') {
+    // 3 conifer cone tiers
+    const t1 = new THREE.Mesh(new THREE.ConeGeometry(t.trunkRadius * 4.2, t.height * 0.38, 7), M_LEAF);
+    t1.position.y = t.height * 0.46;
+    t1.castShadow = true;
+    t1.receiveShadow = true;
+    g.add(t1);
+
+    const t2 = new THREE.Mesh(new THREE.ConeGeometry(t.trunkRadius * 3.2, t.height * 0.34, 7), M_LEAF);
+    t2.position.y = t.height * 0.64;
+    t2.castShadow = true;
+    t2.receiveShadow = true;
+    g.add(t2);
+
+    const t3 = new THREE.Mesh(new THREE.ConeGeometry(t.trunkRadius * 2.0, t.height * 0.30, 7), M_LEAF);
+    t3.position.y = t.height * 0.82;
+    t3.castShadow = true;
+    t3.receiveShadow = true;
+    g.add(t3);
+  } else {
+    // Broadleaf clustered organic crown
+    const mainPuff = new THREE.Mesh(new THREE.DodecahedronGeometry(t.trunkRadius * 3.4, 0), M_BUSH);
+    mainPuff.position.y = t.height * 0.72;
+    mainPuff.castShadow = true;
+    mainPuff.receiveShadow = true;
+    g.add(mainPuff);
+
+    const puffLeft = new THREE.Mesh(new THREE.DodecahedronGeometry(t.trunkRadius * 2.5, 0), M_BUSH);
+    puffLeft.position.set(-t.trunkRadius * 1.5, t.height * 0.65, 0.2);
+    puffLeft.castShadow = true;
+    puffLeft.receiveShadow = true;
+    g.add(puffLeft);
+
+    const puffRight = new THREE.Mesh(new THREE.DodecahedronGeometry(t.trunkRadius * 2.5, 0), M_BUSH);
+    puffRight.position.set(t.trunkRadius * 1.5, t.height * 0.68, -0.2);
+    puffRight.castShadow = true;
+    puffRight.receiveShadow = true;
+    g.add(puffRight);
+
+    const puffTop = new THREE.Mesh(new THREE.DodecahedronGeometry(t.trunkRadius * 2.2, 0), M_BUSH);
+    puffTop.position.set(0, t.height * 0.88, 0);
+    puffTop.castShadow = true;
+    puffTop.receiveShadow = true;
+    g.add(puffTop);
+  }
+
   return g;
 }
 
@@ -195,6 +376,22 @@ export function createChunkScatter(
   };
   for (const b of feats.buildings) place(building(b, brng), b.x, b.z, b.yaw);
   for (const l of feats.landmarks) place(landmark(l), l.x, l.z, l.yaw);
+  if (feats.trees) {
+    for (const t of feats.trees) {
+      const obj = treeMesh(t);
+      obj.position.set(t.x, terrainSurfaceHeight(height, t.x, t.z), t.z);
+      obj.rotation.y = t.yaw;
+      g.add(obj);
+      if (t.knockable) {
+        knockables.push(obj);
+      } else {
+        freezeInPlace(obj);
+      }
+      const prop = { object: obj, maxDistance: 350 };
+      culled.push(prop);
+      culledProps.add(prop);
+    }
+  }
 
   return { group: g, highTier, knockables, placements, culled };
 }

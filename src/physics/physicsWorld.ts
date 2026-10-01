@@ -5,7 +5,7 @@ import { VERTS_PER_SIDE } from '../world/heightfieldData';
 import { WORLD_GRAVITY } from '../../shared/drivetrain';
 import {
   landmarkBox,
-  type BuildingBox, type ChunkFeatures,
+  type BuildingBox, type ChunkFeatures, type TreeFeature,
 } from '../world/worldDef';
 import type { PropPlacement } from '../world/propPlacement';
 import { propColliderBox } from '../world/propColliders';
@@ -79,7 +79,23 @@ export function addBuildingCollider(
 }
 
 /**
- * Add solid colliders for all placed features (town buildings, landmarks) in a chunk.
+ * Add a static solid cylinder collider for a thick tree trunk. Thin/knockable trees return null.
+ */
+export function addTreeCollider(
+  world: RAPIER.World,
+  tree: TreeFeature,
+  baseY: number,
+): RAPIER.Collider | null {
+  if (!tree.solid) return null;
+  const trunkHalfHeight = (tree.height * 0.5) / 2;
+  const body = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(tree.x, baseY + trunkHalfHeight, tree.z),
+  );
+  return world.createCollider(RAPIER.ColliderDesc.cylinder(trunkHalfHeight, tree.trunkRadius), body);
+}
+
+/**
+ * Add solid colliders for all placed features (town buildings, landmarks, solid trees) in a chunk.
  * `heightAt` gives the (flattened) ground height under each feature. Returns every created collider
  * so the client can remove them on chunk unload.
  */
@@ -91,6 +107,12 @@ export function addFeatureColliders(
   const out: RAPIER.Collider[] = [];
   for (const b of f.buildings) out.push(addBuildingCollider(world, b, heightAt(b.x, b.z)));
   for (const l of f.landmarks) out.push(addBuildingCollider(world, landmarkBox(l), heightAt(l.x, l.z)));
+  if (f.trees) {
+    for (const t of f.trees) {
+      const col = addTreeCollider(world, t, heightAt(t.x, t.z));
+      if (col) out.push(col);
+    }
+  }
   return out;
 }
 

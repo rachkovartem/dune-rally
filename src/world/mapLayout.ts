@@ -221,6 +221,15 @@ export const WIT_DUINE = {
   brinkRadius: 12,
 } as const;
 
+export const BOSVELD = {
+  area: { minX: 200, minZ: 480, maxX: 880, maxZ: 1350 } satisfies Box,
+  x: 520,
+  z: 920,
+  radiusX: 300,
+  radiusZ: 380,
+  feather: 80,
+} as const;
+
 // ── Gruisgat: the old gravel quarry, the stunt park (design §3 Z11, §9 J7) ─────────────
 export type CompassDirection = 'north' | 'east' | 'south' | 'west';
 
@@ -506,6 +515,8 @@ export interface Landmark extends Point2 {
 
 export const MAP_LANDMARKS: readonly Landmark[] = [
   { name: 'Groot Koppie', x: GROOT_KOPPIE.x, z: GROOT_KOPPIE.z, height: GROOT_KOPPIE.height },
+  { name: 'Dorp', x: DORP_YARD.x, z: DORP_YARD.z, height: 8 },
+  { name: 'Bosveld', x: BOSVELD.x, z: BOSVELD.z, height: 16 },
   { name: 'Windpump', x: 1570, z: 1345, height: 12 },
   { name: 'Tafelkop', x: TAFELKOP.x, z: TAFELKOP.z, height: TAFELKOP.height },
   { name: 'Radio mast', x: 2470, z: 480, height: TAFELKOP.height + 25 },
