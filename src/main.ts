@@ -685,6 +685,14 @@ function frame() {
   const dt = Math.min(nowS - last, 0.1); // clamp after a tab pause
   last = nowS;
   const now = performance.now();
+  const pingMs = conn.ping() ?? 50;
+  const bufferDelayMs = Math.max(100, Math.min(220, pingMs * 1.1 + 45));
+  const renderTime = now - bufferDelayMs;
+
+  // Remote players are updated before physics so colliders and dynamic bodies are synchronized
+  guard.run('remote players', () => {
+    views.update(renderTime, null, renderTime);
+  });
 
   const car = localCar;
   if (car) {
@@ -834,13 +842,6 @@ function frame() {
     guard.run('camera', () => cameraRig.update(spawnViewTarget, dt, null));
   }
 
-  // Remote players from the server, interpolated a little in the past.
-  guard.run('remote players', () => {
-    const pingMs = conn.ping() ?? 50;
-    const bufferDelayMs = Math.max(100, Math.min(220, pingMs * 1.1 + 45));
-    const renderTime = now - bufferDelayMs;
-    views.update(renderTime, null, renderTime);
-  });
   guard.run('remote engine sound', () => {
     audio.setListener(ctx.camera);
     const remoteCars: RemoteCarPose[] = [];

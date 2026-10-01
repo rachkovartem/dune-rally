@@ -373,5 +373,18 @@ describe('createVehiclePhysics — vehicle collision', () => {
     expect(car1.body.translation().y).toBeGreaterThan(0.5);
     expect(car2.body.translation().y).toBeGreaterThan(0.5);
   });
+
+  it('clamps extreme linear and angular velocities to maintain stability', () => {
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    const car = createVehiclePhysics(world, { x: 0, y: 1.5, z: 0 }, vehicleConfigFor('forester'));
+    car.body.setLinvel({ x: 100, y: 100, z: 100 }, true);
+    car.body.setAngvel({ x: 50, y: 50, z: 50 }, true);
+    car.update(1 / 60);
+
+    const speed = Math.hypot(car.body.linvel().x, car.body.linvel().y, car.body.linvel().z);
+    expect(speed).toBeCloseTo(80, 1);
+    const angSpeed = Math.hypot(car.body.angvel().x, car.body.angvel().y, car.body.angvel().z);
+    expect(angSpeed).toBeCloseTo(25, 1);
+  });
 });
 

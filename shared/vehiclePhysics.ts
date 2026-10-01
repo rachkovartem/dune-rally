@@ -589,6 +589,21 @@ export function createVehiclePhysics(
         const parent = collider.parent();
         return parent === null || parent.isFixed();
       });
+
+      const linvel = body.linvel();
+      const speed = Math.hypot(linvel.x, linvel.y, linvel.z);
+      const MAX_SPEED = 80;
+      if (speed > MAX_SPEED) {
+        const scale = MAX_SPEED / speed;
+        body.setLinvel({ x: linvel.x * scale, y: linvel.y * scale, z: linvel.z * scale }, true);
+      }
+      const angvel = body.angvel();
+      const angSpeed = Math.hypot(angvel.x, angvel.y, angvel.z);
+      const MAX_ANG_SPEED = 25;
+      if (angSpeed > MAX_ANG_SPEED) {
+        const scale = MAX_ANG_SPEED / angSpeed;
+        body.setAngvel({ x: angvel.x * scale, y: angvel.y * scale, z: angvel.z * scale }, true);
+      }
     },
     steerAngle(): number {
       return currentSteer;

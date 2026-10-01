@@ -206,16 +206,16 @@ describe('PlayerViews.update — a remote car far from the local collider ring (
 });
 
 describe('PlayerViews — physical collisions with remote cars', () => {
-  it('creates a kinematic body in the physics world and removes it on remove()', () => {
+  it('creates a dynamic body in the physics world and removes it on remove()', () => {
     views.add('p1', 'pajero');
     expect(views.bodyOf('p1')).toBeDefined();
-    expect(views.bodyOf('p1')?.isKinematic()).toBe(true);
+    expect(views.bodyOf('p1')?.isDynamic()).toBe(true);
 
     views.remove('p1');
     expect(views.bodyOf('p1')).toBeUndefined();
   });
 
-  it('physically collides with a dynamic local vehicle', () => {
+  it('physically collides with a dynamic local vehicle stably without launching it', () => {
     views.add('p1', 'pajero');
     views.pushState('p1', netPlayer('pajero', 0, 1.5, 10), 0);
     views.update(0, null, 0);
@@ -224,13 +224,18 @@ describe('PlayerViews — physical collisions with remote cars', () => {
     localCar.body.setLinvel({ x: 0, y: 0, z: 20 }, true);
 
     for (let step = 0; step < 60; step++) {
+      views.update(0, null, 0);
       world.step();
       localCar.update(1 / 60);
     }
 
     // Local car cannot pass through remote car at z=10
     expect(localCar.body.translation().z).toBeLessThan(10);
-    // Local car bounced / stopped upon collision
-    expect(localCar.body.linvel().z).toBeLessThan(2);
+    // Local car slowed down upon collision
+    expect(localCar.body.linvel().z).toBeLessThan(10);
+    // Local car remained grounded and did not launch into orbit
+    expect(localCar.body.translation().y).toBeLessThan(3);
+    const angvel = localCar.body.angvel();
+    expect(Math.hypot(angvel.x, angvel.y, angvel.z)).toBeLessThan(10);
   });
 });

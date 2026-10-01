@@ -30,6 +30,8 @@ interface View {
   rollAngle: number;
   /** Where the car was drawn last frame; null until it has been drawn once. */
   lastPosition: THREE.Vector3 | null;
+  lastSampleTime?: number;
+  lastTargetPos?: { x: number; y: number; z: number };
 }
 
 function wheelPivotsOf(group: THREE.Group): THREE.Group[] {
@@ -83,12 +85,25 @@ export class PlayerViews {
     }
   }
 
-  private createKinematicBody(x: number, y: number, z: number, qx = 0, qy = 0, qz = 0, qw = 1): RAPIER.RigidBody {
+  private createDynamicBody(
+    x: number, y: number, z: number,
+    config: VehicleConfig,
+    qx = 0, qy = 0, qz = 0, qw = 1,
+  ): RAPIER.RigidBody {
     return this.world.createRigidBody(
-      RAPIER.RigidBodyDesc.kinematicPositionBased()
+      RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(x, y, z)
         .setRotation({ x: qx, y: qy, z: qz, w: qw })
-        .setCanSleep(false),
+        .setLinearDamping(config.linearDamping)
+        .setAngularDamping(config.angularDamping)
+        .setGravityScale(0)
+        .setCanSleep(false)
+        .setAdditionalMassProperties(
+          config.chassis.mass,
+          config.com,
+          config.inertia,
+          { x: 0, y: 0, z: 0, w: 1 },
+        ),
     );
   }
 
@@ -98,7 +113,7 @@ export class PlayerViews {
     const group = buildBuggyMesh(carId);
     this.scene.add(group);
     const config = vehicleConfigFor(carId);
-    const body = this.createKinematicBody(0, -1000, 0);
+    const body = this.createDynamicBody(0, -1000, 0, config);
     this.createCollidersForBody(body, config);
     this.views.set(id, {
       group,
@@ -145,37 +160,58 @@ export class PlayerViews {
     view.restingLength = restingSuspensionLength(view.config.wheel);
 
     this.world.removeRigidBody(view.body);
-    const body = this.createKinematicBody(
+    const body = this.createDynamicBody(
       group.position.x, group.position.y, group.position.z,
+      view.config,
       group.quaternion.x, group.quaternion.y, group.quaternion.z, group.quaternion.w,
     );
     this.createCollidersForBody(body, view.config);
     view.body = body;
+    view.lastSampleTime = undefined;
+    view.lastTargetPos = undefined;
   }
 
   /**
    * Remote players are sampled at `renderTime` (a little in the past) for smoothness; the local
    * player is sampled at `localTime` (latest) so own driving feels responsive on low latency.
-   * Remote kinematic bodies are updated with continuous velocity for realistic momentum transfer.
+   * Remote dynamic bodies are updated with continuous velocity for realistic momentum transfer.
    */
   update(renderTime: number, localId: string | null, localTime: number): void {
     for (const [id, v] of this.views) {
       const isLocal = id === localId;
-      const s = v.buffer.sample(isLocal ? localTime : renderTime, isLocal ? 0 : 250);
+      const targetTime = isLocal ? localTime : renderTime;
+      const s = v.buffer.sample(targetTime, isLocal ? 0 : 250);
       v.group.position.set(s.x, s.y, s.z);
       v.group.quaternion.set(s.qx, s.qy, s.qz, s.qw);
       v.group.updateMatrixWorld();
 
       if (!isLocal) {
-        const pos = v.body.translation();
-        const distSq = (s.x - pos.x) ** 2 + (s.y - pos.y) ** 2 + (s.z - pos.z) ** 2;
-        if (distSq > 15 * 15 || pos.y <= -500) {
-          v.body.setTranslation({ x: s.x, y: s.y, z: s.z }, true);
-          v.body.setRotation({ x: s.qx, y: s.qy, z: s.qz, w: s.qw }, true);
-        } else {
-          v.body.setNextKinematicTranslation({ x: s.x, y: s.y, z: s.z });
-          v.body.setNextKinematicRotation({ x: s.qx, y: s.qy, z: s.qz, w: s.qw });
+        let vx = 0;
+        let vy = 0;
+        let vz = 0;
+        if (v.lastSampleTime !== undefined && v.lastTargetPos !== undefined) {
+          const dt = Math.max(0.001, (targetTime - v.lastSampleTime) / 1000);
+          if (dt < 0.5) {
+            vx = (s.x - v.lastTargetPos.x) / dt;
+            vy = (s.y - v.lastTargetPos.y) / dt;
+            vz = (s.z - v.lastTargetPos.z) / dt;
+            const speed = Math.hypot(vx, vy, vz);
+            const maxSpeed = v.config.drivetrain.topSpeed * 1.5;
+            if (speed > maxSpeed) {
+              const scale = maxSpeed / speed;
+              vx *= scale;
+              vy *= scale;
+              vz *= scale;
+            }
+          }
         }
+        v.lastSampleTime = targetTime;
+        v.lastTargetPos = { x: s.x, y: s.y, z: s.z };
+
+        v.body.setTranslation({ x: s.x, y: s.y, z: s.z }, true);
+        v.body.setRotation({ x: s.qx, y: s.qy, z: s.qz, w: s.qw }, true);
+        v.body.setLinvel({ x: vx, y: vy, z: vz }, true);
+        v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       }
 
       this.placeWheels(v);
