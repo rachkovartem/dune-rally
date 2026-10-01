@@ -7,6 +7,7 @@ import type { NetPlayer } from './connection';
 import type { CarId } from '../vehicle/cars';
 import { restingSuspensionLength, vehicleConfigFor, type VehicleConfig } from '../vehicle/vehicleConfig';
 import { sanitizeCarId } from '../../shared/protocol';
+import { VEHICLE_COLLISION_GROUPS } from '../../shared/vehiclePhysics';
 
 /** Height of the drawn ground at a world point; the same surface the chunk colliders are built from. */
 export type GroundHeight = (x: number, z: number) => number;
@@ -21,6 +22,7 @@ function isStaticGround(collider: RAPIER.Collider): boolean {
 interface View {
   group: THREE.Group;
   wheelPivots: THREE.Group[];
+  body: RAPIER.RigidBody;
   buffer: TransformBuffer;
   carId: CarId;
   config: VehicleConfig;
@@ -46,9 +48,8 @@ export class PlayerViews {
   private readonly travel = new THREE.Vector3();
 
   /**
-   * `world` is only read: the remote wheels cast rays against the ground to find where to stand.
-   * The client builds colliders only near its own car, so a remote car farther away finds no
-   * collider under it; `groundHeight` then gives the ground its wheels stand on.
+   * `world` is used for wheel ground rays and to maintain kinematic colliders for remote vehicles
+   * so the local car collides realistically with other players instead of passing through them.
    */
   constructor(
     private scene: THREE.Scene,
@@ -58,15 +59,51 @@ export class PlayerViews {
     private drawnCarFor: (carId: CarId) => CarId = (carId) => carId,
   ) {}
 
+  private createCollidersForBody(body: RAPIER.RigidBody, config: VehicleConfig): void {
+    this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(config.chassis.hx, config.chassis.hy, config.chassis.hz)
+        .setTranslation(0, config.chassis.offsetY, 0)
+        .setDensity(0)
+        .setRestitution(config.restitution)
+        .setFriction(config.friction)
+        .setCollisionGroups(VEHICLE_COLLISION_GROUPS),
+      body,
+    );
+    const overhang = config.chassis.overhang;
+    if (overhang) {
+      this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(config.chassis.hx, overhang.hy, overhang.hz)
+          .setTranslation(0, overhang.offsetY, 0)
+          .setDensity(0)
+          .setRestitution(config.restitution)
+          .setFriction(config.friction)
+          .setCollisionGroups(VEHICLE_COLLISION_GROUPS),
+        body,
+      );
+    }
+  }
+
+  private createKinematicBody(x: number, y: number, z: number, qx = 0, qy = 0, qz = 0, qw = 1): RAPIER.RigidBody {
+    return this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased()
+        .setTranslation(x, y, z)
+        .setRotation({ x: qx, y: qy, z: qz, w: qw })
+        .setCanSleep(false),
+    );
+  }
+
   add(id: string, pickedCarId: CarId): void {
     if (this.views.has(id)) return;
     const carId = this.drawnCarFor(pickedCarId);
     const group = buildBuggyMesh(carId);
     this.scene.add(group);
     const config = vehicleConfigFor(carId);
+    const body = this.createKinematicBody(0, -1000, 0);
+    this.createCollidersForBody(body, config);
     this.views.set(id, {
       group,
       wheelPivots: wheelPivotsOf(group),
+      body,
       buffer: new TransformBuffer(),
       carId,
       config,
@@ -80,6 +117,7 @@ export class PlayerViews {
     const v = this.views.get(id);
     if (!v) return;
     this.scene.remove(v.group);
+    this.world.removeRigidBody(v.body);
     this.views.delete(id);
   }
 
@@ -105,11 +143,20 @@ export class PlayerViews {
     view.carId = carId;
     view.config = vehicleConfigFor(carId);
     view.restingLength = restingSuspensionLength(view.config.wheel);
+
+    this.world.removeRigidBody(view.body);
+    const body = this.createKinematicBody(
+      group.position.x, group.position.y, group.position.z,
+      group.quaternion.x, group.quaternion.y, group.quaternion.z, group.quaternion.w,
+    );
+    this.createCollidersForBody(body, view.config);
+    view.body = body;
   }
 
   /**
    * Remote players are sampled at `renderTime` (a little in the past) for smoothness; the local
    * player is sampled at `localTime` (latest) so own driving feels responsive on low latency.
+   * Remote kinematic bodies are updated with continuous velocity for realistic momentum transfer.
    */
   update(renderTime: number, localId: string | null, localTime: number): void {
     for (const [id, v] of this.views) {
@@ -118,7 +165,30 @@ export class PlayerViews {
       v.group.position.set(s.x, s.y, s.z);
       v.group.quaternion.set(s.qx, s.qy, s.qz, s.qw);
       v.group.updateMatrixWorld();
+
+      if (!isLocal) {
+        const pos = v.body.translation();
+        const distSq = (s.x - pos.x) ** 2 + (s.y - pos.y) ** 2 + (s.z - pos.z) ** 2;
+        if (distSq > 15 * 15 || pos.y <= -500) {
+          v.body.setTranslation({ x: s.x, y: s.y, z: s.z }, true);
+          v.body.setRotation({ x: s.qx, y: s.qy, z: s.qz, w: s.qw }, true);
+        } else {
+          v.body.setNextKinematicTranslation({ x: s.x, y: s.y, z: s.z });
+          v.body.setNextKinematicRotation({ x: s.qx, y: s.qy, z: s.qz, w: s.qw });
+        }
+      }
+
       this.placeWheels(v);
+    }
+  }
+
+  bodyOf(id: string): RAPIER.RigidBody | undefined {
+    return this.views.get(id)?.body;
+  }
+
+  destroy(): void {
+    for (const [id] of this.views) {
+      this.remove(id);
     }
   }
 

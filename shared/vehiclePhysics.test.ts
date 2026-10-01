@@ -351,20 +351,25 @@ describe('createVehiclePhysics — drive modes and traction control (drive modes
   });
 });
 
-describe('createVehiclePhysics — vehicle collision filtering', () => {
-  it('does not exert collision forces between two overlapping vehicles', () => {
+describe('createVehiclePhysics — vehicle collision', () => {
+  it('exerts realistic collision forces and transfers momentum when vehicles collide', () => {
     const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-    world.createCollider(RAPIER.ColliderDesc.cuboid(50, 0.5, 50).setTranslation(0, -0.5, 0), ground);
-    const car1 = createVehiclePhysics(world, { x: 0, y: 1.5, z: 0 }, vehicleConfigFor('forester'));
-    const car2 = createVehiclePhysics(world, { x: 0.1, y: 1.5, z: 0 }, vehicleConfigFor('pajero'));
+    world.createCollider(RAPIER.ColliderDesc.cuboid(100, 0.5, 100).setTranslation(0, -0.5, 0), ground);
+    const car1 = createVehiclePhysics(world, { x: 0, y: 1.5, z: 10 }, vehicleConfigFor('forester'));
+    const car2 = createVehiclePhysics(world, { x: 0, y: 1.5, z: 0 }, vehicleConfigFor('pajero'));
+    car2.body.setLinvel({ x: 0, y: 0, z: 20 }, true);
     for (let step = 0; step < 60; step++) {
       world.step();
       car1.update(1 / 60);
       car2.update(1 / 60);
     }
-    expect(Math.abs(car1.body.linvel().x)).toBeLessThan(1);
-    expect(Math.abs(car2.body.linvel().x)).toBeLessThan(1);
+    // Car 1 was struck from behind and pushed forward
+    expect(car1.body.translation().z).toBeGreaterThan(15);
+    expect(car1.body.linvel().z).toBeGreaterThan(5);
+    // Car 2 slowed down upon impact
+    expect(car2.body.linvel().z).toBeLessThan(15);
+    // Both cars remain upright on wheels
     expect(car1.body.translation().y).toBeGreaterThan(0.5);
     expect(car2.body.translation().y).toBeGreaterThan(0.5);
   });

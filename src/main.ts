@@ -445,6 +445,7 @@ if (import.meta.env.DEV || debugModeEnabled()) {
     localCar?.buggy.teleport(x, heightField(x, z) + 3, z);
     tracks.breakChains();
     conn.sendResetCar();
+    prevCarVelocity = null;
   };
 }
 const cameraBannerEl = document.getElementById('hud-camera');
@@ -500,6 +501,8 @@ const READOUT_INTERVAL_MS = 100;
 let lastReadoutAt = -Infinity;
 let lastPoseSentAt = -Infinity;
 let lastInputSent: SentInput | null = null;
+let prevCarVelocity: Vector3 | null = null;
+let lastCrashSoundAt = -Infinity;
 
 function poseOf(buggy: Buggy): PoseMsg {
   const position = buggy.position();
@@ -570,6 +573,7 @@ window.addEventListener('keydown', (e) => {
   localCar.buggy.reset();
   tracks.breakChains();
   conn.sendResetCar();
+  prevCarVelocity = null;
 });
 
 // T switches traction control; X steps through the drive modes of a car that has them. Both are sent
@@ -643,6 +647,7 @@ function recoverIfFallenThrough(buggy: Buggy): void {
   buggy.placeUprightAt(landing.x, landing.y, landing.z);
   tracks.breakChains();
   conn.sendResetCar();
+  prevCarVelocity = null;
 }
 
 /** The same border net the server runs on its copy: a car over a crest or out of the map goes back to the valley. */
@@ -658,6 +663,7 @@ function catchEscapeOverBorder(buggy: Buggy): void {
   buggy.placeAt(landing);
   tracks.breakChains();
   conn.sendResetCar();
+  prevCarVelocity = null;
 }
 
 const guard = createFrameGuard((subsystem, message) => {
@@ -774,6 +780,20 @@ function frame() {
         lateralSlip: slip.lateralSlip,
         dt,
       });
+
+      const vel = buggy.velocity();
+      if (prevCarVelocity) {
+        const dvx = vel.x - prevCarVelocity.x;
+        const dvy = vel.y - prevCarVelocity.y;
+        const dvz = vel.z - prevCarVelocity.z;
+        const deltaSpeed = Math.hypot(dvx, dvy, dvz);
+        if (deltaSpeed > 4.5 && now - lastCrashSoundAt > 300) {
+          lastCrashSoundAt = now;
+          audio.crash();
+        }
+      }
+      if (!prevCarVelocity) prevCarVelocity = new Vector3();
+      prevCarVelocity.set(vel.x, vel.y, vel.z);
     });
     guard.run('hud', () => {
       if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));

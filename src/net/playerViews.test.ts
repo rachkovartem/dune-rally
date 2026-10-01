@@ -9,6 +9,7 @@ import type { CarAssembly, CarPart, CarWheelParts } from '../render/carModel';
 import type { WheelSlot } from '../assets/carPartRules';
 import { DEFAULT_CAR_ID, type CarId } from '../vehicle/cars';
 import { restingSuspensionLength, vehicleConfigFor } from '../vehicle/vehicleConfig';
+import { createVehiclePhysics } from '../../shared/vehiclePhysics';
 
 const bodyNameOf = (carId: CarId): string => `${carId}-body`;
 
@@ -201,5 +202,35 @@ describe('PlayerViews.update — a remote car far from the local collider ring (
       // No wheel hangs lower than its resting pose while the body is under the ground.
       expect(pivot.position.y).toBeGreaterThan(config.wheel.positions[wheelIndex].y - restingSuspensionLength(config.wheel));
     });
+  });
+});
+
+describe('PlayerViews — physical collisions with remote cars', () => {
+  it('creates a kinematic body in the physics world and removes it on remove()', () => {
+    views.add('p1', 'pajero');
+    expect(views.bodyOf('p1')).toBeDefined();
+    expect(views.bodyOf('p1')?.isKinematic()).toBe(true);
+
+    views.remove('p1');
+    expect(views.bodyOf('p1')).toBeUndefined();
+  });
+
+  it('physically collides with a dynamic local vehicle', () => {
+    views.add('p1', 'pajero');
+    views.pushState('p1', netPlayer('pajero', 0, 1.5, 10), 0);
+    views.update(0, null, 0);
+
+    const localCar = createVehiclePhysics(world, { x: 0, y: 1.5, z: 0 }, vehicleConfigFor('forester'));
+    localCar.body.setLinvel({ x: 0, y: 0, z: 20 }, true);
+
+    for (let step = 0; step < 60; step++) {
+      world.step();
+      localCar.update(1 / 60);
+    }
+
+    // Local car cannot pass through remote car at z=10
+    expect(localCar.body.translation().z).toBeLessThan(10);
+    // Local car bounced / stopped upon collision
+    expect(localCar.body.linvel().z).toBeLessThan(2);
   });
 });

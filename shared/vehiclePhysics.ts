@@ -29,11 +29,11 @@ import {
 /** How far (m) R lifts a car before it stands it on its wheels; the client and the server use the same. */
 export const RESET_LIFT = 3;
 
-// Collision filtering: vehicles belong to bit 1 and collide with everything EXCEPT bit 1 (other vehicles).
-// Static terrain, buildings and props default to 0xffff_ffff, so vehicles interact normally with the world.
+// Collision filtering: vehicles belong to bit 1 (COLLISION_GROUP_VEHICLE) and collide with
+// both the environment (terrain, buildings, props) and other vehicles.
 export const COLLISION_GROUP_ENVIRONMENT = 0x0001;
 export const COLLISION_GROUP_VEHICLE = 0x0002;
-export const VEHICLE_COLLISION_GROUPS = (COLLISION_GROUP_VEHICLE << 16) | (~COLLISION_GROUP_VEHICLE & 0xffff);
+export const VEHICLE_COLLISION_GROUPS = (COLLISION_GROUP_VEHICLE << 16) | 0xffff;
 
 export interface Quaternion {
   x: number;
