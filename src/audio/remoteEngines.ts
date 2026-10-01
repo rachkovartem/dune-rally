@@ -28,10 +28,10 @@ const PEDAL_ACCELERATION = 0.4;
 // Per second: speed is smoothed harder than the acceleration read from it, so network jitter is not heard as throttle.
 const SPEED_SMOOTHING = 8;
 const ACCELERATION_SMOOTHING = 4;
-// A remote car is heard at half the local engine's level, and a distance of this many metres gives full level.
-const REMOTE_LEVEL = 0.5;
-const REFERENCE_DISTANCE = 8;
-const MAX_DISTANCE = 300;
+// A remote car is heard at strong presence nearby, fading out over distance.
+const REMOTE_LEVEL = 0.9;
+const REFERENCE_DISTANCE = 12;
+const MAX_DISTANCE = 350;
 
 /**
  * Runs the car's own gearbox on a speed read from the drawn motion, so a remote Pajero shifts and
@@ -62,10 +62,14 @@ export class RemoteDrivetrainEstimate {
       this.acceleration = smoothToward(this.acceleration, (this.forwardSpeed - previous) / dt, ACCELERATION_SMOOTHING, dt);
     }
     this.lastPosition = { x: position.x, y: position.y, z: position.z };
+    const absSpeed = Math.abs(this.forwardSpeed);
+    const speedRatio = Math.min(1, absSpeed / this.spec.topSpeed);
     const speedingUp = this.forwardSpeed >= 0 ? this.acceleration > PEDAL_ACCELERATION : this.acceleration < -PEDAL_ACCELERATION;
+    const cruiseThrottle = absSpeed > 0.8 ? Math.min(0.7, 0.25 + 0.45 * speedRatio) : 0;
+    const throttle = speedingUp ? Math.max(0.85, cruiseThrottle) : (this.acceleration < -1.0 ? 0 : cruiseThrottle);
     const intent = this.forwardSpeed >= 0
-      ? pedalIntent(speedingUp ? 1 : 0, 0, this.forwardSpeed)
-      : pedalIntent(0, speedingUp ? 1 : 0, this.forwardSpeed);
+      ? pedalIntent(throttle, 0, this.forwardSpeed)
+      : pedalIntent(0, throttle, this.forwardSpeed);
     if (dt > 0) {
       this.state = stepGearbox(this.spec, this.state, intent, this.forwardSpeed, dt);
       this.load = smoothToward(this.load, engineLoadTarget(this.spec, this.state, intent), 6, dt);
@@ -106,11 +110,11 @@ export class RemoteEngines {
 
   private create(carId: CarId): RemoteEngine {
     const panner = this.context.createPanner();
-    panner.panningModel = 'equalpower';
+    panner.panningModel = 'HRTF';
     panner.distanceModel = 'inverse';
     panner.refDistance = REFERENCE_DISTANCE;
     panner.maxDistance = MAX_DISTANCE;
-    panner.rolloffFactor = 1;
+    panner.rolloffFactor = 0.85;
     panner.connect(this.destination);
     const voice = new EngineVoice(this.context, panner, this.loadLoop, this.reportError);
     for (const name of LAYER_NAMES) voice.setLayer(name, this.layerEntry(carId, name));
@@ -140,11 +144,20 @@ export class RemoteEngines {
       const estimated = engine.estimate.step(car.position, car.rotation, dt);
       engine.last = estimated;
       const now = this.context.currentTime;
-      engine.panner.positionX.setTargetAtTime(car.position.x, now, 0.02);
-      engine.panner.positionY.setTargetAtTime(car.position.y, now, 0.02);
-      engine.panner.positionZ.setTargetAtTime(car.position.z, now, 0.02);
+      if (engine.panner.positionX) {
+        engine.panner.positionX.setTargetAtTime(car.position.x, now, 0.02);
+        engine.panner.positionY.setTargetAtTime(car.position.y, now, 0.02);
+        engine.panner.positionZ.setTargetAtTime(car.position.z, now, 0.02);
+      } else {
+        engine.panner.setPosition(car.position.x, car.position.y, car.position.z);
+      }
       const carId = engine.carId;
-      engine.voice.update(estimated.rpm, estimated.load, REMOTE_LEVEL * (0.4 + 0.6 * estimated.load), (entry) => this.recordedRpmOf(carId, entry));
+      engine.voice.update(
+        estimated.rpm,
+        estimated.load,
+        REMOTE_LEVEL * (0.65 + 0.35 * estimated.load),
+        (entry) => this.recordedRpmOf(carId, entry),
+      );
     }
     for (const [id, engine] of this.engines) {
       if (!seen.has(id)) this.drop(id, engine);

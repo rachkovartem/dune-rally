@@ -252,15 +252,23 @@ export class AudioManager {
     this.listenerUp.set(0, 1, 0).applyQuaternion(this.listenerRotation);
     const listener = this.context.listener;
     const now = this.context.currentTime;
-    listener.positionX.setTargetAtTime(this.listenerPosition.x, now, 0.02);
-    listener.positionY.setTargetAtTime(this.listenerPosition.y, now, 0.02);
-    listener.positionZ.setTargetAtTime(this.listenerPosition.z, now, 0.02);
-    listener.forwardX.setTargetAtTime(this.listenerForward.x, now, 0.02);
-    listener.forwardY.setTargetAtTime(this.listenerForward.y, now, 0.02);
-    listener.forwardZ.setTargetAtTime(this.listenerForward.z, now, 0.02);
-    listener.upX.setTargetAtTime(this.listenerUp.x, now, 0.02);
-    listener.upY.setTargetAtTime(this.listenerUp.y, now, 0.02);
-    listener.upZ.setTargetAtTime(this.listenerUp.z, now, 0.02);
+    if (listener.positionX) {
+      listener.positionX.setTargetAtTime(this.listenerPosition.x, now, 0.02);
+      listener.positionY.setTargetAtTime(this.listenerPosition.y, now, 0.02);
+      listener.positionZ.setTargetAtTime(this.listenerPosition.z, now, 0.02);
+      listener.forwardX.setTargetAtTime(this.listenerForward.x, now, 0.02);
+      listener.forwardY.setTargetAtTime(this.listenerForward.y, now, 0.02);
+      listener.forwardZ.setTargetAtTime(this.listenerForward.z, now, 0.02);
+      listener.upX.setTargetAtTime(this.listenerUp.x, now, 0.02);
+      listener.upY.setTargetAtTime(this.listenerUp.y, now, 0.02);
+      listener.upZ.setTargetAtTime(this.listenerUp.z, now, 0.02);
+    } else {
+      listener.setPosition(this.listenerPosition.x, this.listenerPosition.y, this.listenerPosition.z);
+      listener.setOrientation(
+        this.listenerForward.x, this.listenerForward.y, this.listenerForward.z,
+        this.listenerUp.x, this.listenerUp.y, this.listenerUp.z,
+      );
+    }
   }
 
   snapshot(): AudioSnapshot {

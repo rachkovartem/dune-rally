@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+declare const __APP_VERSION__: string;
+
 interface ImportMetaEnv {
   /** CDN origin that holds `dune-rally/assets-manifest.json`; unset or empty in dev, where public/ is served. */
   readonly VITE_ASSET_BASE_URL: string | undefined;

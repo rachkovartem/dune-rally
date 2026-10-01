@@ -10,6 +10,8 @@ COPY package*.json ./
 RUN npm ci
 COPY . .
 ARG VITE_ASSET_BASE_URL
+ARG VITE_APP_VERSION
+ENV VITE_APP_VERSION=$VITE_APP_VERSION
 RUN test -n "$VITE_ASSET_BASE_URL" || { echo "build arg VITE_ASSET_BASE_URL is required (the asset CDN origin)"; exit 1; }
 RUN npm run build \
   && test -f dist/index.html \

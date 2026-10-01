@@ -20,6 +20,21 @@
         font-size: 28px; font-weight: 800; letter-spacing: 3px;
         color: #ffd23d; text-shadow: 0 0 2px #000, 2px 3px 0 #000;
       }
+      #hud-version {
+        position: absolute; top: 56px; left: 24px;
+        font-size: 13px; font-weight: 700; letter-spacing: 1px;
+        color: #ffd23d; background: rgba(0,0,0,0.45);
+        padding: 2px 8px; border-radius: 6px;
+        border: 1px solid rgba(255, 210, 61, 0.3);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+      }
+      #start-version {
+        position: absolute; top: 18px; left: 22px;
+        font-size: 13px; font-weight: 700; letter-spacing: 1px;
+        color: #ffd23d; background: rgba(0,0,0,0.45);
+        padding: 3px 8px; border-radius: 6px;
+        border: 1px solid rgba(255, 210, 61, 0.3);
+      }
       #hud-players {
         position: absolute; top: 22px; right: 24px;
         font-size: 16px; font-weight: 700;
@@ -284,6 +299,7 @@
     <canvas id="app"></canvas>
     <div id="hud">
       <div id="hud-title">DUNE RALLY</div>
+      <div id="hud-version">v0.1.6</div>
       <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b><span id="hud-ping-item"> · <span id="ping-icon">📶</span> <b id="player-ping">--</b> <span class="unit">мс</span></span></div>
       <div id="hud-compass"></div>
       <div id="hud-minimap"></div>
@@ -302,6 +318,7 @@
       <div id="hud-error" hidden></div>
     </div>
     <div id="start">
+      <div id="start-version">v0.1.6</div>
       <div class="start-card">
         <div class="start-title">DUNE RALLY</div>
         <div class="start-sub">Багги-покатушки по процедурной пустыне · мультиплеер</div>
