@@ -65,6 +65,9 @@ export class ArenaRoom extends Room<ArenaState> {
     // The payload is never read: a player can only reset its own car.
     this.onLimitedMessage(RESET_CAR_MESSAGE, 'control', (client) => {
       this.readySim().resetPlayer(client.sessionId);
+      const guard = this.guardOf(client);
+      guard.poseAcceptedAtMs = performance.now();
+      guard.rejectingPoses = false;
     });
 
     // A broken pose is dropped: the copy keeps its own physics until the next good one arrives.
@@ -199,12 +202,20 @@ export class ArenaRoom extends Room<ArenaState> {
     if (!serverPosition || carId === undefined) return;
     const guard = this.guardOf(client);
     const nowMs = performance.now();
-    const trusted = trustedPose({
+    const elapsedSeconds = (nowMs - guard.poseAcceptedAtMs) / 1000;
+    let trusted = trustedPose({
       pose,
       serverPosition,
-      secondsSinceAccepted: (nowMs - guard.poseAcceptedAtMs) / 1000,
+      secondsSinceAccepted: elapsedSeconds,
       topSpeed: vehicleConfigFor(carId).drivetrain.topSpeed,
     });
+    // If a client has been desynced for more than 1.5 seconds, force resync so they are never permanently stuck
+    if (trusted === null && elapsedSeconds > 1.5) {
+      const speedCap = vehicleConfigFor(carId).drivetrain.topSpeed * 1.25;
+      const speed = Math.hypot(pose.vx, pose.vy, pose.vz);
+      const scale = speed <= speedCap ? 1 : speedCap / speed;
+      trusted = { ...pose, vx: pose.vx * scale, vy: pose.vy * scale, vz: pose.vz * scale };
+    }
     if (trusted === null) {
       if (!guard.rejectingPoses) console.warn(`[arena ${this.roomId}] ${client.sessionId} sent a pose too far from its car, ignoring it`);
       guard.rejectingPoses = true;

@@ -4,7 +4,7 @@ import { isDriveMode, type DriveMode } from './driveModes';
 
 export const SERVER_PORT = 2567;
 export const TICK_HZ = 30;
-export const PATCH_HZ = 20;
+export const PATCH_HZ = 30;
 
 // The server releases the pedals after this long without input; the client derives its heartbeat
 // interval from it, so both sides share one number.

@@ -438,6 +438,7 @@ if (import.meta.env.DEV || debugModeEnabled()) {
   window.__tp = (x, z) => {
     localCar?.buggy.teleport(x, heightField(x, z) + 3, z);
     tracks.breakChains();
+    conn.sendResetCar();
   };
 }
 const cameraBannerEl = document.getElementById('hud-camera');
@@ -502,11 +503,20 @@ function poseOf(buggy: Buggy): PoseMsg {
 }
 
 const addRemote = (id: string, player: NetPlayer) => {
-  if (id !== conn.sessionId) views.add(id, sanitizeCarId(player.carId));
+  if (id !== conn.sessionId) {
+    views.add(id, sanitizeCarId(player.carId));
+    views.pushState(id, player, performance.now());
+  }
 };
 for (const [id, player] of conn.players()) addRemote(id, player);
 conn.onAdd(addRemote);
 conn.onRemove((id) => views.remove(id));
+conn.onPatch(() => {
+  const now = performance.now();
+  for (const [id, p] of conn.players()) {
+    if (id !== conn.sessionId) views.pushState(id, p, now);
+  }
+});
 
 function startDriving(carId: CarId): void {
   const config = vehicleConfigFor(carId);
@@ -603,6 +613,7 @@ function recoverIfFallenThrough(buggy: Buggy): void {
   );
   buggy.placeUprightAt(landing.x, landing.y, landing.z);
   tracks.breakChains();
+  conn.sendResetCar();
 }
 
 /** The same border net the server runs on its copy: a car over a crest or out of the map goes back to the valley. */
@@ -617,6 +628,7 @@ function catchEscapeOverBorder(buggy: Buggy): void {
   );
   buggy.placeAt(landing);
   tracks.breakChains();
+  conn.sendResetCar();
 }
 
 const guard = createFrameGuard((subsystem, message) => {
@@ -776,9 +788,6 @@ function frame() {
   // Remote players from the server, interpolated a little in the past.
   guard.run('remote players', () => {
     const renderTime = now - 1000 / 10;
-    for (const [id, p] of conn.players()) {
-      if (id !== conn.sessionId) views.pushState(id, p, now);
-    }
     views.update(renderTime, null, renderTime);
   });
   guard.run('remote engine sound', () => {

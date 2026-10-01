@@ -29,6 +29,12 @@ import {
 /** How far (m) R lifts a car before it stands it on its wheels; the client and the server use the same. */
 export const RESET_LIFT = 3;
 
+// Collision filtering: vehicles belong to bit 1 and collide with everything EXCEPT bit 1 (other vehicles).
+// Static terrain, buildings and props default to 0xffff_ffff, so vehicles interact normally with the world.
+export const COLLISION_GROUP_ENVIRONMENT = 0x0001;
+export const COLLISION_GROUP_VEHICLE = 0x0002;
+export const VEHICLE_COLLISION_GROUPS = (COLLISION_GROUP_VEHICLE << 16) | (~COLLISION_GROUP_VEHICLE & 0xffff);
+
 export interface Quaternion {
   x: number;
   y: number;
@@ -212,7 +218,8 @@ export function createVehiclePhysics(
       .setTranslation(0, config.chassis.offsetY, 0)
       .setDensity(0)
       .setRestitution(config.restitution)
-      .setFriction(config.friction),
+      .setFriction(config.friction)
+      .setCollisionGroups(VEHICLE_COLLISION_GROUPS),
     body,
   );
   const overhang = config.chassis.overhang;
@@ -222,7 +229,8 @@ export function createVehiclePhysics(
         .setTranslation(0, overhang.offsetY, 0)
         .setDensity(0)
         .setRestitution(config.restitution)
-        .setFriction(config.friction),
+        .setFriction(config.friction)
+        .setCollisionGroups(VEHICLE_COLLISION_GROUPS),
       body,
     );
   }
@@ -577,7 +585,10 @@ export function createVehiclePhysics(
       for (const wheelIndex of config.steeredWheels) controller.setWheelSteering(wheelIndex, currentSteer);
     },
     update(dt: number) {
-      controller.updateVehicle(dt);
+      controller.updateVehicle(dt, undefined, undefined, (collider) => {
+        const parent = collider.parent();
+        return parent === null || parent.isFixed();
+      });
     },
     steerAngle(): number {
       return currentSteer;

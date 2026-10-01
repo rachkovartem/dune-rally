@@ -25,6 +25,8 @@ export interface Connection {
   selectCar(carId: CarId): void;
   onAdd(cb: (id: string, p: NetPlayer) => void): void;
   onRemove(cb: (id: string) => void): void;
+  /** Fired whenever a state patch arrives from the server. */
+  onPatch(cb: () => void): void;
   /** The room is gone. The game has no leave action, so this means the server closed or restarted. */
   onDropped(cb: () => void): void;
   players(): Map<string, NetPlayer>;
@@ -38,6 +40,7 @@ export async function connectToArena(url: string, name: string, carId: CarId): P
   const players = new Map<string, NetPlayer>();
   const addCbs: ((id: string, p: NetPlayer) => void)[] = [];
   const removeCbs: ((id: string) => void)[] = [];
+  const patchCbs: (() => void)[] = [];
   const droppedCbs: (() => void)[] = [];
   // A send on a closed socket only logs a browser error; the page reloads once the server is back.
   let dropped = false;
@@ -56,6 +59,9 @@ export async function connectToArena(url: string, name: string, carId: CarId): P
   room.state.players.onRemove((_p: NetPlayer, id: string) => {
     players.delete(id);
     for (const cb of removeCbs) cb(id);
+  });
+  room.onStateChange(() => {
+    for (const cb of patchCbs) cb();
   });
 
   // The arena seed arrives with the first state sync (not synchronously at join time).
@@ -80,6 +86,7 @@ export async function connectToArena(url: string, name: string, carId: CarId): P
     },
     onAdd: (cb) => addCbs.push(cb),
     onRemove: (cb) => removeCbs.push(cb),
+    onPatch: (cb) => patchCbs.push(cb),
     onDropped: (cb) => {
       droppedCbs.push(cb);
       if (dropped) cb();

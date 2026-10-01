@@ -279,3 +279,13 @@ describe('ArenaRoom — the physics world of a closed room (review round 3)', ()
     expect(() => worlds[0].addPlayer('after-close', 'forester', 0)).toThrow('already freed');
   });
 });
+
+describe('ArenaRoom — resetCar and pose resync', () => {
+  it('accepts a resetCar message and keeps the player state valid', async () => {
+    const { room, client } = await settledCar();
+    client.ref.emit('message', getMessageBytes.raw(Protocol.ROOM_DATA, 'resetCar'));
+    await wait(TICK_MS * 4);
+    expect(room.state.players.get(client.sessionId)).toBeDefined();
+  });
+});
+

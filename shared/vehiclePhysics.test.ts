@@ -350,3 +350,23 @@ describe('createVehiclePhysics — drive modes and traction control (drive modes
     expect(car.vehicle.driveState().tractionControl).toBe(true);
   });
 });
+
+describe('createVehiclePhysics — vehicle collision filtering', () => {
+  it('does not exert collision forces between two overlapping vehicles', () => {
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(RAPIER.ColliderDesc.cuboid(50, 0.5, 50).setTranslation(0, -0.5, 0), ground);
+    const car1 = createVehiclePhysics(world, { x: 0, y: 1.5, z: 0 }, vehicleConfigFor('forester'));
+    const car2 = createVehiclePhysics(world, { x: 0.1, y: 1.5, z: 0 }, vehicleConfigFor('pajero'));
+    for (let step = 0; step < 60; step++) {
+      world.step();
+      car1.update(1 / 60);
+      car2.update(1 / 60);
+    }
+    expect(Math.abs(car1.body.linvel().x)).toBeLessThan(1);
+    expect(Math.abs(car2.body.linvel().x)).toBeLessThan(1);
+    expect(car1.body.translation().y).toBeGreaterThan(0.5);
+    expect(car2.body.translation().y).toBeGreaterThan(0.5);
+  });
+});
+

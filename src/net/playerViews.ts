@@ -88,6 +88,8 @@ export class PlayerViews {
     if (!v) return;
     const carId = this.drawnCarFor(sanitizeCarId(p.carId));
     if (carId !== v.carId) this.rebuild(v, carId);
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) return;
+    if (!Number.isFinite(p.qx) || !Number.isFinite(p.qy) || !Number.isFinite(p.qz) || !Number.isFinite(p.qw)) return;
     v.buffer.push({ t, x: p.x, y: p.y, z: p.z, qx: p.qx, qy: p.qy, qz: p.qz, qw: p.qw });
   }
 

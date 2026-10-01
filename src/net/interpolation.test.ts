@@ -23,4 +23,12 @@ describe('TransformBuffer', () => {
     b.push(snap(42, 7));
     expect(b.sample(1000).x).toBeCloseTo(7, 5);
   });
+  it('handles duplicate or out-of-order timestamps without returning NaN', () => {
+    const b = new TransformBuffer();
+    b.push(snap(50, 2));
+    b.push(snap(50, 4));
+    const sample = b.sample(50);
+    expect(Number.isFinite(sample.x)).toBe(true);
+    expect(sample.x).toBeGreaterThanOrEqual(2);
+  });
 });

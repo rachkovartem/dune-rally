@@ -13,6 +13,12 @@ export class TransformBuffer {
   private snaps: Snapshot[] = [];
 
   push(s: Snapshot): void {
+    if (this.snaps.length > 0) {
+      const last = this.snaps[this.snaps.length - 1];
+      if (s.t <= last.t) {
+        s = { ...s, t: last.t + 0.001 };
+      }
+    }
     this.snaps.push(s);
     if (this.snaps.length > MAX_HISTORY) this.snaps.shift();
   }
@@ -30,7 +36,8 @@ export class TransformBuffer {
     while (i < s.length - 1 && s[i + 1].t < renderTime) i++;
     const a = s[i];
     const b = s[i + 1];
-    const f = (renderTime - a.t) / (b.t - a.t);
+    const span = b.t - a.t;
+    const f = span > 0 ? (renderTime - a.t) / span : 0;
     return {
       x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f), z: lerp(a.z, b.z, f),
       ...nlerpQuat(a, b, f),
