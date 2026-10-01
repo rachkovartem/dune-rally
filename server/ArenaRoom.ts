@@ -8,8 +8,8 @@ import { trustedPose } from './poseTrust';
 import { RoomSlots } from './roomSlots';
 import { vehicleConfigFor } from '../src/vehicle/vehicleConfig';
 import {
-  MESSAGE_FLOOD_CLOSE_CODE, POSE_MESSAGE, RESET_CAR_MESSAGE, ROOM_BROKEN_CLOSE_CODE, sanitizeCarId, sanitizeInput,
-  sanitizeJoinOptions, sanitizePose, TICK_HZ, PATCH_HZ, type InputMsg, type PoseMsg,
+  MESSAGE_FLOOD_CLOSE_CODE, PING_MESSAGE, PONG_MESSAGE, POSE_MESSAGE, RESET_CAR_MESSAGE, ROOM_BROKEN_CLOSE_CODE,
+  sanitizeCarId, sanitizeInput, sanitizeJoinOptions, sanitizePose, TICK_HZ, PATCH_HZ, type InputMsg, type PoseMsg,
 } from '../shared/protocol';
 
 // The world steps at a fixed 1/60 s, so each 1/30 s tick runs two steps to keep real time.
@@ -81,6 +81,12 @@ export class ArenaRoom extends Room<ArenaState> {
       this.readySim().setPlayerCar(client.sessionId, carId);
       const player = this.state.players.get(client.sessionId);
       if (player) player.carId = carId;
+    });
+
+    this.onLimitedMessage(PING_MESSAGE, 'control', (client, timestamp) => {
+      if (typeof timestamp === 'number' && Number.isFinite(timestamp)) {
+        client.send(PONG_MESSAGE, timestamp);
+      }
     });
   }
 

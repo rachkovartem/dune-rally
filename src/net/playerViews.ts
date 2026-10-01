@@ -113,7 +113,8 @@ export class PlayerViews {
    */
   update(renderTime: number, localId: string | null, localTime: number): void {
     for (const [id, v] of this.views) {
-      const s = v.buffer.sample(id === localId ? localTime : renderTime);
+      const isLocal = id === localId;
+      const s = v.buffer.sample(isLocal ? localTime : renderTime, isLocal ? 0 : 250);
       v.group.position.set(s.x, s.y, s.z);
       v.group.quaternion.set(s.qx, s.qy, s.qz, s.qw);
       v.group.updateMatrixWorld();

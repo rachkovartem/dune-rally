@@ -24,8 +24,18 @@
         position: absolute; top: 22px; right: 24px;
         font-size: 16px; font-weight: 700;
         background: rgba(0,0,0,0.35); padding: 6px 12px; border-radius: 999px;
+        display: inline-flex; align-items: center; gap: 6px;
       }
       #hud-players b { color: #ffd23d; }
+      #hud-ping-item {
+        display: inline-flex; align-items: center; gap: 3px;
+        font-size: 15px; font-weight: 600; opacity: 0.95;
+      }
+      #hud-ping-item .unit { font-size: 13px; opacity: 0.75; }
+      #player-ping { color: #ffd23d; font-variant-numeric: tabular-nums; }
+      #player-ping.ping-good { color: #4ade80; }
+      #player-ping.ping-ok { color: #ffd23d; }
+      #player-ping.ping-bad { color: #f87171; }
       #hud-compass {
         position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
         display: flex; flex-direction: column; align-items: center;
@@ -274,7 +284,7 @@
     <canvas id="app"></canvas>
     <div id="hud">
       <div id="hud-title">DUNE RALLY</div>
-      <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b></div>
+      <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b><span id="hud-ping-item"> · <span id="ping-icon">📶</span> <b id="player-ping">--</b> <span class="unit">мс</span></span></div>
       <div id="hud-compass"></div>
       <div id="hud-minimap"></div>
       <div id="hud-map-modal" hidden></div>

@@ -98,6 +98,9 @@ export function sanitizeCarId(raw: unknown): CarId {
 export const POSE_MESSAGE = 'pose';
 export const POSE_HZ = 10;
 
+export const PING_MESSAGE = 'ping';
+export const PONG_MESSAGE = 'pong';
+
 /** Wheelspin and sinkage of the driver's own car, so a snapped server copy is not left dug in. */
 export interface PoseSurface {
   /** Wheelspin of the driven wheels, m/s, 0..POSE_MAX_SPIN. */

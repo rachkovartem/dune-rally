@@ -1,6 +1,9 @@
 // src/net/connection.ts
 import { Client, Room } from 'colyseus.js';
-import { POSE_MESSAGE, RESET_CAR_MESSAGE, type InputMsg, type JoinOptions, type PoseMsg, type SelectCarMsg } from '../../shared/protocol';
+import {
+  PING_MESSAGE, PONG_MESSAGE, POSE_MESSAGE, RESET_CAR_MESSAGE,
+  type InputMsg, type JoinOptions, type PoseMsg, type SelectCarMsg,
+} from '../../shared/protocol';
 import type { CarId } from '../vehicle/cars';
 
 export interface NetPlayer {
@@ -27,6 +30,10 @@ export interface Connection {
   onRemove(cb: (id: string) => void): void;
   /** Fired whenever a state patch arrives from the server. */
   onPatch(cb: () => void): void;
+  /** Fired whenever ping (RTT) is updated. */
+  onPing(cb: (pingMs: number) => void): void;
+  /** Current smoothed round-trip ping in milliseconds, or null before first reply. */
+  ping(): number | null;
   /** The room is gone. The game has no leave action, so this means the server closed or restarted. */
   onDropped(cb: () => void): void;
   players(): Map<string, NetPlayer>;
@@ -41,13 +48,32 @@ export async function connectToArena(url: string, name: string, carId: CarId): P
   const addCbs: ((id: string, p: NetPlayer) => void)[] = [];
   const removeCbs: ((id: string) => void)[] = [];
   const patchCbs: (() => void)[] = [];
+  const pingCbs: ((pingMs: number) => void)[] = [];
   const droppedCbs: (() => void)[] = [];
+  let currentPing: number | null = null;
+
   // A send on a closed socket only logs a browser error; the page reloads once the server is back.
   let dropped = false;
   const sendWhileOpen = (send: () => void): void => {
     if (!dropped) send();
   };
+
+  room.onMessage(PONG_MESSAGE, (sentTime: number) => {
+    if (typeof sentTime === 'number' && Number.isFinite(sentTime)) {
+      const rtt = Math.max(0, performance.now() - sentTime);
+      currentPing = currentPing === null ? Math.round(rtt) : Math.round(currentPing * 0.7 + rtt * 0.3);
+      for (const cb of pingCbs) cb(currentPing);
+    }
+  });
+
+  const sendPing = () => {
+    sendWhileOpen(() => room.send(PING_MESSAGE, performance.now()));
+  };
+  const pingInterval = setInterval(sendPing, 1000);
+  sendPing();
+
   room.onLeave(() => {
+    clearInterval(pingInterval);
     dropped = true;
     for (const cb of droppedCbs) cb();
   });
@@ -87,6 +113,8 @@ export async function connectToArena(url: string, name: string, carId: CarId): P
     onAdd: (cb) => addCbs.push(cb),
     onRemove: (cb) => removeCbs.push(cb),
     onPatch: (cb) => patchCbs.push(cb),
+    onPing: (cb) => pingCbs.push(cb),
+    ping: () => currentPing,
     onDropped: (cb) => {
       droppedCbs.push(cb);
       if (dropped) cb();

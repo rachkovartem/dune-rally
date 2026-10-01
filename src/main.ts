@@ -475,6 +475,7 @@ window.addEventListener('keydown', (event) => {
   if (!event.repeat && event.code === 'KeyQ') ctx.setQuality(otherQuality(ctx.quality()));
 });
 const playerCountEl = document.getElementById('player-count');
+const playerPingEl = document.getElementById('player-ping');
 const speedEl = document.getElementById('speed');
 const hudErrorEl = document.getElementById('hud-error');
 const compassEl = document.getElementById('hud-compass');
@@ -527,6 +528,11 @@ conn.onPatch(() => {
   for (const [id, p] of conn.players()) {
     if (id !== conn.sessionId) views.pushState(id, p, now);
   }
+});
+conn.onPing((pingMs) => {
+  if (!playerPingEl) return;
+  playerPingEl.textContent = String(pingMs);
+  playerPingEl.className = pingMs < 75 ? 'ping-good' : pingMs < 160 ? 'ping-ok' : 'ping-bad';
 });
 
 function startDriving(carId: CarId): void {
@@ -810,7 +816,9 @@ function frame() {
 
   // Remote players from the server, interpolated a little in the past.
   guard.run('remote players', () => {
-    const renderTime = now - 1000 / 10;
+    const pingMs = conn.ping() ?? 50;
+    const bufferDelayMs = Math.max(100, Math.min(220, pingMs * 1.1 + 45));
+    const renderTime = now - bufferDelayMs;
     views.update(renderTime, null, renderTime);
   });
   guard.run('remote engine sound', () => {

@@ -289,3 +289,14 @@ describe('ArenaRoom — resetCar and pose resync', () => {
   });
 });
 
+describe('ArenaRoom — ping / pong', () => {
+  it('replies with pong and matching timestamp to a ping message', async () => {
+    const { client } = await settledCar();
+    const sendSpy = vi.spyOn(client, 'send');
+    client.ref.emit('message', getMessageBytes.raw(Protocol.ROOM_DATA, 'ping', 123456));
+    await wait(TICK_MS * 2);
+    expect(sendSpy).toHaveBeenCalledWith('pong', 123456);
+  });
+});
+
+
