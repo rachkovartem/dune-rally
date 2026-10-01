@@ -14,6 +14,7 @@ export const GROUND_SOFTNESS = {
   /** The open plain: sand, but it holds a car that keeps moving. */
   plainSand: 0.15,
   mud: 0.8,
+  forest: 0.20,
   /** Covers not placed on the map today. */
   beach: 0.5,
   snow: 0.5,
@@ -29,6 +30,7 @@ export function groundSoftnessAt(x: number, z: number, cover: Cover): number {
   switch (cover) {
     case 'sand': return sandSoftnessAt(x, z);
     case 'mud': return GROUND_SOFTNESS.mud;
+    case 'forest': return GROUND_SOFTNESS.forest;
     case 'beach': return GROUND_SOFTNESS.beach;
     case 'snow': return GROUND_SOFTNESS.snow;
     case 'water': return GROUND_SOFTNESS.water;

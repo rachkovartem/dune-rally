@@ -123,6 +123,11 @@ export function createBiome(seed: number): Biome {
     }
     if (inDuneField(x, z)) return 'sand';
 
+    // The Dam water basin: muddy lake bed
+    const damDx = (x - DAM.water.x) / DAM.water.radiusX;
+    const damDz = (z - DAM.water.z) / DAM.water.radiusZ;
+    if (damDx * damDx + damDz * damDz <= 1.0) return 'mud';
+
     const landform = applyLandforms(0, x, z);
     if (landform.kind === 'spawnRise' && Math.hypot(x - SPAWN_RISE.x, z - SPAWN_RISE.z) < SPAWN_RISE.top + SPAWN_TOP_GRAVEL) {
       return 'gravel';

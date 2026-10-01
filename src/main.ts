@@ -809,7 +809,9 @@ function frame() {
     });
     guard.run('hud', () => {
       if (speedEl) speedEl.textContent = String(Math.round(buggy.speed() * 3.6));
-      driveHud.update(buggy.driveState());
+      const sinks = buggy.surfaceState().sink;
+      const maxSink = Math.max(0, ...sinks);
+      driveHud.update(buggy.driveState(), maxSink);
     });
     if (showDebugReadout && now - lastReadoutAt >= READOUT_INTERVAL_MS) {
       lastReadoutAt = now;
