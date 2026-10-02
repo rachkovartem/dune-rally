@@ -7,7 +7,7 @@ import { createDevOverlay } from './devOverlay';
 import { DEFAULT_QUALITY, QUALITY_TIERS, type QualityName, type QualityTier } from './qualityTiers';
 
 // The drive prototype's fog colour, camera lens and clip plane.
-const FOG_COLOR = 0xd9cfbc;
+const FOG_COLOR = 0xe5d7c3;
 const CAMERA_FOV = 62;
 const CAMERA_NEAR = 0.3;
 
@@ -58,11 +58,11 @@ export function createRenderer(canvas: HTMLCanvasElement, sky: SkyTextures): Ren
 
   const { environment, sunDirection } = buildSkyEnvironment(renderer, sky.hdr);
   scene.environment = environment;
-  scene.environmentIntensity = 1.0;
+  scene.environmentIntensity = 1.15;
   sky.background.mapping = THREE.EquirectangularReflectionMapping;
   sky.background.colorSpace = THREE.SRGBColorSpace;
   scene.background = sky.background;
-  scene.backgroundIntensity = 1.0;
+  scene.backgroundIntensity = 1.12;
   const fog = new THREE.FogExp2(FOG_COLOR, QUALITY_TIERS[DEFAULT_QUALITY].fogDensity);
   scene.fog = fog;
 

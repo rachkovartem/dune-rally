@@ -123,10 +123,12 @@ export function createBiome(seed: number): Biome {
     }
     if (inDuneField(x, z)) return 'sand';
 
-    // The Dam water basin: muddy lake bed
+    // The Dam water basin: muddy lake bed and surrounding green oasis meadow
     const damDx = (x - DAM.water.x) / DAM.water.radiusX;
     const damDz = (z - DAM.water.z) / DAM.water.radiusZ;
-    if (damDx * damDx + damDz * damDz <= 1.0) return 'mud';
+    const damDistSq = damDx * damDx + damDz * damDz;
+    if (damDistSq <= 1.0) return 'mud';
+    if (damDistSq <= 2.2) return 'grass';
 
     const landform = applyLandforms(0, x, z);
     if (landform.kind === 'spawnRise' && Math.hypot(x - SPAWN_RISE.x, z - SPAWN_RISE.z) < SPAWN_RISE.top + SPAWN_TOP_GRAVEL) {
@@ -146,7 +148,7 @@ export function createBiome(seed: number): Biome {
       return clearings > 0.35 ? 'grass' : 'forest';
     }
 
-    // The open plain: sand with patches of dry grass and hard dirt.
+    // The open plain: vibrant savanna with golden grass, terracotta red dirt, and golden sand
     const patch = vary(x * PATCH_FREQUENCY, z * PATCH_FREQUENCY) + 0.35 * vary(x * PATCH_FREQUENCY * 3 + 40, z * PATCH_FREQUENCY * 3 - 17);
     if (patch > 0.45) return 'dryGrass';
     if (patch < -0.55) return 'dirt';

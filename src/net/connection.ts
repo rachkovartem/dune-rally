@@ -18,6 +18,7 @@ export interface NetPlayer {
   qx: number; qy: number; qz: number; qw: number;
   /** This player's place in the spawn grid; −1 until the server has given one. */
   spawnSlot: number;
+  steer?: number;
 }
 
 export interface Connection {

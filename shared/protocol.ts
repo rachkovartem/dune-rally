@@ -195,6 +195,7 @@ export interface PoseMsg {
   x: number; y: number; z: number;
   qx: number; qy: number; qz: number; qw: number;
   vx: number; vy: number; vz: number;
+  steer?: number;
   surface?: PoseSurface;
 }
 
@@ -228,6 +229,8 @@ export function sanitizePose(raw: unknown): PoseMsg | null {
   const length = Math.hypot(qx, qy, qz, qw);
   if (length < QUATERNION_LENGTH.min || length > QUATERNION_LENGTH.max) return null;
   const pose: PoseMsg = { x, y, z, qx: qx / length, qy: qy / length, qz: qz / length, qw: qw / length, vx, vy, vz };
+  const steer = finiteField(raw, 'steer');
+  if (steer !== null) pose.steer = Math.max(-1.5, Math.min(1.5, steer));
   const surface = sanitizePoseSurface(Reflect.get(raw, 'surface'));
   if (surface) pose.surface = surface;
   return pose;

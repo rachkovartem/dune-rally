@@ -35,6 +35,7 @@ interface View {
   lastTargetPos?: { x: number; y: number; z: number };
   name: string;
   nametag: NametagSprite;
+  currentSteer: number;
 }
 
 function wheelPivotsOf(group: THREE.Group): THREE.Group[] {
@@ -134,6 +135,7 @@ export class PlayerViews {
       lastPosition: null,
       name,
       nametag,
+      currentSteer: 0,
     });
   }
 
@@ -158,7 +160,7 @@ export class PlayerViews {
     }
     if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) return;
     if (!Number.isFinite(p.qx) || !Number.isFinite(p.qy) || !Number.isFinite(p.qz) || !Number.isFinite(p.qw)) return;
-    v.buffer.push({ t, x: p.x, y: p.y, z: p.z, qx: p.qx, qy: p.qy, qz: p.qz, qw: p.qw });
+    v.buffer.push({ t, x: p.x, y: p.y, z: p.z, qx: p.qx, qy: p.qy, qz: p.qz, qw: p.qw, steer: p.steer ?? 0 });
   }
 
   /** The player picked another car: swap the model, keep its motion history. */
@@ -196,6 +198,7 @@ export class PlayerViews {
       const isLocal = id === localId;
       const targetTime = isLocal ? localTime : renderTime;
       const s = v.buffer.sample(targetTime, isLocal ? 0 : 250);
+      v.currentSteer = s.steer ?? 0;
       v.group.position.set(s.x, s.y, s.z);
       v.group.quaternion.set(s.qx, s.qy, s.qz, s.qw);
       v.group.updateMatrixWorld();
@@ -300,6 +303,8 @@ export class PlayerViews {
 
       const pivot = view.wheelPivots[wheelIndex];
       pivot.position.set(connection.x, connection.y - suspension, connection.z);
+      const steerAngle = view.currentSteer ?? 0;
+      pivot.rotation.y = config.steeredWheels.includes(wheelIndex) ? steerAngle : 0;
       pivot.children[0].rotation.x = view.rollAngle;
     }
   }

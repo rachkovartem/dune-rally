@@ -8,6 +8,7 @@ export class PlayerState extends Schema {
   carId = '';
   /** Where the car started (spawnPoseFor); -1 until the server has given the player a slot. */
   spawnSlot = -1;
+  steer = 0;
 }
 defineTypes(PlayerState, {
   x: 'number', y: 'number', z: 'number',
@@ -15,6 +16,7 @@ defineTypes(PlayerState, {
   name: 'string',
   carId: 'string',
   spawnSlot: 'number',
+  steer: 'number',
 });
 
 export class ArenaState extends Schema {

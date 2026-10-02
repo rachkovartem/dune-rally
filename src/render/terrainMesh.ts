@@ -23,6 +23,33 @@ export function setTerrainMaterial(material: THREE.Material): void {
 /** Texture repeats per world metre of the planar terrain UV (the spike's sand tiling). */
 export const TERRAIN_UV_REPEATS_PER_METRE = 0.25;
 
+export interface LinearRgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
+/**
+ * Rich, vibrant per-cover color multipliers.
+ * The base texture is beige sand (~0.50, 0.43, 0.32).
+ * Multiplying by these values produces vivid, natural biome colors.
+ */
+export const COVER_RGB_TINTS: Record<Cover, LinearRgb> = {
+  sand:     { r: 1.08, g: 0.98, b: 0.86 },
+  beach:    { r: 1.18, g: 1.06, b: 0.82 },
+  dryGrass: { r: 1.25, g: 1.08, b: 0.58 },
+  grass:    { r: 0.60, g: 1.28, b: 0.45 },
+  forest:   { r: 0.38, g: 0.98, b: 0.38 },
+  dirt:     { r: 1.25, g: 0.68, b: 0.42 },
+  road:     { r: 0.52, g: 0.48, b: 0.45 },
+  gravel:   { r: 0.82, g: 0.86, b: 0.92 },
+  rock:     { r: 0.78, g: 0.76, b: 0.75 },
+  mud:      { r: 0.58, g: 0.42, b: 0.30 },
+  water:    { r: 0.35, g: 0.82, b: 1.05 },
+  salt:     { r: 1.48, g: 1.52, b: 1.58 },
+  snow:     { r: 1.35, g: 1.40, b: 1.45 },
+};
+
 /** Step A: one brightness multiplier on the sand texture per cover, so roads, rock and mud still
  * read apart until Step B gives each cover its own texture layer. */
 const A_STEP_TINT_BY_COVER: Record<Cover, number> = {
@@ -197,10 +224,11 @@ export function buildTerrainMesh(surface: TintedChunkSurface, originX: number, o
     const slope = Math.hypot(normals.getX(vertex), normals.getZ(vertex)) / Math.max(Math.abs(normalY), 1e-4);
     const rockWeight = rockWeightAt(x, z, slope);
     rockWeights[vertex] = rockWeight;
-    const tint = A_STEP_TINT_BY_COVER[coverFromIndex(surface.covers[vertex])] * (1 - rockWeight) + rockWeight;
-    colors[vertex * 3] = tint;
-    colors[vertex * 3 + 1] = tint;
-    colors[vertex * 3 + 2] = tint;
+    const cover = coverFromIndex(surface.covers[vertex]);
+    const rgb = COVER_RGB_TINTS[cover] ?? { r: 1, g: 1, b: 1 };
+    colors[vertex * 3] = rgb.r * (1 - rockWeight) + rockWeight;
+    colors[vertex * 3 + 1] = rgb.g * (1 - rockWeight) + rockWeight;
+    colors[vertex * 3 + 2] = rgb.b * (1 - rockWeight) + rockWeight;
 
     const surfaceTint = SURFACE_TINT_TABLE[surface.tints[vertex]];
     if (surfaceTint === undefined) throw new Error(`buildTerrainMesh: no surface tint has index ${surface.tints[vertex]}`);

@@ -556,6 +556,7 @@ function poseOf(buggy: Buggy): PoseMsg {
     x: position.x, y: position.y, z: position.z,
     qx: rotation.x, qy: rotation.y, qz: rotation.z, qw: rotation.w,
     vx: velocity.x, vy: velocity.y, vz: velocity.z,
+    steer: buggy.steerAngle(),
     surface: { spin: surface.spin, sink: [...surface.sink], digDirection: [...surface.digDirection] },
   };
 }

@@ -14,11 +14,13 @@ const height = createHeightField(1);
 const biome = createBiome(1);
 
 /** The tint the near chunk mesh gives a flat vertex of this cover in the open valley. */
-function nearTint(cover: Cover): number {
+function nearTint(cover: Cover): LinearColor {
   const vertices = VERTS_PER_SIDE * VERTS_PER_SIDE;
   const surface = { heights: new Float32Array(vertices), covers: new Uint8Array(vertices).fill(coverIndex(cover)), tints: new Uint8Array(vertices) };
   const mesh = buildTerrainMesh(surface, 1536, 1536);
-  return mesh.geometry.getAttribute('color').getX(VERTS_PER_SIDE * 32 + 32);
+  const color = mesh.geometry.getAttribute('color');
+  const idx = VERTS_PER_SIDE * 32 + 32;
+  return { r: color.getX(idx), g: color.getY(idx), b: color.getZ(idx) };
 }
 
 describe('farVertexColor — far ground colour per cover (S1-3)', () => {
@@ -27,9 +29,9 @@ describe('farVertexColor — far ground colour per cover (S1-3)', () => {
       const far = farVertexColor(cover, SAND_MEAN);
       const tint = nearTint(cover);
       // The near tint travels in a 32-bit float attribute.
-      expect(far.r, cover).toBeCloseTo(SAND_MEAN.r * tint, 6);
-      expect(far.g, cover).toBeCloseTo(SAND_MEAN.g * tint, 6);
-      expect(far.b, cover).toBeCloseTo(SAND_MEAN.b * tint, 6);
+      expect(far.r, cover).toBeCloseTo(SAND_MEAN.r * tint.r, 6);
+      expect(far.g, cover).toBeCloseTo(SAND_MEAN.g * tint.g, 6);
+      expect(far.b, cover).toBeCloseTo(SAND_MEAN.b * tint.b, 6);
     }
   });
 

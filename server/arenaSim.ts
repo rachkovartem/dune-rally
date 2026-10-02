@@ -39,6 +39,7 @@ export const SPAWN_PREBUILD_RADIUS = 2;
 export interface PlayerTransform {
   x: number; y: number; z: number;
   qx: number; qy: number; qz: number; qw: number;
+  steer: number;
 }
 
 interface Player {
@@ -255,7 +256,7 @@ export class ArenaSim {
     if (!p) return undefined;
     const t = p.vehicle.body.translation();
     const r = p.vehicle.body.rotation();
-    return { x: t.x, y: t.y, z: t.z, qx: r.x, qy: r.y, qz: r.z, qw: r.w };
+    return { x: t.x, y: t.y, z: t.z, qx: r.x, qy: r.y, qz: r.z, qw: r.w, steer: p.vehicle.steerAngle() };
   }
 
   private groundUnder(p: Player): SurfaceGround {

@@ -130,6 +130,10 @@ export class Buggy {
     return this.vehicle.body.translation();
   }
 
+  steerAngle(): number {
+    return this.vehicle.steerAngle();
+  }
+
   /** TEMP debug teleport. */
   teleport(x: number, y: number, z: number) {
     this.vehicle.body.setTranslation({ x, y, z }, true);

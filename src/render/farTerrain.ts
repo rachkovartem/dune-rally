@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { coverFromIndex, surfaceTintAt, type Cover } from '../world/biome';
 import { CHUNK_SIZE, type ChunkCoord } from '../world/chunk';
 import type { FarGrid } from '../world/farGrid';
-import { coverTint, gridNormals, rockWeightAt } from './terrainMesh';
+import { COVER_RGB_TINTS, gridNormals, rockWeightAt } from './terrainMesh';
 import { visualTerrainHeight } from './horizonShape';
 import { surfaceTintFor, tintColor } from './surfaceTints';
 
@@ -23,8 +23,8 @@ export const FAR_MASK_CHUNKS = 52;
 
 /** The far ground colour of a cover: the mean sand colour times the near mesh's cover tint. */
 export function farVertexColor(cover: Cover, sandMean: LinearColor): LinearColor {
-  const tint = coverTint(cover);
-  return { r: sandMean.r * tint, g: sandMean.g * tint, b: sandMean.b * tint };
+  const rgb = COVER_RGB_TINTS[cover] ?? { r: 1, g: 1, b: 1 };
+  return { r: sandMean.r * rgb.r, g: sandMean.g * rgb.g, b: sandMean.b * rgb.b };
 }
 
 /** Mean colour of a texture, in the linear space vertex colours are shaded in. */

@@ -3,6 +3,7 @@ export interface Snapshot {
   t: number;
   x: number; y: number; z: number;
   qx: number; qy: number; qz: number; qw: number;
+  steer?: number;
 }
 
 export type Transform = Omit<Snapshot, 't'>;
@@ -32,7 +33,7 @@ export class TransformBuffer {
   sample(renderTime: number, maxExtrapolateMs = 0): Transform {
     const s = this.snaps;
     if (s.length === 0) {
-      return { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 };
+      return { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, steer: 0 };
     }
     if (s.length === 1 || renderTime <= s[0].t) return strip(s[0]);
 
@@ -60,6 +61,7 @@ export class TransformBuffer {
         qy: last.qy,
         qz: last.qz,
         qw: last.qw,
+        steer: last.steer ?? 0,
       };
     }
 
@@ -72,12 +74,16 @@ export class TransformBuffer {
 
     const span = b.t - a.t;
     const f = span > 0 ? (renderTime - a.t) / span : 0;
+    const steer = a.steer !== undefined && b.steer !== undefined
+      ? a.steer + (b.steer - a.steer) * f
+      : (b.steer ?? a.steer ?? 0);
 
     return {
       x: monotoneHermite(prev?.x, prev?.t, a.x, a.t, b.x, b.t, next?.x, next?.t, renderTime),
       y: monotoneHermite(prev?.y, prev?.t, a.y, a.t, b.y, b.t, next?.y, next?.t, renderTime),
       z: monotoneHermite(prev?.z, prev?.t, a.z, a.t, b.z, b.t, next?.z, next?.t, renderTime),
       ...nlerpQuat(a, b, f),
+      steer,
     };
   }
 }

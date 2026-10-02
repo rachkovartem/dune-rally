@@ -17,8 +17,8 @@ export const SUN_SHADOW_SETTINGS: SunShadowSettings = {
   halfExtent: 90,
 };
 
-const SUN_COLOR = 0xfff2e0;
-const SUN_INTENSITY = 5.0;
+const SUN_COLOR = 0xfff6ea;
+const SUN_INTENSITY = 5.2;
 const SUN_DISTANCE = 200;
 
 export interface SunShadows {

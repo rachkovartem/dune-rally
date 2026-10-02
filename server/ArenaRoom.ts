@@ -532,6 +532,7 @@ export class ArenaRoom extends Room<ArenaState> {
       if (transform && player) {
         player.x = transform.x; player.y = transform.y; player.z = transform.z;
         player.qx = transform.qx; player.qy = transform.qy; player.qz = transform.qz; player.qw = transform.qw;
+        player.steer = transform.steer;
       }
     }
   }

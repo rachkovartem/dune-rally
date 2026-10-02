@@ -282,5 +282,26 @@ describe('PlayerViews — nametags and duel opponent highlighting', () => {
     expect(scene.children).not.toContain(sprite);
     expect(views.nametagOf('p1')).toBeUndefined();
   });
+
+  it('rotates front wheel pivots when player steers', () => {
+    views.add('p1', 'forester', 'Racer');
+    const group = views.group('p1');
+    expect(group).toBeDefined();
+    // In buildBuggyMesh: children[0] = body, children[1..4] = wheel pivots (FL, FR, RL, RR)
+    const wheelFL = group?.children[1] as THREE.Group;
+    const wheelFR = group?.children[2] as THREE.Group;
+    const wheelRL = group?.children[3] as THREE.Group;
+    const wheelRR = group?.children[4] as THREE.Group;
+
+    views.pushState('p1', { ...netPlayer('forester'), steer: 0.42 }, 0);
+    views.update(0, null, 0);
+
+    // Front wheels (0 and 1) steer
+    expect(wheelFL.rotation.y).toBeCloseTo(0.42, 3);
+    expect(wheelFR.rotation.y).toBeCloseTo(0.42, 3);
+    // Rear wheels (2 and 3) do not steer
+    expect(wheelRL.rotation.y).toBeCloseTo(0, 3);
+    expect(wheelRR.rotation.y).toBeCloseTo(0, 3);
+  });
 });
 
