@@ -21,6 +21,7 @@ import { PlayerViews } from './net/playerViews';
 import { shouldSendInput, type SentInput } from './net/inputSendPolicy';
 import { TireTracks } from './render/groundDecals';
 import { SandRoost } from './render/sandRoost';
+import { FineSandParticles } from './render/fineSandParticles';
 import { surfaceTintFor, tintColor } from './render/surfaceTints';
 import { Knockables } from './render/knockables';
 import { AudioManager, type RemoteCarPose } from './audio/audio';
@@ -414,7 +415,7 @@ window.__dbg = () => {
     drive: buggy.driveState(),
     softness: localCar.softness,
     cover: localCar.cover,
-    roostGrains: roost.liveCount(),
+    roostGrains: roost.liveCount() + fineSand.liveCount(),
     // How far each drawn tyre reaches below its physics contact point: the sinkage when it reads as sunk.
     tyreBelowContact: buggy.wheelContacts().map((contact, wheelIndex) => {
       const pivot = buggy.mesh.children[wheelIndex + 1];
@@ -466,7 +467,11 @@ function aimSpawnView(): void {
 aimSpawnView();
 const tracks = new TireTracks(ctx.scene, heightField, biome, sandSet, 4);
 const roost = new SandRoost(ctx.scene);
-ctx.onQualityChange((_tier, name) => roost.setQuality(name));
+const fineSand = new FineSandParticles(ctx.scene);
+ctx.onQualityChange((_tier, name) => {
+  roost.setQuality(name);
+  fineSand.setQuality(name);
+});
 const grass = new Grass(ctx.scene, loadedModel(`prop:${GRASS_MODEL_ID}`), heightField, biome);
 ctx.onQualityChange((tier) => {
   grass.setTier(tier);
@@ -743,17 +748,42 @@ function frame() {
       const contacts = buggy.wheelContacts();
       const tint = tintColor(sandMean, surfaceTintFor(surfaceTintAt(p.x, p.z, car.cover)));
       const shade = coverTint(car.cover);
+      const fwd = new Vector3(0, 0, 1).applyQuaternion(buggy.mesh.quaternion);
+      const left = new Vector3(1, 0, 0).applyQuaternion(buggy.mesh.quaternion);
+      const vel = buggy.velocity();
+      const wheelSurfaces = buggy.wheelSurface().map((wheel, wheelIndex) => ({
+        contact: contacts[wheelIndex], spinSpeed: wheel.spinSpeed, lateralSlip: wheel.lateralSlip,
+      }));
+      const groundCol = { r: tint.r * shade, g: tint.g * shade, b: tint.b * shade };
+
       roost.update({
-        wheels: buggy.wheelSurface().map((wheel, wheelIndex) => ({
-          contact: contacts[wheelIndex], spinSpeed: wheel.spinSpeed, lateralSlip: wheel.lateralSlip,
-        })),
+        wheels: wheelSurfaces,
         spinDirection: buggy.surfaceState().spinDirection,
-        forward: new Vector3(0, 0, 1).applyQuaternion(buggy.mesh.quaternion),
-        left: new Vector3(1, 0, 0).applyQuaternion(buggy.mesh.quaternion),
-        velocity: buggy.velocity(),
+        forward: fwd,
+        left,
+        velocity: vel,
         cover: car.cover,
-        groundColor: { r: tint.r * shade, g: tint.g * shade, b: tint.b * shade },
+        groundColor: groundCol,
         cameraRotation: ctx.camera.quaternion,
+        dt,
+      });
+
+      // Dive severity for sand splash (nose pointed into ground or falling fast into ground)
+      const noseDown = Math.max(0, -fwd.y);
+      const diveSeverity = (noseDown > 0.08 || vel.y < -1.5)
+        ? Math.max(0, noseDown - 0.08) * 2.2 + Math.max(0, -vel.y - 1.5) * 0.35
+        : 0;
+
+      fineSand.update({
+        wheels: wheelSurfaces,
+        spinDirection: buggy.surfaceState().spinDirection,
+        forward: fwd,
+        left,
+        velocity: vel,
+        cover: car.cover,
+        groundColor: groundCol,
+        granular: car.ground.granular === true,
+        diveSeverity,
         dt,
       });
     });

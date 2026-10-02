@@ -41,6 +41,8 @@ export interface SurfaceGround {
   looseness: number;
   /** 0 firm .. 1 deep dune sand: how fast a spinning wheel digs itself in. */
   softness: number;
+  /** True in ultra-loose granular sand traps (Fesh-fesh, quicksand) where angle of attack dictates sinking. */
+  granular?: boolean;
 }
 
 /** @deprecated The old name of SurfaceGround; kept so callers can move one at a time. */

@@ -554,11 +554,60 @@ export function createVehiclePhysics(
         telemetry[wheelIndex].sink = next.sink;
         controller.setWheelRadius(wheelIndex, radius - next.sink);
       }
+
+      // Dynamic angle of attack in loose sand:
+      // If moving tangent to the ground (dive angle <= 0), the car skims/floats freely on speed.
+      // If pitching nose-down into the sand or flying nose-first into a sand bank / dune slope,
+      // front wheels plunge into the granular sand and experience bulldozing resistance.
+      let divePlowingImpulse = 0;
+      if (ground.softness > 0.4 && (inContact[0] || inContact[1])) {
+        const n0 = inContact[0] ? controller.wheelContactNormal(0) : null;
+        const n1 = inContact[1] ? controller.wheelContactNormal(1) : null;
+        const nx = (n0 ? n0.x : 0) + (n1 ? n1.x : 0);
+        const ny = (n0 ? n0.y : 0) + (n1 ? n1.y : 0);
+        const nz = (n0 ? n0.z : 0) + (n1 ? n1.z : 0);
+        const nLen = Math.hypot(nx, ny, nz);
+        if (nLen > 1e-4) {
+          const normX = nx / nLen;
+          const normY = ny / nLen;
+          const normZ = nz / nLen;
+
+          // How steep the nose points DOWN into the ground surface (0 = tangent / parallel, > 0 = nose down)
+          const noseIntoGround = -(nose.x * normX + nose.y * normY + nose.z * normZ);
+          // Velocity component directed perpendicularly into the ground surface
+          const velIntoGround = -(velocity.x * normX + velocity.y * normY + velocity.z * normZ);
+
+          if (noseIntoGround > 0.08 || velIntoGround > 1.2) {
+            const pitchSeverity = Math.max(0, noseIntoGround - 0.08);
+            const impactSeverity = Math.max(0, velIntoGround - 1.2);
+            const severity = pitchSeverity * 2.2 + impactSeverity * 0.35;
+            const trapMult = ground.granular ? 2.5 : 1.2;
+            const diveSinkRate = severity * trapMult * (ground.softness / config.surface.flotation);
+
+            for (const frontWheel of [0, 1]) {
+              if (inContact[frontWheel]) {
+                sink[frontWheel] = Math.min(SURFACE_TYRE.maxSinkShare * radius, sink[frontWheel] + diveSinkRate * dt);
+                telemetry[frontWheel].sink = sink[frontWheel];
+                controller.setWheelRadius(frontWheel, radius - sink[frontWheel]);
+              }
+            }
+
+            const meanFrontSink = ((sink[0] + sink[1]) * 0.5) / radius;
+            const forwardSpd = Math.max(0, alongNose);
+            if (forwardSpd > 1 && meanFrontSink > 0.1) {
+              const dragCoeff = (ground.granular ? 1.6 : 0.8) * severity * meanFrontSink;
+              divePlowingImpulse = config.chassis.mass * forwardSpd * Math.min(0.6, dragCoeff * dt);
+            }
+          }
+        }
+      }
+
       bellyCollider.setFriction(ground.softness > 0 ? SURFACE_TYRE.bellyFriction : config.friction);
 
-      if (airSpeed > 1e-3) {
-        const dragImpulse = (aeroDrag * dt) / airSpeed;
-        body.applyImpulse({ x: -velocity.x * dragImpulse, y: -velocity.y * dragImpulse, z: -velocity.z * dragImpulse }, true);
+      const totalDragImpulse = (airSpeed > 1e-3 ? (aeroDrag * dt) / airSpeed : 0) * airSpeed + divePlowingImpulse;
+      if (totalDragImpulse > 0 && airSpeed > 1e-3) {
+        const impulse = totalDragImpulse / airSpeed;
+        body.applyImpulse({ x: -velocity.x * impulse, y: -velocity.y * impulse, z: -velocity.z * impulse }, true);
       }
 
       // Rapier applies side grip close to the centre of mass, so a car barely leans in a turn. Add

@@ -221,6 +221,29 @@ export const WIT_DUINE = {
   brinkRadius: 12,
 } as const;
 
+export interface SandTrapZone extends Ellipse {
+  name: string;
+}
+
+/** Specific zones of ultra-fine, loose granular sand ("Fesh-Fesh", sand traps, quicksand). */
+export const SAND_TRAP_ZONES: readonly SandTrapZone[] = [
+  // Deep fine fesh-fesh bowl at the foot of Big Daddy
+  { name: 'Fesh-Fesh', x: 2680, z: 1420, radiusX: 95, radiusZ: 85 },
+  // Deceiving loose sand trough between dune crests in eastern Wit Duine
+  { name: 'Sand trap', x: 2360, z: 1680, radiusX: 85, radiusZ: 75 },
+  // Wet quicksand mouth where the Sandrivier enters the Soutpan basin
+  { name: 'Quicksand', x: 670, z: 2260, radiusX: 75, radiusZ: 65 },
+];
+
+export function sandTrapAt(x: number, z: number): SandTrapZone | null {
+  for (const zone of SAND_TRAP_ZONES) {
+    const dx = (x - zone.x) / zone.radiusX;
+    const dz = (z - zone.z) / zone.radiusZ;
+    if (dx * dx + dz * dz <= 1.0) return zone;
+  }
+  return null;
+}
+
 export const BOSVELD = {
   area: { minX: 200, minZ: 480, maxX: 880, maxZ: 1350 } satisfies Box,
   x: 520,
@@ -523,6 +546,9 @@ export const MAP_LANDMARKS: readonly Landmark[] = [
   { name: 'Big Daddy', x: WIT_DUINE.bigDaddy.x, z: WIT_DUINE.bigDaddy.z, height: WIT_DUINE.bigDaddy.height },
   { name: 'Dolerite ridge', x: 2400, z: 2130, height: DOLERITE_RIDGE.maxHeight },
   { name: 'Dam', x: DAM.water.x, z: DAM.water.z, height: 0 },
+  { name: '⚠️ Fesh-Fesh', x: 2680, z: 1420, height: 5 },
+  { name: '⚠️ Sand trap', x: 2360, z: 1680, height: 4 },
+  { name: '⚠️ Quicksand', x: 670, z: 2260, height: 1 },
 ];
 
 export type MeetingSpotId = 'M1' | 'M2' | 'M3' | 'M4' | 'M5';

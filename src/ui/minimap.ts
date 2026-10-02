@@ -3,7 +3,7 @@
 // roads, landmarks, and positions of the local player and other players in real-time.
 // Supports local radar mode (tracking car with heading/north-up) and expanded full map mode.
 
-import { MAP_SIZE, ROUTES, DAM, SOUTPAN, MAP_LANDMARKS, BOSVELD, DORP_YARD } from '../world/mapLayout';
+import { MAP_SIZE, ROUTES, DAM, SOUTPAN, MAP_LANDMARKS, BOSVELD, DORP_YARD, SAND_TRAP_ZONES } from '../world/mapLayout';
 import { COVER, coverFromIndex } from '../world/biome';
 import type { FarGrid } from '../world/farGrid';
 import type { CarId } from '../vehicle/cars';
@@ -286,6 +286,23 @@ export function bakeTerrainCanvas(grid: FarGrid, textureSize = 512): HTMLCanvasE
   ctx.strokeStyle = 'rgba(255, 210, 61, 0.6)';
   ctx.lineWidth = 1.2;
   ctx.strokeRect(dorpU * textureSize, dorpV * textureSize, dorpW, dorpH);
+  ctx.restore();
+
+  // Draw sand trap zones (fine powder sand wash)
+  ctx.save();
+  for (const trap of SAND_TRAP_ZONES) {
+    const tu = trap.x / MINIMAP_WORLD_SIZE;
+    const tv = trap.z / MINIMAP_WORLD_SIZE;
+    const trx = (trap.radiusX / MINIMAP_WORLD_SIZE) * textureSize;
+    const try_ = (trap.radiusZ / MINIMAP_WORLD_SIZE) * textureSize;
+    ctx.beginPath();
+    ctx.ellipse(tu * textureSize, tv * textureSize, trx, try_, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(240, 185, 80, 0.28)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 140, 20, 0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
   ctx.restore();
 
   // Draw roads and tracks

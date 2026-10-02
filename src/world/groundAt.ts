@@ -2,6 +2,7 @@
 import { groundFor, type GripOverrides, type SurfaceGround } from '../../shared/terrainGrip';
 import type { Biome, Cover } from './biome';
 import { groundSoftnessAt } from './groundSoftness';
+import { sandTrapAt } from './mapLayout';
 import type { Height2D } from './noise';
 import { surfaceSampleAt } from './surfaceSample';
 
@@ -24,5 +25,9 @@ export function groundAt(
   const surface = surfaceSampleAt(heightField, x, z);
   const cover = biome.coverAt(x, z, surface.height, surface.slope);
   const softness = groundSoftnessAt(x, z, cover);
-  return { cover, softness, ground: groundFor(cover, softness, config) };
+  const ground = groundFor(cover, softness, config);
+  if (sandTrapAt(x, z) !== null) {
+    ground.granular = true;
+  }
+  return { cover, softness, ground };
 }
