@@ -239,3 +239,48 @@ describe('PlayerViews — physical collisions with remote cars', () => {
     expect(Math.hypot(angvel.x, angvel.y, angvel.z)).toBeLessThan(10);
   });
 });
+
+describe('PlayerViews — nametags and duel opponent highlighting', () => {
+  it('creates a nametag sprite for a new player and positions it above the car', () => {
+    views.add('p1', 'pajero', 'Speedy');
+    const nametag = views.nametagOf('p1');
+    expect(nametag).toBeDefined();
+    expect(scene.children).toContain(nametag?.sprite);
+
+    views.pushState('p1', netPlayer('pajero', 10, 5, 20), 0);
+    views.update(0, null, 0);
+
+    expect(nametag?.sprite.position.x).toBeCloseTo(10, 1);
+    expect(nametag?.sprite.position.y).toBeCloseTo(7.3, 1); // 5 + 2.3
+    expect(nametag?.sprite.position.z).toBeCloseTo(20, 1);
+  });
+
+  it('hides nametag when player is local', () => {
+    views.add('p1', 'pajero', 'Me');
+    const nametag = views.nametagOf('p1');
+    views.pushState('p1', netPlayer('pajero', 0, 0, 0), 0);
+    views.update(0, 'p1', 0);
+    expect(nametag?.sprite.visible).toBe(false);
+  });
+
+  it('updates name when pushState has new player name', () => {
+    views.add('p1', 'pajero', 'OldName');
+    const nametag = views.nametagOf('p1');
+    expect(nametag).toBeDefined();
+    const p = netPlayer('pajero');
+    p.name = 'NewName';
+    views.pushState('p1', p, 0);
+    // nametag sprite exists and is updated
+    expect(views.nametagOf('p1')).toBe(nametag);
+  });
+
+  it('removes nametag sprite when player is removed', () => {
+    views.add('p1', 'pajero', 'Ghost');
+    const sprite = views.nametagOf('p1')?.sprite;
+    expect(scene.children).toContain(sprite);
+    views.remove('p1');
+    expect(scene.children).not.toContain(sprite);
+    expect(views.nametagOf('p1')).toBeUndefined();
+  });
+});
+

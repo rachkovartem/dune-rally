@@ -293,13 +293,214 @@
         background: #ffd23d; color: #1a1208; border-radius: 4px;
         padding: 1px 5px; font-weight: 800;
       }
+
+      /* Nickname input on start screen */
+      .start-name-section {
+        margin-top: 20px;
+        display: flex; flex-direction: column; align-items: center; gap: 8px;
+      }
+      .start-name-label {
+        font-size: 15px; font-weight: 700; opacity: 0.9; color: #ffd23d; letter-spacing: 0.5px;
+      }
+      #player-name-input {
+        font: inherit; font-size: 17px; font-weight: 700;
+        text-align: center; color: #fff; background: rgba(0, 0, 0, 0.55);
+        border: 2px solid rgba(255, 210, 61, 0.45); border-radius: 999px;
+        padding: 8px 22px; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+        width: 240px; max-width: 80vw;
+      }
+      #player-name-input:focus {
+        border-color: #ffd23d;
+        box-shadow: 0 0 14px rgba(255, 210, 61, 0.45);
+        background: rgba(0, 0, 0, 0.75);
+      }
+
+      /* Duel & Competition HUD */
+      #hud-duel-prompt {
+        position: absolute; bottom: 74px; left: 50%; transform: translateX(-50%);
+        pointer-events: auto; cursor: pointer; z-index: 5;
+        transition: transform 0.15s ease, opacity 0.15s ease;
+      }
+      #hud-duel-prompt[hidden] { display: none; }
+      #hud-duel-prompt:hover { transform: translateX(-50%) scale(1.04); }
+      .duel-prompt-pill {
+        display: flex; align-items: center; gap: 10px;
+        background: rgba(20, 12, 6, 0.92);
+        border: 2px solid #ffd23d;
+        border-radius: 999px; padding: 7px 18px;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.7), 0 0 14px rgba(255, 210, 61, 0.35);
+        color: #fff; font-size: 15px; font-weight: 700;
+        animation: duel-pulse 2s infinite ease-in-out;
+      }
+      @keyframes duel-pulse {
+        0%, 100% { box-shadow: 0 4px 18px rgba(0, 0, 0, 0.7), 0 0 10px rgba(255, 210, 61, 0.3); }
+        50% { box-shadow: 0 4px 22px rgba(0, 0, 0, 0.8), 0 0 22px rgba(255, 210, 61, 0.65); }
+      }
+      .duel-prompt-key kbd {
+        background: #ffd23d; color: #1a1208; border-radius: 4px;
+        padding: 2px 7px; font-weight: 800; font-size: 14px;
+      }
+
+      .duel-modal-backdrop {
+        position: fixed; inset: 0; z-index: 25;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(10, 6, 2, 0.82); backdrop-filter: blur(8px);
+        pointer-events: auto;
+        font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
+      }
+      .duel-modal-backdrop[hidden] { display: none; }
+      .duel-modal-card {
+        background: rgba(22, 14, 8, 0.95);
+        border: 2px solid rgba(255, 210, 61, 0.6);
+        border-radius: 16px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.85), 0 0 24px rgba(255, 210, 61, 0.2);
+        padding: 24px 28px; color: #fff;
+        max-width: 600px; width: 90vw;
+        display: flex; flex-direction: column;
+      }
+      .duel-card-small { max-width: 440px; text-align: center; }
+      .duel-modal-header {
+        display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
+      }
+      .duel-modal-title {
+        font-size: 24px; font-weight: 800; letter-spacing: 2px; color: #ffd23d;
+      }
+      .duel-modal-close {
+        background: none; border: none; color: #ff6b5a; font-size: 22px; font-weight: 800;
+        cursor: pointer; padding: 2px 8px; border-radius: 6px;
+      }
+      .duel-modal-close:hover { background: rgba(255, 107, 90, 0.2); }
+      .duel-modal-sub { font-size: 15px; opacity: 0.9; margin-bottom: 16px; }
+      .duel-tracks-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+      .duel-track-card {
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 210, 61, 0.3);
+        border-radius: 10px; padding: 12px 16px;
+        display: flex; flex-direction: column; gap: 6px;
+        transition: border-color 0.2s, background 0.2s;
+      }
+      .duel-track-card:hover {
+        border-color: #ffd23d; background: rgba(0, 0, 0, 0.6);
+      }
+      .duel-track-header {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      }
+      .duel-track-badge {
+        font-size: 12px; font-weight: 800; background: rgba(255, 210, 61, 0.2);
+        color: #ffd23d; padding: 2px 8px; border-radius: 6px;
+      }
+      .duel-track-name { font-size: 17px; font-weight: 700; flex: 1; }
+      .duel-track-dist { font-size: 14px; font-weight: 700; color: #ffd23d; }
+      .duel-track-sub { font-size: 13px; opacity: 0.75; }
+      .duel-select-btn {
+        margin-top: 6px; align-self: flex-end;
+        background: #ffd23d; color: #1a1208;
+        border: none; border-radius: 8px;
+        font: inherit; font-size: 14px; font-weight: 800;
+        padding: 6px 16px; cursor: pointer;
+        transition: background 0.15s, transform 0.1s;
+      }
+      .duel-select-btn:hover { background: #ffe066; transform: scale(1.02); }
+      .duel-modal-footer {
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        padding-top: 10px; font-size: 13px;
+      }
+      .duel-btn {
+        font: inherit; font-size: 16px; font-weight: 800;
+        border: none; border-radius: 10px; padding: 10px 24px;
+        cursor: pointer; transition: transform 0.1s, opacity 0.15s;
+      }
+      .duel-btn:hover { transform: scale(1.03); }
+      .duel-btn-accept { background: #4ade80; color: #0a2512; }
+      .duel-btn-accept:hover { background: #6ee7a0; }
+      .duel-btn-decline { background: #f87171; color: #2e0808; }
+      .duel-btn-decline:hover { background: #fca5a5; }
+      .duel-btn-cancel { background: rgba(255, 255, 255, 0.15); color: #fff; }
+      .duel-invite-header { font-size: 26px; font-weight: 800; letter-spacing: 2px; color: #ffd23d; }
+      .duel-invite-track {
+        background: rgba(0, 0, 0, 0.45); border-radius: 10px; padding: 12px;
+        border: 1px solid rgba(255, 210, 61, 0.3); margin: 16px 0;
+      }
+      .duel-invite-actions { display: flex; justify-content: center; gap: 16px; margin-top: 18px; }
+      .duel-invite-actions kbd {
+        background: rgba(0, 0, 0, 0.35); color: inherit; padding: 1px 6px; border-radius: 4px;
+      }
+
+      /* Countdown */
+      #hud-duel-countdown {
+        position: fixed; inset: 0; z-index: 30; pointer-events: none;
+        display: flex; align-items: center; justify-content: center;
+      }
+      #hud-duel-countdown[hidden] { display: none; }
+      .countdown-digit {
+        font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
+        font-size: 120px; font-weight: 900; color: #ffd23d;
+        text-shadow: 0 0 10px #000, 0 0 30px rgba(255, 210, 61, 0.8);
+      }
+      .countdown-go {
+        color: #4ade80; text-shadow: 0 0 10px #000, 0 0 40px rgba(74, 222, 128, 0.9);
+        font-size: 110px; letter-spacing: 4px;
+      }
+      .countdown-pulse {
+        animation: countdown-pop 0.95s ease-out forwards;
+      }
+      @keyframes countdown-pop {
+        0% { transform: scale(0.4); opacity: 0; }
+        30% { transform: scale(1.15); opacity: 1; }
+        80% { transform: scale(1.0); opacity: 0.95; }
+        100% { transform: scale(0.9); opacity: 0.6; }
+      }
+
+      /* In-race HUD */
+      #hud-duel-race {
+        position: absolute; top: 74px; left: 50%; transform: translateX(-50%);
+        pointer-events: none; z-index: 5;
+      }
+      #hud-duel-race[hidden] { display: none; }
+      .duel-race-card {
+        background: rgba(18, 12, 6, 0.88);
+        border: 2px solid rgba(255, 210, 61, 0.6);
+        border-radius: 12px; padding: 8px 18px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+        display: flex; flex-direction: column; align-items: center; gap: 4px;
+      }
+      .duel-race-header { display: flex; align-items: center; gap: 16px; }
+      .duel-race-track { font-size: 14px; font-weight: 700; opacity: 0.85; }
+      .duel-race-time { font-size: 18px; font-weight: 800; color: #ffd23d; font-variant-numeric: tabular-nums; }
+      .duel-race-stats { display: flex; align-items: center; gap: 14px; margin-top: 2px; }
+      .duel-pos-badge {
+        font-size: 15px; font-weight: 900; padding: 2px 10px; border-radius: 6px; letter-spacing: 1px;
+      }
+      .pos-p1 { background: #ffd23d; color: #1a1208; }
+      .pos-p2 { background: #cbd5e1; color: #0f172a; }
+      .duel-cp-status { font-size: 14px; font-weight: 700; color: #fff; }
+      .duel-gap-status { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+      .gap-ahead { color: #4ade80; }
+      .gap-behind { color: #f87171; }
+
+      /* Results */
+      .duel-result-title {
+        font-size: 32px; font-weight: 900; letter-spacing: 2px; text-align: center;
+      }
+      .result-win { color: #ffd23d; text-shadow: 0 0 20px rgba(255, 210, 61, 0.6); }
+      .result-loss { color: #94a3b8; }
+      .duel-result-track { text-align: center; font-size: 15px; opacity: 0.8; margin-top: 4px; margin-bottom: 20px; }
+      .duel-leaderboard { display: flex; flex-direction: column; gap: 8px; }
+      .duel-leaderboard-row {
+        display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 8px;
+        background: rgba(0, 0, 0, 0.4); font-size: 16px; font-weight: 700;
+      }
+      .p1-row { border: 1px solid rgba(255, 210, 61, 0.5); background: rgba(255, 210, 61, 0.1); }
+      .leaderboard-pos { width: 44px; font-size: 18px; font-weight: 900; }
+      .leaderboard-name { flex: 1; }
+      .leaderboard-time { font-variant-numeric: tabular-nums; color: #ffd23d; }
     </style>
   </head>
   <body>
     <canvas id="app"></canvas>
     <div id="hud">
       <div id="hud-title">DUNE RALLY</div>
-      <div id="hud-version">v0.1.10</div>
+      <div id="hud-version">v0.1.11</div>
       <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b><span id="hud-ping-item"> · <span id="ping-icon">📶</span> <b id="player-ping">--</b> <span class="unit">мс</span></span></div>
       <div id="hud-compass"></div>
       <div id="hud-minimap"></div>
@@ -312,18 +513,18 @@
       </div>
       <div id="hud-controls">
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> — рулить &nbsp;·&nbsp; <kbd>R</kbd> — сброс &nbsp;·&nbsp;
-        мышь — осмотреться &nbsp;·&nbsp; колесо — зум &nbsp;·&nbsp; <kbd>C</kbd> — камера (режим) &nbsp;·&nbsp; <kbd>M</kbd> — карта<span id="hud-controls-drive"></span>
+        мышь — осмотреться &nbsp;·&nbsp; колесо — зум &nbsp;·&nbsp; <kbd>C</kbd> — камера &nbsp;·&nbsp; <kbd>M</kbd> — карта &nbsp;·&nbsp; <kbd>F</kbd> — дуэль<span id="hud-controls-drive"></span>
       </div>
       <div id="hud-camera"></div>
       <div id="hud-error" hidden></div>
     </div>
     <div id="start">
-      <div id="start-version">v0.1.10</div>
+      <div id="start-version">v0.1.11</div>
       <div class="start-card">
         <div class="start-title">DUNE RALLY</div>
         <div class="start-sub">Багги-покатушки по процедурной пустыне · мультиплеер</div>
         <div class="start-controls">
-          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp; <kbd>S</kbd> — тормоз &nbsp;·&nbsp; <kbd>R</kbd> — сброс &nbsp;·&nbsp; <kbd>M</kbd> — карта &nbsp;·&nbsp; <kbd>X</kbd> — привод (4x4) &nbsp;·&nbsp; <kbd>T</kbd> — антибукс
+          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или стрелки — рулить &nbsp;·&nbsp; <kbd>S</kbd> — тормоз &nbsp;·&nbsp; <kbd>R</kbd> — сброс &nbsp;·&nbsp; <kbd>M</kbd> — карта &nbsp;·&nbsp; <kbd>X</kbd> — привод (4x4) &nbsp;·&nbsp; <kbd>T</kbd> — антибукс &nbsp;·&nbsp; <kbd>F</kbd> — дуэль
         </div>
         <div class="start-cars">
           <div class="start-cars-label">Выбери машину</div>
@@ -331,6 +532,10 @@
           <button type="button" class="car-option" data-car-id="pajero">Mitsubishi Pajero Sport</button>
           <button type="button" class="car-option" data-car-id="elantra">Hyundai Elantra</button>
           <div class="start-cars-note" hidden></div>
+        </div>
+        <div class="start-name-section">
+          <label class="start-name-label" for="player-name-input">Позывной / никнейм в заезде</label>
+          <input type="text" id="player-name-input" maxlength="20" placeholder="Гонщик" autocomplete="off" spellcheck="false" />
         </div>
         <div class="start-go" style="display: none">▶ Нажми, чтобы ехать</div>
       </div>

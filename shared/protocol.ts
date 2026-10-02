@@ -75,9 +75,89 @@ export const MESSAGE_FLOOD_CLOSE_CODE = 4429;
 // Close code for every client of a room whose state can no longer be encoded.
 export const ROOM_BROKEN_CLOSE_CODE = 4500;
 
-// R on the client: stand the player's own car back on its wheels. It carries no payload, and the
-// server ignores anything sent with it.
 export const RESET_CAR_MESSAGE = 'resetCar';
+export const SET_NAME_MESSAGE = 'setName';
+
+// ── multiplayer duel messages ─────────────────────────────────────────
+export const DUEL_INVITE_MESSAGE = 'duelInvite';
+export const DUEL_INVITE_RECEIVED_MESSAGE = 'duelInviteReceived';
+export const DUEL_ACCEPT_MESSAGE = 'duelAccept';
+export const DUEL_DECLINE_MESSAGE = 'duelDecline';
+export const DUEL_CANCEL_MESSAGE = 'duelCancel';
+export const DUEL_START_MESSAGE = 'duelStart';
+export const DUEL_PROGRESS_MESSAGE = 'duelProgress';
+export const DUEL_FINISH_MESSAGE = 'duelFinish';
+export const DUEL_RESULT_MESSAGE = 'duelResult';
+export const DUEL_ABORT_MESSAGE = 'duelAbort';
+
+export interface DuelInviteMsg {
+  toSessionId: string;
+  trackId: string;
+}
+
+export interface DuelInviteReceivedMsg {
+  fromSessionId: string;
+  fromName: string;
+  trackId: string;
+}
+
+export interface DuelAcceptMsg {
+  fromSessionId: string;
+  trackId: string;
+}
+
+export interface DuelDeclineMsg {
+  fromSessionId: string;
+}
+
+export interface DuelPlayerSlot {
+  sessionId: string;
+  name: string;
+  carId: CarId;
+  slot: 0 | 1;
+}
+
+export interface DuelStartMsg {
+  duelId: string;
+  trackId: string;
+  players: readonly [DuelPlayerSlot, DuelPlayerSlot];
+  startSlots: readonly [{ x: number; z: number; yaw: number }, { x: number; z: number; yaw: number }];
+  countdownMs: number;
+  startTime: number;
+}
+
+export interface DuelProgressMsg {
+  duelId: string;
+  sessionId: string;
+  checkpointIndex: number;
+  totalCheckpoints: number;
+  timeMs: number;
+}
+
+export interface DuelFinishMsg {
+  duelId: string;
+  timeMs: number;
+}
+
+export interface DuelParticipantResult {
+  sessionId: string;
+  name: string;
+  timeMs: number;
+  rank: 1 | 2;
+  dnf?: boolean;
+}
+
+export interface DuelResultMsg {
+  duelId: string;
+  winnerSessionId: string;
+  results: readonly DuelParticipantResult[];
+  reason?: string;
+}
+
+export interface DuelAbortMsg {
+  duelId: string;
+  reason: string;
+}
 
 export interface SelectCarMsg {
   carId: string;

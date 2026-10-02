@@ -43,6 +43,10 @@ import { createTerrainMaterial } from './render/terrainMaterial';
 import { rockLookMean } from './render/rockLook';
 import { coverTint, setTerrainMaterial } from './render/terrainMesh';
 import { createPropMaterials } from './render/propMaterials';
+import { DUEL_TRACKS, type DuelTrackDef, isPointInsideCheckpoint } from '../shared/duelTracks';
+import { DuelHud, playAudioBeep } from './ui/duelHud';
+import { DuelGates } from './render/duelGates';
+import type { DuelInviteReceivedMsg } from '../shared/protocol';
 import { setHighTierPropsVisible, setPropMaterials, updatePropVisibility } from './render/scatter';
 import { boulderRockTexture, GRASS_MODEL_ID, POLY_PROP_IDS, polyPropUrl, registerPolyProps } from './render/polyProps';
 import { FarTerrain, meanTextureColor, type LinearColor } from './render/farTerrain';
@@ -109,7 +113,37 @@ const picker = createCarPicker(carsEl, readSavedCarId(localStorage), (carId) => 
 
 const joinedCarId = picker.selected();
 const serverUrl = gameServerUrl(location, { dev: import.meta.env.DEV, override: import.meta.env.VITE_GAME_SERVER_URL });
-const conn = await connectToArena(serverUrl, 'rider', joinedCarId);
+const savedPlayerName = (typeof localStorage !== 'undefined' ? localStorage.getItem('dune-rally:player-name') : null) || 'Гонщик';
+const conn = await connectToArena(serverUrl, savedPlayerName, joinedCarId);
+
+const nameInputEl = document.getElementById('player-name-input') as HTMLInputElement | null;
+if (nameInputEl) {
+  nameInputEl.value = savedPlayerName;
+  nameInputEl.addEventListener('click', (e) => e.stopPropagation());
+  nameInputEl.addEventListener('input', () => {
+    const trimmed = nameInputEl.value.trim().slice(0, 20);
+    if (trimmed) {
+      localStorage.setItem('dune-rally:player-name', trimmed);
+      conn.setName(trimmed);
+    }
+  });
+  nameInputEl.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      nameInputEl.blur();
+      if (readyToDrive && !localCar) {
+        const trimmed = nameInputEl.value.trim().slice(0, 20) || 'Гонщик';
+        localStorage.setItem('dune-rally:player-name', trimmed);
+        conn.setName(trimmed);
+        startDriving(picker.selected());
+        startEl.style.display = 'none';
+        window.focus();
+        audio.resume();
+        audio.ui();
+      }
+    }
+  });
+}
 // A restart or deploy closes the room. The page waits for the server and reloads: the world comes
 // back from the same seed and the assets from the browser cache.
 const serverRestartEl = document.getElementById('server-restart');
@@ -528,13 +562,19 @@ function poseOf(buggy: Buggy): PoseMsg {
 
 const addRemote = (id: string, player: NetPlayer) => {
   if (id !== conn.sessionId) {
-    views.add(id, sanitizeCarId(player.carId));
+    views.add(id, sanitizeCarId(player.carId), player.name);
     views.pushState(id, player, performance.now());
   }
 };
 for (const [id, player] of conn.players()) addRemote(id, player);
 conn.onAdd(addRemote);
-conn.onRemove((id) => views.remove(id));
+conn.onRemove((id) => {
+  views.remove(id);
+  if (lastIncomingInvite && lastIncomingInvite.fromSessionId === id) {
+    lastIncomingInvite = null;
+    duelHud.hideIncomingInvite();
+  }
+});
 conn.onPatch(() => {
   const now = performance.now();
   for (const [id, p] of conn.players()) {
@@ -545,6 +585,139 @@ conn.onPing((pingMs) => {
   if (!playerPingEl) return;
   playerPingEl.textContent = String(pingMs);
   playerPingEl.className = pingMs < 75 ? 'ping-good' : pingMs < 160 ? 'ping-ok' : 'ping-bad';
+});
+
+let lastIncomingInvite: DuelInviteReceivedMsg | null = null;
+const duelGates = new DuelGates(ctx.scene, (x, z) => terrainSurfaceHeight(heightField, x, z));
+
+interface LocalDuelRace {
+  duelId: string;
+  track: DuelTrackDef;
+  opponentId: string;
+  opponentName: string;
+  startTimeMs: number;
+  nextCheckpointIndex: number;
+  totalCheckpoints: number;
+  passedCheckpoints: number;
+  finished: boolean;
+  finishTimeMs?: number;
+  opponentPassedCheckpoints: number;
+}
+
+let activeDuel: LocalDuelRace | null = null;
+let countdownFreeze = false;
+
+const hudEl = document.getElementById('hud');
+const duelHud = new DuelHud(hudEl ?? document.body, {
+  onStartDuelInvite: (opponentId, trackId) => {
+    conn.sendDuelInvite(opponentId, trackId);
+  },
+  onAcceptInvite: () => {
+    if (lastIncomingInvite) {
+      conn.sendDuelAccept(lastIncomingInvite.fromSessionId, lastIncomingInvite.trackId);
+      lastIncomingInvite = null;
+    }
+  },
+  onDeclineInvite: () => {
+    if (lastIncomingInvite) {
+      conn.sendDuelDecline(lastIncomingInvite.fromSessionId);
+      lastIncomingInvite = null;
+    }
+  },
+  onCancelInvite: () => {
+    conn.sendDuelCancel();
+  },
+});
+
+conn.onDuelInvite((msg) => {
+  lastIncomingInvite = msg;
+  const track = DUEL_TRACKS.find((t) => t.id === msg.trackId);
+  if (track) {
+    duelHud.showIncomingInvite(msg.fromSessionId, msg.fromName, track);
+  }
+});
+
+conn.onDuelDecline(() => {
+  duelHud.hideWaiting();
+});
+
+conn.onDuelCancel(() => {
+  lastIncomingInvite = null;
+  duelHud.hideIncomingInvite();
+  duelHud.hideWaiting();
+});
+
+conn.onDuelStart((msg) => {
+  const track = DUEL_TRACKS.find((t) => t.id === msg.trackId);
+  if (!track) return;
+
+  const myPlayer = msg.players.find((p) => p.sessionId === conn.sessionId);
+  const oppPlayer = msg.players.find((p) => p.sessionId !== conn.sessionId);
+  const oppSessionId = oppPlayer?.sessionId ?? '';
+  const oppName = oppPlayer?.name ?? 'Соперник';
+
+  views.setDuelOpponent(oppSessionId);
+
+  activeDuel = {
+    duelId: msg.duelId,
+    track,
+    opponentId: oppSessionId,
+    opponentName: oppName,
+    startTimeMs: msg.startTime,
+    nextCheckpointIndex: 0,
+    totalCheckpoints: track.checkpoints.length + 1,
+    passedCheckpoints: 0,
+    finished: false,
+    opponentPassedCheckpoints: 0,
+  };
+
+  const mySlotIdx = myPlayer?.slot ?? 0;
+  const slot = msg.startSlots[mySlotIdx] ?? track.startSlots[mySlotIdx];
+  const groundY = terrainSurfaceHeight(heightField, slot.x, slot.z);
+  localCar?.buggy.placeAt({ x: slot.x, y: groundY + 1.2, z: slot.z, yaw: slot.yaw });
+  tracks.breakChains();
+  conn.sendResetCar();
+  prevCarVelocity = null;
+
+  duelGates.buildTrack(track);
+
+  countdownFreeze = true;
+  const countdownSec = Math.max(1, Math.round(msg.countdownMs / 1000));
+  duelHud.startCountdown(countdownSec, () => {
+    countdownFreeze = false;
+    duelHud.showRaceHud(track.name);
+  });
+});
+
+conn.onDuelProgress((msg) => {
+  if (activeDuel && activeDuel.duelId === msg.duelId) {
+    activeDuel.opponentPassedCheckpoints = msg.checkpointIndex;
+  }
+});
+
+conn.onDuelResult((msg) => {
+  if (activeDuel) {
+    const trackName = activeDuel.track.name;
+    const isWinner = msg.winnerSessionId === conn.sessionId;
+    const myResult = msg.results.find((p) => p.sessionId === conn.sessionId);
+    const opponentResult = msg.results.find((p) => p.sessionId !== conn.sessionId);
+    const isForfeit = msg.reason === 'opponent_left' || !!opponentResult?.dnf;
+
+    duelHud.showResults({
+      won: isWinner,
+      trackName,
+      winnerName: isWinner ? (myResult?.name || 'Вы') : (opponentResult?.name || 'Соперник'),
+      winnerTimeMs: (isWinner ? myResult?.timeMs : opponentResult?.timeMs) ?? 0,
+      loserName: isWinner ? (opponentResult?.name || 'Соперник') : (myResult?.name || 'Вы'),
+      loserTimeMs: isWinner ? opponentResult?.timeMs : myResult?.timeMs,
+      forfeit: isForfeit,
+    });
+
+    duelGates.clear();
+    views.setDuelOpponent(null);
+    activeDuel = null;
+    countdownFreeze = false;
+  }
 });
 
 function startDriving(carId: CarId): void {
@@ -569,6 +742,11 @@ function showDriveKeyHints(drive: DriveModeState): void {
 
 startEl.addEventListener('click', () => {
   if (!readyToDrive) return; // ignore clicks while the assets or the ground under the spawn still load
+  if (nameInputEl) {
+    const trimmed = nameInputEl.value.trim().slice(0, 20) || 'Гонщик';
+    localStorage.setItem('dune-rally:player-name', trimmed);
+    conn.setName(trimmed);
+  }
   if (!localCar) startDriving(picker.selected());
   startEl.style.display = 'none';
   window.focus();
@@ -700,7 +878,7 @@ function frame() {
 
   // Remote players are updated before physics so colliders and dynamic bodies are synchronized
   guard.run('remote players', () => {
-    views.update(renderTime, null, renderTime);
+    views.update(renderTime, null, renderTime, ctx.camera.position);
   });
 
   const car = localCar;
@@ -708,6 +886,11 @@ function frame() {
     const buggy = car.buggy;
     acc += dt;
     const controls = controlsFromKeys(keyboard.keys);
+    if (countdownFreeze) {
+      controls.throttle = 0;
+      controls.brake = 1.0;
+      controls.steer = 0;
+    }
     const input: InputMsg = { ...controls, tractionControl };
     if (car.requestedDriveMode !== undefined) input.driveMode = car.requestedDriveMode;
     guard.run('network input', () => {
@@ -865,6 +1048,73 @@ function frame() {
         ]);
       });
     }
+
+    guard.run('duel progress & proximity', () => {
+      duelGates.update(dt);
+      if (activeDuel) {
+        if (!countdownFreeze && !activeDuel.finished) {
+          const carPos = buggy.position();
+          const allPoints = [...activeDuel.track.checkpoints, activeDuel.track.finish];
+          const nextTarget = allPoints[activeDuel.nextCheckpointIndex];
+          if (nextTarget && isPointInsideCheckpoint({ x: carPos.x, z: carPos.z }, nextTarget)) {
+            activeDuel.passedCheckpoints++;
+            activeDuel.nextCheckpointIndex++;
+            const elapsed = performance.now() - activeDuel.startTimeMs;
+            playAudioBeep(660, 0.1, 'sine');
+            if (activeDuel.nextCheckpointIndex >= allPoints.length) {
+              activeDuel.finished = true;
+              activeDuel.finishTimeMs = elapsed;
+              conn.sendDuelFinish(activeDuel.duelId, elapsed);
+              playAudioBeep(880, 0.35, 'triangle');
+            } else {
+              duelGates.updateActiveCheckpoint(activeDuel.nextCheckpointIndex);
+              conn.sendDuelCheckpoint(activeDuel.duelId, activeDuel.passedCheckpoints, elapsed);
+            }
+          }
+
+          let position: 1 | 2 = 1;
+          let gapMeters = 0;
+          if (activeDuel.passedCheckpoints > activeDuel.opponentPassedCheckpoints) {
+            position = 1;
+            gapMeters = 30;
+          } else if (activeDuel.passedCheckpoints < activeDuel.opponentPassedCheckpoints) {
+            position = 2;
+            gapMeters = 30;
+          } else if (nextTarget) {
+            const myDist = Math.hypot(nextTarget.x - carPos.x, nextTarget.z - carPos.z);
+            const oppGroup = views.group(activeDuel.opponentId);
+            if (oppGroup) {
+              const oppDist = Math.hypot(nextTarget.x - oppGroup.position.x, nextTarget.z - oppGroup.position.z);
+              position = myDist <= oppDist ? 1 : 2;
+              gapMeters = Math.abs(oppDist - myDist);
+            }
+          }
+
+          duelHud.updateRaceHud({
+            position,
+            checkpointIndex: activeDuel.passedCheckpoints,
+            totalCheckpoints: activeDuel.totalCheckpoints,
+            gapMeters,
+            elapsedMs: Math.max(0, performance.now() - activeDuel.startTimeMs),
+          });
+        }
+      } else {
+        const carPos = buggy.position();
+        let nearest: { id: string; name: string; dist: number } | null = null;
+        for (const [id, p] of conn.players()) {
+          if (id === conn.sessionId) continue;
+          const dist = Math.hypot(p.x - carPos.x, p.z - carPos.z);
+          if (dist <= 35 && (!nearest || dist < nearest.dist)) {
+            nearest = { id, name: p.name || 'Гонщик', dist };
+          }
+        }
+        if (nearest) {
+          duelHud.showProximityPrompt(nearest.id, nearest.name, nearest.dist);
+        } else {
+          duelHud.hideProximityPrompt();
+        }
+      }
+    });
   } else {
     guard.run('spawn view', () => {
       spawn = currentSpawnPose();
@@ -872,6 +1122,7 @@ function frame() {
     });
     guard.run('terrain', () => terrain.update(spawn.x, spawn.z, 0, 0));
     guard.run('start gate', openStartGateWhenReady);
+    guard.run('duel idle', () => duelHud.hideProximityPrompt());
     // The world is not stepped until a car exists, so the remote wheels' ground rays need this.
     guard.run('scene queries', () => world.updateSceneQueries());
     guard.run('sun', () => ctx.focusSun(spawn.x, spawn.y, spawn.z));

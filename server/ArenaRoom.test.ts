@@ -299,4 +299,53 @@ describe('ArenaRoom — ping / pong', () => {
   });
 });
 
+describe('ArenaRoom — setName', () => {
+  it('updates player name in state upon setName message', async () => {
+    const { room, client } = await settledCar();
+    client.ref.emit('message', getMessageBytes.raw(Protocol.ROOM_DATA, 'setName', { name: 'Speedy' }));
+    await wait(TICK_MS * 2);
+    expect(room.state.players.get(client.sessionId)?.name).toBe('Speedy');
+  });
+});
+
+describe('ArenaRoom — duels', () => {
+  it('handles invite, accept, and starts duel', async () => {
+    const room = await createArena({});
+    const clientA = await joinArena(room);
+    const clientB = await joinArena(room);
+
+    const sendSpyB = vi.spyOn(clientB, 'send');
+    const sendSpyA = vi.spyOn(clientA, 'send');
+
+    // Client A invites Client B to die_myl
+    clientA.ref.emit('message', getMessageBytes.raw(Protocol.ROOM_DATA, 'duelInvite', {
+      toSessionId: clientB.sessionId,
+      trackId: 'die_myl',
+    }));
+    await wait(TICK_MS * 2);
+
+    expect(sendSpyB).toHaveBeenCalledWith('duelInviteReceived', expect.objectContaining({
+      fromSessionId: clientA.sessionId,
+      trackId: 'die_myl',
+    }));
+
+    // Client B accepts
+    clientB.ref.emit('message', getMessageBytes.raw(Protocol.ROOM_DATA, 'duelAccept', {
+      fromSessionId: clientA.sessionId,
+      trackId: 'die_myl',
+    }));
+    await wait(TICK_MS * 2);
+
+    expect(sendSpyA).toHaveBeenCalledWith('duelStart', expect.objectContaining({
+      trackId: 'die_myl',
+      countdownMs: 3500,
+    }));
+    expect(sendSpyB).toHaveBeenCalledWith('duelStart', expect.objectContaining({
+      trackId: 'die_myl',
+      countdownMs: 3500,
+    }));
+  });
+});
+
+
 

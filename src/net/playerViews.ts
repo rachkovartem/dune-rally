@@ -8,6 +8,7 @@ import type { CarId } from '../vehicle/cars';
 import { restingSuspensionLength, vehicleConfigFor, type VehicleConfig } from '../vehicle/vehicleConfig';
 import { sanitizeCarId } from '../../shared/protocol';
 import { VEHICLE_COLLISION_GROUPS } from '../../shared/vehiclePhysics';
+import { NametagSprite } from '../render/nametags';
 
 /** Height of the drawn ground at a world point; the same surface the chunk colliders are built from. */
 export type GroundHeight = (x: number, z: number) => number;
@@ -32,6 +33,8 @@ interface View {
   lastPosition: THREE.Vector3 | null;
   lastSampleTime?: number;
   lastTargetPos?: { x: number; y: number; z: number };
+  name: string;
+  nametag: NametagSprite;
 }
 
 function wheelPivotsOf(group: THREE.Group): THREE.Group[] {
@@ -48,6 +51,7 @@ export class PlayerViews {
   private readonly down = new THREE.Vector3();
   private readonly forward = new THREE.Vector3();
   private readonly travel = new THREE.Vector3();
+  private duelOpponentId: string | null = null;
 
   /**
    * `world` is used for wheel ground rays and to maintain kinematic colliders for remote vehicles
@@ -107,7 +111,7 @@ export class PlayerViews {
     );
   }
 
-  add(id: string, pickedCarId: CarId): void {
+  add(id: string, pickedCarId: CarId, initialName?: string): void {
     if (this.views.has(id)) return;
     const carId = this.drawnCarFor(pickedCarId);
     const group = buildBuggyMesh(carId);
@@ -115,6 +119,9 @@ export class PlayerViews {
     const config = vehicleConfigFor(carId);
     const body = this.createDynamicBody(0, -1000, 0, config);
     this.createCollidersForBody(body, config);
+    const name = initialName ?? 'Гонщик';
+    const nametag = new NametagSprite({ name, isDuelOpponent: this.duelOpponentId === id });
+    this.scene.add(nametag.sprite);
     this.views.set(id, {
       group,
       wheelPivots: wheelPivotsOf(group),
@@ -125,6 +132,8 @@ export class PlayerViews {
       restingLength: restingSuspensionLength(config.wheel),
       rollAngle: 0,
       lastPosition: null,
+      name,
+      nametag,
     });
   }
 
@@ -132,6 +141,8 @@ export class PlayerViews {
     const v = this.views.get(id);
     if (!v) return;
     this.scene.remove(v.group);
+    this.scene.remove(v.nametag.sprite);
+    v.nametag.dispose();
     this.world.removeRigidBody(v.body);
     this.views.delete(id);
   }
@@ -141,6 +152,10 @@ export class PlayerViews {
     if (!v) return;
     const carId = this.drawnCarFor(sanitizeCarId(p.carId));
     if (carId !== v.carId) this.rebuild(v, carId);
+    if (p.name && p.name !== v.name) {
+      v.name = p.name;
+      v.nametag.update({ name: p.name, isDuelOpponent: this.duelOpponentId === id });
+    }
     if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) return;
     if (!Number.isFinite(p.qx) || !Number.isFinite(p.qy) || !Number.isFinite(p.qz) || !Number.isFinite(p.qw)) return;
     v.buffer.push({ t, x: p.x, y: p.y, z: p.z, qx: p.qx, qy: p.qy, qz: p.qz, qw: p.qw });
@@ -176,7 +191,7 @@ export class PlayerViews {
    * player is sampled at `localTime` (latest) so own driving feels responsive on low latency.
    * Remote dynamic bodies are updated with continuous velocity for realistic momentum transfer.
    */
-  update(renderTime: number, localId: string | null, localTime: number): void {
+  update(renderTime: number, localId: string | null, localTime: number, cameraPosition?: THREE.Vector3): void {
     for (const [id, v] of this.views) {
       const isLocal = id === localId;
       const targetTime = isLocal ? localTime : renderTime;
@@ -184,6 +199,18 @@ export class PlayerViews {
       v.group.position.set(s.x, s.y, s.z);
       v.group.quaternion.set(s.qx, s.qy, s.qz, s.qw);
       v.group.updateMatrixWorld();
+
+      if (isLocal) {
+        v.nametag.sprite.visible = false;
+      } else {
+        v.nametag.sprite.position.set(s.x, s.y + 2.3, s.z);
+        if (cameraPosition) {
+          const dist = cameraPosition.distanceTo(v.nametag.sprite.position);
+          v.nametag.updateDistance(dist);
+        } else {
+          v.nametag.sprite.visible = true;
+        }
+      }
 
       if (!isLocal) {
         let vx = 0;
@@ -216,6 +243,17 @@ export class PlayerViews {
 
       this.placeWheels(v);
     }
+  }
+
+  setDuelOpponent(opponentId: string | null): void {
+    this.duelOpponentId = opponentId;
+    for (const [id, v] of this.views) {
+      v.nametag.update({ name: v.name, isDuelOpponent: id === opponentId });
+    }
+  }
+
+  nametagOf(id: string): NametagSprite | undefined {
+    return this.views.get(id)?.nametag;
   }
 
   bodyOf(id: string): RAPIER.RigidBody | undefined {

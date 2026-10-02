@@ -2,7 +2,11 @@
 import { Client, Room } from 'colyseus.js';
 import {
   PING_MESSAGE, PONG_MESSAGE, POSE_MESSAGE, RESET_CAR_MESSAGE,
+  SET_NAME_MESSAGE, DUEL_INVITE_MESSAGE, DUEL_INVITE_RECEIVED_MESSAGE, DUEL_ACCEPT_MESSAGE,
+  DUEL_DECLINE_MESSAGE, DUEL_CANCEL_MESSAGE, DUEL_START_MESSAGE, DUEL_PROGRESS_MESSAGE,
+  DUEL_FINISH_MESSAGE, DUEL_RESULT_MESSAGE,
   type InputMsg, type JoinOptions, type PoseMsg, type SelectCarMsg,
+  type DuelStartMsg, type DuelResultMsg, type DuelProgressMsg, type DuelInviteReceivedMsg, type DuelDeclineMsg,
 } from '../../shared/protocol';
 import type { CarId } from '../vehicle/cars';
 
@@ -26,6 +30,22 @@ export interface Connection {
   sendPose(pose: PoseMsg): void;
   /** Swap this player's car on the server, so other players see the new model. */
   selectCar(carId: CarId): void;
+  setName(name: string): void;
+
+  sendDuelInvite(toSessionId: string, trackId: string): void;
+  sendDuelAccept(fromSessionId: string, trackId: string): void;
+  sendDuelDecline(fromSessionId: string): void;
+  sendDuelCancel(): void;
+  sendDuelCheckpoint(duelId: string, checkpointIndex: number, timeMs: number): void;
+  sendDuelFinish(duelId: string, timeMs: number): void;
+
+  onDuelInvite(cb: (msg: DuelInviteReceivedMsg) => void): void;
+  onDuelDecline(cb: (msg: DuelDeclineMsg) => void): void;
+  onDuelCancel(cb: () => void): void;
+  onDuelStart(cb: (msg: DuelStartMsg) => void): void;
+  onDuelProgress(cb: (msg: DuelProgressMsg) => void): void;
+  onDuelResult(cb: (msg: DuelResultMsg) => void): void;
+
   onAdd(cb: (id: string, p: NetPlayer) => void): void;
   onRemove(cb: (id: string) => void): void;
   /** Fired whenever a state patch arrives from the server. */
@@ -86,6 +106,32 @@ export async function connectToArena(url: string, name: string, carId: CarId): P
     players.delete(id);
     for (const cb of removeCbs) cb(id);
   });
+  const duelInviteCbs: ((msg: DuelInviteReceivedMsg) => void)[] = [];
+  const duelDeclineCbs: ((msg: DuelDeclineMsg) => void)[] = [];
+  const duelCancelCbs: (() => void)[] = [];
+  const duelStartCbs: ((msg: DuelStartMsg) => void)[] = [];
+  const duelProgressCbs: ((msg: DuelProgressMsg) => void)[] = [];
+  const duelResultCbs: ((msg: DuelResultMsg) => void)[] = [];
+
+  room.onMessage(DUEL_INVITE_RECEIVED_MESSAGE, (msg: DuelInviteReceivedMsg) => {
+    for (const cb of duelInviteCbs) cb(msg);
+  });
+  room.onMessage(DUEL_DECLINE_MESSAGE, (msg: DuelDeclineMsg) => {
+    for (const cb of duelDeclineCbs) cb(msg);
+  });
+  room.onMessage(DUEL_CANCEL_MESSAGE, () => {
+    for (const cb of duelCancelCbs) cb();
+  });
+  room.onMessage(DUEL_START_MESSAGE, (msg: DuelStartMsg) => {
+    for (const cb of duelStartCbs) cb(msg);
+  });
+  room.onMessage(DUEL_PROGRESS_MESSAGE, (msg: DuelProgressMsg) => {
+    for (const cb of duelProgressCbs) cb(msg);
+  });
+  room.onMessage(DUEL_RESULT_MESSAGE, (msg: DuelResultMsg) => {
+    for (const cb of duelResultCbs) cb(msg);
+  });
+
   room.onStateChange(() => {
     for (const cb of patchCbs) cb();
   });
@@ -110,6 +156,27 @@ export async function connectToArena(url: string, name: string, carId: CarId): P
       const message: SelectCarMsg = { carId: selectedCarId };
       sendWhileOpen(() => room.send('selectCar', message));
     },
+    setName: (newName: string) => sendWhileOpen(() => room.send(SET_NAME_MESSAGE, { name: newName })),
+    sendDuelInvite: (toSessionId: string, trackId: string) =>
+      sendWhileOpen(() => room.send(DUEL_INVITE_MESSAGE, { toSessionId, trackId })),
+    sendDuelAccept: (fromSessionId: string, trackId: string) =>
+      sendWhileOpen(() => room.send(DUEL_ACCEPT_MESSAGE, { fromSessionId, trackId })),
+    sendDuelDecline: (fromSessionId: string) =>
+      sendWhileOpen(() => room.send(DUEL_DECLINE_MESSAGE, { fromSessionId })),
+    sendDuelCancel: () =>
+      sendWhileOpen(() => room.send(DUEL_CANCEL_MESSAGE, {})),
+    sendDuelCheckpoint: (duelId: string, checkpointIndex: number, timeMs: number) =>
+      sendWhileOpen(() => room.send(DUEL_PROGRESS_MESSAGE, { duelId, checkpointIndex, timeMs })),
+    sendDuelFinish: (duelId: string, timeMs: number) =>
+      sendWhileOpen(() => room.send(DUEL_FINISH_MESSAGE, { duelId, timeMs })),
+
+    onDuelInvite: (cb) => duelInviteCbs.push(cb),
+    onDuelDecline: (cb) => duelDeclineCbs.push(cb),
+    onDuelCancel: (cb) => duelCancelCbs.push(cb),
+    onDuelStart: (cb) => duelStartCbs.push(cb),
+    onDuelProgress: (cb) => duelProgressCbs.push(cb),
+    onDuelResult: (cb) => duelResultCbs.push(cb),
+
     onAdd: (cb) => addCbs.push(cb),
     onRemove: (cb) => removeCbs.push(cb),
     onPatch: (cb) => patchCbs.push(cb),
