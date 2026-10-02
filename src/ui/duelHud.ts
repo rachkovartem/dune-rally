@@ -85,7 +85,7 @@ export class DuelHud {
     this.promptEl.innerHTML = `
       <div class="duel-prompt-pill">
         <span class="duel-prompt-key"><kbd>F</kbd></span>
-        <span class="duel-prompt-text">Вызов на дуэль: <b class="duel-opponent-name">Гонщик</b> (<span class="duel-opponent-dist">--</span> м)</span>
+        <span class="duel-prompt-text">Вызов на дуэль: <b class="duel-opponent-name">Соперник</b> (<span class="duel-opponent-dist">--</span> м)</span>
       </div>
     `;
     this.promptEl.onclick = () => this.handlePromptClick();

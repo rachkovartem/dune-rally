@@ -69,7 +69,7 @@ const canvas = document.getElementById('app');
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Expected a <canvas id="app"> element in the page.');
 }
-const startEl = document.getElementById('start');
+const startEl = document.getElementById('start') as HTMLElement;
 const carsEl = startEl?.querySelector<HTMLElement>('.start-cars');
 if (!startEl || !carsEl) throw new Error('Expected the #start overlay with a .start-cars picker in the page.');
 const startGoEl = startEl.querySelector<HTMLElement>('.start-go');
@@ -113,36 +113,82 @@ const picker = createCarPicker(carsEl, readSavedCarId(localStorage), (carId) => 
 
 const joinedCarId = picker.selected();
 const serverUrl = gameServerUrl(location, { dev: import.meta.env.DEV, override: import.meta.env.VITE_GAME_SERVER_URL });
-const savedPlayerName = (typeof localStorage !== 'undefined' ? localStorage.getItem('dune-rally:player-name') : null) || 'Гонщик';
+const rawSavedName = typeof localStorage !== 'undefined' ? localStorage.getItem('dune-rally:player-name') : null;
+const savedPlayerName = rawSavedName && rawSavedName !== 'Гонщик' ? rawSavedName.trim().slice(0, 20) : '';
+if (typeof localStorage !== 'undefined' && localStorage.getItem('dune-rally:player-name') === 'Гонщик') {
+  localStorage.removeItem('dune-rally:player-name');
+}
 const conn = await connectToArena(serverUrl, savedPlayerName, joinedCarId);
 
 const nameInputEl = document.getElementById('player-name-input') as HTMLInputElement | null;
+const startNameErrorEl = document.getElementById('start-name-error');
+
+function updateStartPrompt(): void {
+  if (!startGoEl || !readyToDrive) return;
+  const currentName = nameInputEl ? nameInputEl.value.trim() : '';
+  if (!currentName) {
+    startGoEl.textContent = '✍️ Введи никнейм для старта';
+    startGoEl.classList.add('start-go-needs-name');
+  } else {
+    startGoEl.textContent = '▶ Нажми, чтобы ехать (Enter)';
+    startGoEl.classList.remove('start-go-needs-name');
+  }
+}
+
+function attemptStartDriving(): boolean {
+  if (!readyToDrive) return false;
+  const trimmed = nameInputEl ? nameInputEl.value.trim().slice(0, 20) : '';
+  if (!trimmed) {
+    if (nameInputEl) {
+      nameInputEl.focus();
+      nameInputEl.classList.remove('shake-error');
+      void nameInputEl.offsetWidth;
+      nameInputEl.classList.add('shake-error');
+    }
+    if (startNameErrorEl) {
+      startNameErrorEl.hidden = false;
+      startNameErrorEl.textContent = 'Пожалуйста, введи никнейм перед стартом!';
+    }
+    updateStartPrompt();
+    return false;
+  }
+  if (startNameErrorEl) startNameErrorEl.hidden = true;
+  if (nameInputEl) {
+    nameInputEl.classList.remove('shake-error');
+    nameInputEl.blur();
+  }
+  localStorage.setItem('dune-rally:player-name', trimmed);
+  conn.setName(trimmed);
+  if (!localCar) startDriving(picker.selected());
+  startEl.style.display = 'none';
+  window.focus();
+  audio.resume();
+  audio.ui();
+  return true;
+}
+
 if (nameInputEl) {
   nameInputEl.value = savedPlayerName;
   nameInputEl.addEventListener('click', (e) => e.stopPropagation());
   nameInputEl.addEventListener('input', () => {
     const trimmed = nameInputEl.value.trim().slice(0, 20);
     if (trimmed) {
+      if (startNameErrorEl) startNameErrorEl.hidden = true;
+      nameInputEl.classList.remove('shake-error');
       localStorage.setItem('dune-rally:player-name', trimmed);
       conn.setName(trimmed);
     }
+    updateStartPrompt();
   });
   nameInputEl.addEventListener('keydown', (e) => {
     e.stopPropagation();
     if (e.key === 'Enter') {
-      nameInputEl.blur();
-      if (readyToDrive && !localCar) {
-        const trimmed = nameInputEl.value.trim().slice(0, 20) || 'Гонщик';
-        localStorage.setItem('dune-rally:player-name', trimmed);
-        conn.setName(trimmed);
-        startDriving(picker.selected());
-        startEl.style.display = 'none';
-        window.focus();
-        audio.resume();
-        audio.ui();
-      }
+      attemptStartDriving();
     }
   });
+  if (!savedPlayerName) {
+    setTimeout(() => nameInputEl.focus(), 150);
+  }
 }
 // A restart or deploy closes the room. The page waits for the server and reloads: the world comes
 // back from the same seed and the assets from the browser cache.
@@ -388,6 +434,7 @@ function openStartGateWhenReady(): void {
   readyToDrive = true;
   if (startSubEl) startSubEl.textContent = startSubDefaultText;
   if (startGoEl) startGoEl.style.display = '';
+  updateStartPrompt();
 }
 
 // Fit every car's model to its own physics chassis and register it once, before any car mesh
@@ -754,17 +801,7 @@ function showDriveKeyHints(drive: DriveModeState): void {
 }
 
 startEl.addEventListener('click', () => {
-  if (!readyToDrive) return; // ignore clicks while the assets or the ground under the spawn still load
-  if (nameInputEl) {
-    const trimmed = nameInputEl.value.trim().slice(0, 20) || 'Гонщик';
-    localStorage.setItem('dune-rally:player-name', trimmed);
-    conn.setName(trimmed);
-  }
-  if (!localCar) startDriving(picker.selected());
-  startEl.style.display = 'none';
-  window.focus();
-  audio.resume(); // user gesture → unlock audio
-  audio.ui();
+  attemptStartDriving();
 });
 
 // R flips the car back upright (recover from a roll), here and in the server's copy.
@@ -1127,7 +1164,7 @@ function frame() {
           if (id === conn.sessionId) continue;
           const dist = Math.hypot(p.x - carPos.x, p.z - carPos.z);
           if (dist <= 35 && (!nearest || dist < nearest.dist)) {
-            nearest = { id, name: p.name || 'Гонщик', dist };
+            nearest = { id, name: p.name || 'Игрок', dist };
           }
         }
         if (nearest) {

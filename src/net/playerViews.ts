@@ -120,7 +120,7 @@ export class PlayerViews {
     const config = vehicleConfigFor(carId);
     const body = this.createDynamicBody(0, -1000, 0, config);
     this.createCollidersForBody(body, config);
-    const name = initialName ?? 'Гонщик';
+    const name = initialName ?? 'Игрок';
     const nametag = new NametagSprite({ name, isDuelOpponent: this.duelOpponentId === id });
     this.scene.add(nametag.sprite);
     this.views.set(id, {

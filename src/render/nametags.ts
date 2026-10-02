@@ -17,7 +17,7 @@ function renderNametagCanvas(canvas: HTMLCanvasElement, options: NametagOptions)
 
   const radius = 14;
   const paddingX = 14;
-  const text = options.name || 'Гонщик';
+  const text = options.name || 'Игрок';
 
   ctx.font = 'bold 22px "Trebuchet MS", "Segoe UI", system-ui, sans-serif';
   const textWidth = ctx.measureText(text).width;

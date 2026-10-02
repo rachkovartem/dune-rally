@@ -314,6 +314,30 @@
         box-shadow: 0 0 14px rgba(255, 210, 61, 0.45);
         background: rgba(0, 0, 0, 0.75);
       }
+      #player-name-input.shake-error {
+        border-color: #ff6b5a !important;
+        box-shadow: 0 0 16px rgba(255, 107, 90, 0.6) !important;
+        animation: shake 0.4s ease-in-out;
+      }
+      @keyframes shake {
+        0%, 100% { transform: translateX(0); }
+        20%, 60% { transform: translateX(-8px); }
+        40%, 80% { transform: translateX(8px); }
+      }
+      .start-name-error {
+        color: #ff6b5a;
+        font-size: 14px;
+        font-weight: 700;
+        margin-top: 2px;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+      }
+      .start-name-error[hidden] { display: none; }
+      .start-go-needs-name {
+        color: #ffd23d !important;
+        opacity: 0.95 !important;
+        font-size: 20px !important;
+        animation: none !important;
+      }
 
       /* Duel & Competition HUD */
       #hud-duel-prompt {
@@ -501,7 +525,7 @@
     <canvas id="app"></canvas>
     <div id="hud">
       <div id="hud-title">DUNE RALLY</div>
-      <div id="hud-version">v0.1.13</div>
+      <div id="hud-version">v0.1.14</div>
       <div id="hud-players">🏜️ Онлайн: <b id="player-count">1</b><span id="hud-ping-item"> · <span id="ping-icon">📶</span> <b id="player-ping">--</b> <span class="unit">мс</span></span></div>
       <div id="hud-compass"></div>
       <div id="hud-minimap"></div>
@@ -520,7 +544,7 @@
       <div id="hud-error" hidden></div>
     </div>
     <div id="start">
-      <div id="start-version">v0.1.13</div>
+      <div id="start-version">v0.1.14</div>
       <div class="start-card">
         <div class="start-title">DUNE RALLY</div>
         <div class="start-sub">Багги-покатушки по процедурной пустыне · мультиплеер</div>
@@ -536,7 +560,8 @@
         </div>
         <div class="start-name-section">
           <label class="start-name-label" for="player-name-input">Позывной / никнейм в заезде</label>
-          <input type="text" id="player-name-input" maxlength="20" placeholder="Гонщик" autocomplete="off" spellcheck="false" />
+          <input type="text" id="player-name-input" maxlength="20" placeholder="Введи свой ник..." autocomplete="off" spellcheck="false" />
+          <div id="start-name-error" class="start-name-error" hidden></div>
         </div>
         <div class="start-go" style="display: none">▶ Нажми, чтобы ехать</div>
       </div>
