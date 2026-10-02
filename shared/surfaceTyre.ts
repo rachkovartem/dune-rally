@@ -80,6 +80,9 @@ export const SURFACE_TYRE = Object.freeze({
   countersteerGain: 1,
   /** Below this flat speed (m/s) there is no assist. */
   countersteerMinSpeed: 3,
+  /** Slip angle where assist begins to fade (rad ~ 25°), and fully fades (rad ~ 70°). */
+  countersteerFadeStart: (25 * Math.PI) / 180,
+  countersteerFadeEnd: (70 * Math.PI) / 180,
 });
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
@@ -347,12 +350,39 @@ export function bodySlipOf(velocity: Vector3, nose: Vector3, forwardSpeed: numbe
 /**
  * Steer target with the counter-steer assist: when the body slides more than a few degrees, the
  * front wheels turn toward the slide, the way caster turns a released wheel. `bodySlip` comes from
- * bodySlipOf; the sign here was measured, the other one doubles the slide.
+ * bodySlipOf.
+ *
+ * Driver authority contract:
+ * - When the driver provides neutral input (`steerTarget === 0`), caster freely helps catch slides.
+ * - When the driver steers in the direction of the assist, the assist reinforces their input up to max.
+ * - When the driver steers OPPOSITE to the assist (e.g. counteracting or straightening out), the driver
+ *   has direct veto: opposing assist attenuates to 0 at full lock and NEVER inverts the wheel direction.
+ * - At extreme angles (> 70°, e.g. broadside slide or spinout), the assist fades out to 0 so the wheels
+ *   do not lock sideways against the driver.
  */
 export function countersteer(steerTarget: number, bodySlip: number, flatSpeed: number, maxSteer: number): number {
   if (flatSpeed <= SURFACE_TYRE.countersteerMinSpeed) return steerTarget;
-  const beyond = Math.max(0, Math.abs(bodySlip) - SURFACE_TYRE.countersteerFreeSlip);
-  if (beyond === 0) return steerTarget;
-  const steered = steerTarget - SURFACE_TYRE.countersteerGain * Math.sign(bodySlip) * beyond;
-  return Math.max(-maxSteer, Math.min(maxSteer, steered));
+  const absSlip = Math.abs(bodySlip);
+  if (absSlip <= SURFACE_TYRE.countersteerFreeSlip) return steerTarget;
+
+  let envelope = 1;
+  if (absSlip > SURFACE_TYRE.countersteerFadeStart) {
+    envelope = Math.max(0, (SURFACE_TYRE.countersteerFadeEnd - absSlip) / (SURFACE_TYRE.countersteerFadeEnd - SURFACE_TYRE.countersteerFadeStart));
+  }
+  if (envelope <= 0) return steerTarget;
+
+  const beyond = (absSlip - SURFACE_TYRE.countersteerFreeSlip) * envelope;
+  const assistAngle = -SURFACE_TYRE.countersteerGain * Math.sign(bodySlip) * beyond;
+
+  if (Math.abs(steerTarget) < 1e-4 || Math.sign(steerTarget) === Math.sign(assistAngle)) {
+    const combined = steerTarget + assistAngle;
+    return Math.max(-maxSteer, Math.min(maxSteer, combined));
+  }
+
+  const driverShare = Math.min(1, Math.abs(steerTarget) / maxSteer);
+  const opposingAssist = assistAngle * (1 - driverShare);
+  const combined = steerTarget + opposingAssist;
+  if (steerTarget < 0 && combined > 0) return steerTarget;
+  if (steerTarget > 0 && combined < 0) return steerTarget;
+  return Math.max(-maxSteer, Math.min(maxSteer, combined));
 }

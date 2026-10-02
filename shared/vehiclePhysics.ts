@@ -626,7 +626,7 @@ export function createVehiclePhysics(
       // Ramp steering toward the target for an analog feel (not a snap). Negated so a positive
       // steer input turns left: measured steer-angle and yaw share a sign, so left needs +angle.
       let target = -input.steer * steerLimitAt(config, wheelbase, Math.abs(alongNose));
-      if (contacts >= 2) {
+      if (contacts >= 2 && alongNose > 1.0) {
         target = countersteer(target, bodySlipOf(velocity, nose, alongNose), Math.hypot(velocity.x, velocity.z), config.maxSteer);
       }
       const maxStep = config.steerSpeed * dt;

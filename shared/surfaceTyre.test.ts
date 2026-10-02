@@ -323,4 +323,22 @@ describe('countersteer — the assist steers into a slide (SH-1)', () => {
     expect(straight).toBe(0);
     expect(Math.sign(countersteer(0, slip, 10, 0.6))).toBe(-Math.sign(slip));
   });
+
+  it('gives driver full authority when steering opposite to the slide', () => {
+    // Car sliding with negative bodySlip producing positive assist (left).
+    // Driver commands full lock right (-0.6).
+    const steered = countersteer(-0.6, degrees(-30), 15, 0.6);
+    expect(steered).toBe(-0.6);
+  });
+
+  it('never inverts steering angle against driver intent when counteracting', () => {
+    // Partial driver input to the right (-0.3) against left assist
+    const steered = countersteer(-0.3, degrees(-30), 15, 0.6);
+    expect(steered).toBeLessThanOrEqual(0);
+  });
+
+  it('fades out completely during deep broadside slides (past 70 degrees)', () => {
+    expect(countersteer(0, degrees(80), 15, 0.6)).toBe(0);
+    expect(countersteer(0.2, degrees(85), 15, 0.6)).toBe(0.2);
+  });
 });
