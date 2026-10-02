@@ -596,6 +596,7 @@ interface LocalDuelRace {
   opponentId: string;
   opponentName: string;
   startTimeMs: number;
+  slot: { x: number; y: number; z: number; yaw: number };
   nextCheckpointIndex: number;
   totalCheckpoints: number;
   passedCheckpoints: number;
@@ -612,15 +613,18 @@ const duelHud = new DuelHud(hudEl ?? document.body, {
   onStartDuelInvite: (opponentId, trackId) => {
     conn.sendDuelInvite(opponentId, trackId);
   },
-  onAcceptInvite: () => {
-    if (lastIncomingInvite) {
-      conn.sendDuelAccept(lastIncomingInvite.fromSessionId, lastIncomingInvite.trackId);
+  onAcceptInvite: (inviteId) => {
+    const fromSessionId = inviteId || lastIncomingInvite?.fromSessionId;
+    const trackId = lastIncomingInvite?.trackId || DUEL_TRACKS[0].id;
+    if (fromSessionId) {
+      conn.sendDuelAccept(fromSessionId, trackId);
       lastIncomingInvite = null;
     }
   },
-  onDeclineInvite: () => {
-    if (lastIncomingInvite) {
-      conn.sendDuelDecline(lastIncomingInvite.fromSessionId);
+  onDeclineInvite: (inviteId) => {
+    const fromSessionId = inviteId || lastIncomingInvite?.fromSessionId;
+    if (fromSessionId) {
+      conn.sendDuelDecline(fromSessionId);
       lastIncomingInvite = null;
     }
   },
@@ -638,7 +642,7 @@ conn.onDuelInvite((msg) => {
 });
 
 conn.onDuelDecline(() => {
-  duelHud.hideWaiting();
+  duelHud.showDeclinedNotice('Соперник отклонил вызов на дуэль');
 });
 
 conn.onDuelCancel(() => {
@@ -658,12 +662,25 @@ conn.onDuelStart((msg) => {
 
   views.setDuelOpponent(oppSessionId);
 
+  const mySlotIdx = myPlayer?.slot ?? 0;
+  const slot = msg.startSlots[mySlotIdx] ?? track.startSlots[mySlotIdx];
+  const groundY = terrainSurfaceHeight(heightField, slot.x, slot.z);
+  const startPose = { x: slot.x, y: groundY + 1.2, z: slot.z, yaw: slot.yaw };
+
+  localCar?.buggy.placeAt(startPose);
+  tracks.breakChains();
+  conn.sendResetCar();
+  prevCarVelocity = null;
+
+  terrain.update(slot.x, slot.z, 0, 0);
+
   activeDuel = {
     duelId: msg.duelId,
     track,
     opponentId: oppSessionId,
     opponentName: oppName,
-    startTimeMs: msg.startTime,
+    startTimeMs: performance.now() + msg.countdownMs,
+    slot: startPose,
     nextCheckpointIndex: 0,
     totalCheckpoints: track.checkpoints.length + 1,
     passedCheckpoints: 0,
@@ -671,20 +688,15 @@ conn.onDuelStart((msg) => {
     opponentPassedCheckpoints: 0,
   };
 
-  const mySlotIdx = myPlayer?.slot ?? 0;
-  const slot = msg.startSlots[mySlotIdx] ?? track.startSlots[mySlotIdx];
-  const groundY = terrainSurfaceHeight(heightField, slot.x, slot.z);
-  localCar?.buggy.placeAt({ x: slot.x, y: groundY + 1.2, z: slot.z, yaw: slot.yaw });
-  tracks.breakChains();
-  conn.sendResetCar();
-  prevCarVelocity = null;
-
   duelGates.buildTrack(track);
 
   countdownFreeze = true;
   const countdownSec = Math.max(1, Math.round(msg.countdownMs / 1000));
   duelHud.startCountdown(countdownSec, () => {
     countdownFreeze = false;
+    if (activeDuel) {
+      activeDuel.startTimeMs = performance.now();
+    }
     duelHud.showRaceHud(track.name);
   });
 });
@@ -908,9 +920,18 @@ function frame() {
         world.step();
         buggy.update();
       }
+      if (countdownFreeze && activeDuel) {
+        buggy.placeAt(activeDuel.slot);
+      }
     });
-    guard.run('fall guard', () => recoverIfFallenThrough(buggy));
-    guard.run('border safety', () => catchEscapeOverBorder(buggy));
+    guard.run('fall guard', () => {
+      if (countdownFreeze && activeDuel) return;
+      recoverIfFallenThrough(buggy);
+    });
+    guard.run('border safety', () => {
+      if (countdownFreeze && activeDuel) return;
+      catchEscapeOverBorder(buggy);
+    });
     if (now - lastPoseSentAt >= 1000 / POSE_HZ) {
       lastPoseSentAt = now;
       guard.run('network pose', () => conn.sendPose(poseOf(buggy)));

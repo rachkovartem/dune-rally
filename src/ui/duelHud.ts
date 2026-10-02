@@ -59,6 +59,8 @@ export class DuelHud {
 
   private currentNearbyOpponentId: string | null = null;
   private currentNearbyOpponentName = '';
+  private selectedOpponentId: string | null = null;
+  private selectedOpponentName = '';
   private currentInviteId: string | null = null;
   private waitingTargetOpponentId: string | null = null;
 
@@ -137,9 +139,13 @@ export class DuelHud {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       const key = e.key.toUpperCase();
+      const code = e.code;
+      const isF = key === 'F' || code === 'KeyF' || key === 'А';
+      const isY = key === 'Y' || code === 'KeyY' || key === 'Н';
+      const isN = key === 'N' || code === 'KeyN' || key === 'Т';
 
       // Proximity challenge trigger [F]
-      if (key === 'F' && this.promptEl && !this.promptEl.hidden && this.currentNearbyOpponentId) {
+      if (isF && this.promptEl && !this.promptEl.hidden && this.currentNearbyOpponentId) {
         e.preventDefault();
         this.openTrackSelector();
         return;
@@ -147,12 +153,12 @@ export class DuelHud {
 
       // Invite response [Y] or [N]
       if (this.inviteModalEl && !this.inviteModalEl.hidden && this.currentInviteId) {
-        if (key === 'Y' || e.code === 'KeyY') {
+        if (isY) {
           e.preventDefault();
           this.acceptCurrentInvite();
           return;
         }
-        if (key === 'N' || e.code === 'KeyN') {
+        if (isN) {
           e.preventDefault();
           this.declineCurrentInvite();
           return;
@@ -207,10 +213,11 @@ export class DuelHud {
 
   openTrackSelector(): void {
     if (!this.currentNearbyOpponentId || !this.trackModalEl) return;
-    this.hideProximityPrompt();
-
     const opponentName = this.currentNearbyOpponentName;
     const opponentId = this.currentNearbyOpponentId;
+    this.selectedOpponentId = opponentId;
+    this.selectedOpponentName = opponentName;
+    this.hideProximityPrompt();
 
     this.trackModalEl.innerHTML = `
       <div class="duel-modal-card">
@@ -241,14 +248,16 @@ export class DuelHud {
     const closeBtn = this.trackModalEl.querySelector('#duel-track-close');
     if (closeBtn) closeBtn.addEventListener('click', () => this.closeTrackSelector());
 
-    const selectButtons = this.trackModalEl.querySelectorAll('.duel-select-btn');
-    selectButtons.forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const trackId = (e.currentTarget as HTMLElement).dataset.trackId as DuelTrackId;
-        if (trackId) {
+    const trackCards = this.trackModalEl.querySelectorAll('.duel-track-card');
+    trackCards.forEach((card) => {
+      card.addEventListener('click', () => {
+        const trackId = (card as HTMLElement).dataset.trackId as DuelTrackId;
+        const targetId = this.selectedOpponentId ?? opponentId;
+        const targetName = this.selectedOpponentName ?? opponentName;
+        if (trackId && targetId) {
           this.closeTrackSelector();
-          this.showWaiting(opponentId, opponentName);
-          this.callbacks.onStartDuelInvite?.(opponentId, trackId);
+          this.showWaiting(targetId, targetName);
+          this.callbacks.onStartDuelInvite?.(targetId, trackId);
         }
       });
     });
@@ -257,6 +266,8 @@ export class DuelHud {
   }
 
   closeTrackSelector(): void {
+    this.selectedOpponentId = null;
+    this.selectedOpponentName = '';
     if (this.trackModalEl) {
       this.trackModalEl.hidden = true;
     }
@@ -302,6 +313,23 @@ export class DuelHud {
     if (this.waitingModalEl) {
       this.waitingModalEl.hidden = true;
     }
+  }
+
+  showDeclinedNotice(reason = 'Вызов отклонён соперником'): void {
+    this.waitingTargetOpponentId = null;
+    if (!this.waitingModalEl) return;
+    this.waitingModalEl.innerHTML = `
+      <div class="duel-modal-card duel-card-small">
+        <div class="duel-modal-title" style="font-size:20px; color:#ff6b6b">❌ Вызов отклонён</div>
+        <div style="margin: 16px 0; font-size: 15px;">
+          ${reason}
+        </div>
+      </div>
+    `;
+    this.waitingModalEl.hidden = false;
+    window.setTimeout(() => {
+      if (this.waitingModalEl) this.waitingModalEl.hidden = true;
+    }, 2500);
   }
 
   // --- Incoming Invite ---
@@ -355,12 +383,13 @@ export class DuelHud {
       window.clearTimeout(this.inviteTimer);
       this.inviteTimer = null;
     }
-    if (this.currentInviteId) {
-      this.callbacks.onAcceptInvite?.(this.currentInviteId);
-      this.currentInviteId = null;
-    }
+    const inviteId = this.currentInviteId;
+    this.currentInviteId = null;
     if (this.inviteModalEl) {
       this.inviteModalEl.hidden = true;
+    }
+    if (inviteId) {
+      this.callbacks.onAcceptInvite?.(inviteId);
     }
   }
 
@@ -369,12 +398,13 @@ export class DuelHud {
       window.clearTimeout(this.inviteTimer);
       this.inviteTimer = null;
     }
-    if (this.currentInviteId) {
-      this.callbacks.onDeclineInvite?.(this.currentInviteId);
-      this.currentInviteId = null;
-    }
+    const inviteId = this.currentInviteId;
+    this.currentInviteId = null;
     if (this.inviteModalEl) {
       this.inviteModalEl.hidden = true;
+    }
+    if (inviteId) {
+      this.callbacks.onDeclineInvite?.(inviteId);
     }
   }
 
