@@ -374,7 +374,10 @@ export function createChunkScatter(
     g.add(obj);
     freezeInPlace(obj);
   };
-  for (const b of feats.buildings) place(building(b, brng), b.x, b.z, b.yaw);
+  for (const b of feats.buildings) {
+    if (b.customRender) continue;
+    place(building(b, brng), b.x, b.z, b.yaw);
+  }
   for (const l of feats.landmarks) place(landmark(l), l.x, l.z, l.yaw);
   if (feats.trees) {
     for (const t of feats.trees) {

@@ -242,6 +242,7 @@ export interface BuildingBox {
   roofKind?: 'tiles' | 'metal' | 'planks';
   stories?: 1 | 2;
   hasPorch?: boolean;
+  customRender?: boolean;
 }
 
 export interface Landmark { kind: 'beacon' | 'windmill'; x: number; z: number; yaw: number; }
