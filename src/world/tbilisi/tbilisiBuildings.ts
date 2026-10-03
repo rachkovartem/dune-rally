@@ -1,5 +1,5 @@
 // src/world/tbilisi/tbilisiBuildings.ts
-// Architectural building definitions in Old Tbilisi and around Europe Square.
+// Solid physical collider boxes for Metekhi Bridge barriers, Meidan street buildings, and Old Tbilisi quarters.
 import type { BuildingBox } from '../worldDef';
 
 export interface TbilisiBuilding extends BuildingBox {
@@ -11,77 +11,73 @@ export interface TbilisiBuilding extends BuildingBox {
   customRender: true;
 }
 
-/**
- * Traditional Old Tbilisi houses along the riverbanks, Metekhi cliff, Meidan, and Wine Ascent.
- * All have customRender: true so they are rendered with authentic photographic Georgian textures
- * in tbilisiLandmarks.ts, while providing precise physics collision boxes.
- */
 export const TBILISI_BUILDINGS: readonly TbilisiBuilding[] = [
-  // ── Metekhi Cliffside (historic houses clinging to the gorge cliff) ──
+  // ── Metekhi Bridge Solid Safety Barrier Colliders ───────────────────
+  // Prevents cars from accidentally driving off the bridge into the river gorge
   {
-    id: 'cliff_house_1',
-    name: 'Metekhi Cliff Residence',
-    x: 1855, z: 480, w: 12, d: 10, h: 9.0, yaw: 0.1,
-    roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
+    id: 'bridge_barrier_west',
+    name: 'Metekhi Bridge West Stone Parapet',
+    x: 1889.5, z: 550, w: 1.4, d: 122, h: 3.5, yaw: 0,
+    roofKind: 'metal', stories: 1, customRender: true,
   },
   {
-    id: 'cliff_house_2',
-    name: 'Old Tbilisi Panorama House',
-    x: 1895, z: 465, w: 14, d: 11, h: 9.5, yaw: -0.2,
-    roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
-  },
-  {
-    id: 'cliff_house_3',
-    name: 'Metekhi Overlook Villa',
-    x: 1860, z: 545, w: 13, d: 10, h: 8.5, yaw: 0.35,
-    roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
+    id: 'bridge_barrier_east',
+    name: 'Metekhi Bridge East Balustrade',
+    x: 1910.5, z: 550, w: 1.4, d: 122, h: 3.5, yaw: 0,
+    roofKind: 'metal', stories: 1, customRender: true,
   },
 
-  // ── West Bank / Gorgasali Square (Meidan) across the bridge ─────────
+  // ── Gorgasali Square (Meidan) West Streetfront Buildings ───────────
   {
-    id: 'meidan_cafe_1',
-    name: 'Meidan Square Cafe',
-    x: 1835, z: 575, w: 14, d: 12, h: 8.0, yaw: -0.6,
+    id: 'meidan_west_1',
+    name: 'Meidan Merchant Mansion',
+    x: 1878, z: 475, w: 14, d: 20, h: 10.0, yaw: 0,
     roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
   },
   {
-    id: 'meidan_hotel',
+    id: 'meidan_west_2',
     name: 'Old Town Heritage Hotel',
-    x: 1845, z: 525, w: 16, d: 12, h: 9.0, yaw: -0.4,
+    x: 1875, z: 450, w: 16, d: 22, h: 12.0, yaw: 0,
     roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
   },
   {
-    id: 'meidan_bazaar',
-    name: 'Carpet & Spice Bazaar',
-    x: 1820, z: 545, w: 15, d: 14, h: 8.5, yaw: -0.5,
-    roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
-  },
-
-  // ── Wine Ascent (Ghvini Agmarti) climbing east from Europe Square ───
-  {
-    id: 'wine_ascent_1',
-    name: 'Old Tbilisi Wine House',
-    x: 1980, z: 660, w: 14, d: 11, h: 8.0, yaw: 0.4,
-    roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
-  },
-  {
-    id: 'wine_ascent_2',
-    name: 'Carved Balcony Inn',
-    x: 1995, z: 630, w: 15, d: 12, h: 8.5, yaw: 0.35,
-    roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
-  },
-  {
-    id: 'avlabari_house_1',
-    name: 'Avlabari Terrace House',
-    x: 1970, z: 570, w: 14, d: 10, h: 8.0, yaw: -0.1,
+    id: 'meidan_west_3',
+    name: 'Carpet & Spice Bazaar Arcade',
+    x: 1872, z: 425, w: 18, d: 22, h: 12.0, yaw: 0,
     roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
   },
 
-  // ── Rike Park Cable Car Station (north of Europe Square) ───────────
+  // ── Gorgasali Square (Meidan) East Streetfront Buildings ───────────
   {
-    id: 'cable_car_station',
-    name: 'Rike Cable Car Lower Station',
-    x: 1945, z: 490, w: 16, d: 14, h: 6.5, yaw: 0.0,
-    roofKind: 'metal', stories: 1, hasPorch: false, customRender: true,
+    id: 'meidan_east_1',
+    name: 'Meidan Riverfront Cafe',
+    x: 1922, z: 475, w: 14, d: 20, h: 10.0, yaw: 0,
+    roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
+  },
+  {
+    id: 'meidan_east_2',
+    name: 'Terrace Restaurant & Balconies',
+    x: 1925, z: 450, w: 16, d: 22, h: 12.0, yaw: 0,
+    roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
+  },
+  {
+    id: 'meidan_st_george',
+    name: 'St. George Quarter Church',
+    x: 1930, z: 425, w: 16, d: 18, h: 16.0, yaw: 0,
+    roofKind: 'tiles', stories: 2, hasPorch: false, customRender: true,
+  },
+
+  // ── Metekhi Cliffside Mansions (East Bank) ──────────────────────────
+  {
+    id: 'cliff_mansion_1',
+    name: 'Metekhi Cliff Residence',
+    x: 1955, z: 510, w: 14, d: 12, h: 10.0, yaw: 0.2,
+    roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
+  },
+  {
+    id: 'cliff_mansion_2',
+    name: 'Old Tbilisi Panorama House',
+    x: 1960, z: 560, w: 14, d: 12, h: 10.0, yaw: -0.2,
+    roofKind: 'tiles', stories: 2, hasPorch: true, customRender: true,
   },
 ];

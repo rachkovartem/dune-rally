@@ -1,6 +1,7 @@
 // src/render/tbilisi/tbilisiLandmarks.ts
-// Photorealistic 3D architectural landmarks and authentic textured urban environment
-// for Tbilisi Europe Square, Metekhi Church, Gorgasali Monument, Metekhi Bridge, and Old Tbilisi.
+// Photorealistic 3D architectural landmarks and authentic urban environment for Tbilisi:
+// Metekhi Bridge, Meidan / Old Tbilisi, Narikala Mountain Ridge & Fortress, Kartlis Deda,
+// Aerial Cable Car, Metekhi Church & Cliff, and Europe Square.
 import * as THREE from 'three';
 import satOrthophotoUrl from '../../assets/tbilisi/europe_square_sat.webp';
 import asphaltUrl from '../../assets/tbilisi/tbilisi_asphalt.webp';
@@ -18,8 +19,9 @@ import roofTilesUrl from '../../assets/tbilisi/tbilisi_roof_tiles.webp';
 import {
   TBILISI_CENTER, TBILISI_ORTHO_BOUNDS, TBILISI_METEKHI_BRIDGE,
   TBILISI_METEKHI_CHURCH, TBILISI_GORGASALI_STATUE,
-  TBILISI_PEACE_BRIDGE, TBILISI_KURA_LINE, TBILISI_KURA_RIVER,
+  TBILISI_KURA_LINE, TBILISI_KURA_RIVER,
   TBILISI_ROUNDABOUT, TBILISI_METEKHI_CLIFF,
+  TBILISI_NARIKALA, TBILISI_MEIDAN,
 } from '../../world/tbilisi/tbilisiDef';
 
 // Reusable unit geometry
@@ -57,7 +59,7 @@ const M_ASPHALT = new THREE.MeshStandardMaterial({
 });
 
 const M_COBBLE = new THREE.MeshStandardMaterial({
-  map: loadRepeatTexture(cobbleUrl, 8, 8),
+  map: loadRepeatTexture(cobbleUrl, 10, 10),
   roughness: 0.78,
   metalness: 0.05,
 });
@@ -125,6 +127,12 @@ const M_GOLD_CROSS = new THREE.MeshStandardMaterial({
   metalness: 0.92,
 });
 
+const M_SILVER_STATUE = new THREE.MeshStandardMaterial({
+  color: 0xd8dde2,
+  roughness: 0.35,
+  metalness: 0.85,
+});
+
 const M_BRONZE_STATUE = new THREE.MeshStandardMaterial({
   color: 0x2b3832,
   roughness: 0.38,
@@ -137,15 +145,9 @@ const M_DARK_BASALT = new THREE.MeshStandardMaterial({
   metalness: 0.1,
 });
 
-const M_YELLOW_LINE = new THREE.MeshStandardMaterial({
-  color: 0xf5b027,
-  roughness: 0.55,
-  metalness: 0.05,
-});
-
-const M_WHITE_LINE = new THREE.MeshStandardMaterial({
-  color: 0xeeeeee,
-  roughness: 0.5,
+const M_WHITE_MARKING = new THREE.MeshStandardMaterial({
+  color: 0xf0f0f0,
+  roughness: 0.45,
   metalness: 0.05,
 });
 
@@ -165,13 +167,12 @@ const M_LAMP_GLOW = new THREE.MeshBasicMaterial({
   color: 0xffe6a3,
 });
 
-const M_CANOPY_GLASS = new THREE.MeshStandardMaterial({
-  color: 0x88d4e8,
+const M_GLASS_TINTED = new THREE.MeshStandardMaterial({
+  color: 0x243338,
   transparent: true,
-  opacity: 0.65,
+  opacity: 0.75,
   roughness: 0.1,
-  metalness: 0.6,
-  side: THREE.DoubleSide,
+  metalness: 0.8,
 });
 
 const M_KURA_WATER = new THREE.MeshStandardMaterial({
@@ -216,6 +217,13 @@ const M_FLOWER_YELLOW = new THREE.MeshStandardMaterial({
   roughness: 0.8,
 });
 
+// Automotive Car Paint Materials for ambient bridge cars
+const M_CAR_GREY = new THREE.MeshStandardMaterial({ color: 0x3d4348, roughness: 0.22, metalness: 0.82 });
+const M_CAR_SILVER = new THREE.MeshStandardMaterial({ color: 0xc4c7cc, roughness: 0.25, metalness: 0.78 });
+const M_CAR_BLUE = new THREE.MeshStandardMaterial({ color: 0x1f3c64, roughness: 0.22, metalness: 0.85 });
+const M_CAR_TYRE = new THREE.MeshStandardMaterial({ color: 0x151617, roughness: 0.92, metalness: 0.02 });
+const M_CAR_WHEEL_RIM = new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0.25, metalness: 0.85 });
+
 /**
  * 1. Satellite Orthophoto Ground Overlay
  * Drapes the high-resolution aerial imagery over the Europe Square district as the base layer.
@@ -237,8 +245,7 @@ function createOrthophotoGround(heightAt: (x: number, z: number) => number): THR
     const wx = cx + lx;
     const wz = cz + lz;
     const groundY = heightAt(wx, wz);
-    // Base height offset
-    pos.setY(i, groundY + 0.03);
+    pos.setY(i, groundY + 0.01);
   }
   geom.computeVertexNormals();
   geom.computeBoundingBox();
@@ -266,312 +273,224 @@ function createOrthophotoGround(heightAt: (x: number, z: number) => number): THR
 }
 
 /**
- * 2. Europe Square Roundabout & Pavements
- * Authentic circular road with dark aggregate asphalt, raised granite curbs,
- * cobblestone perimeter walkways, and landscaped central park island with flowerbeds.
- */
-function createEuropeSquare(heightAt: (x: number, z: number) => number): THREE.Group {
-  const group = new THREE.Group();
-  const rb = TBILISI_ROUNDABOUT;
-  const cx = rb.center.x;
-  const cz = rb.center.z;
-  const y = rb.roadElevation;
-
-  // ── Asphalt Roundabout Road Ring ────────────────────────────────────
-  const roadGeom = new THREE.RingGeometry(rb.innerRadius, rb.outerRadius, 64);
-  roadGeom.rotateX(-Math.PI / 2);
-  const roadMesh = new THREE.Mesh(roadGeom, M_ASPHALT);
-  roadMesh.position.set(cx, y + 0.08, cz);
-  roadMesh.receiveShadow = true;
-  group.add(roadMesh);
-
-  // ── Dashed White Lane Divider Ring ──────────────────────────────────
-  const midRadius = (rb.innerRadius + rb.outerRadius) / 2;
-  const dashCount = 24;
-  for (let i = 0; i < dashCount; i++) {
-    const angle = (i / dashCount) * Math.PI * 2;
-    const dx = Math.cos(angle) * midRadius;
-    const dz = Math.sin(angle) * midRadius;
-    const dash = new THREE.Mesh(G_BOX, M_WHITE_LINE);
-    dash.scale.set(0.25, 0.02, 2.2);
-    dash.position.set(cx + dx, y + 0.10, cz + dz);
-    dash.rotation.y = -angle + Math.PI / 2;
-    group.add(dash);
-  }
-
-  // ── Granite Curbs ───────────────────────────────────────────────────
-  // Outer curb ring
-  const outerCurbs = 48;
-  for (let i = 0; i < outerCurbs; i++) {
-    const a1 = (i / outerCurbs) * Math.PI * 2;
-    const a2 = ((i + 1) / outerCurbs) * Math.PI * 2;
-    const midAngle = (a1 + a2) / 2;
-    const segLen = rb.outerRadius * (2 * Math.PI / outerCurbs);
-    const curb = new THREE.Mesh(G_BOX, M_CONCRETE_CURB);
-    curb.scale.set(0.35, 0.22, segLen + 0.05);
-    curb.position.set(
-      cx + Math.cos(midAngle) * (rb.outerRadius + 0.15),
-      y + 0.12,
-      cz + Math.sin(midAngle) * (rb.outerRadius + 0.15),
-    );
-    curb.rotation.y = -midAngle + Math.PI / 2;
-    curb.castShadow = true;
-    curb.receiveShadow = true;
-    group.add(curb);
-  }
-
-  // Inner curb ring
-  const innerCurbs = 36;
-  for (let i = 0; i < innerCurbs; i++) {
-    const midAngle = ((i + 0.5) / innerCurbs) * Math.PI * 2;
-    const segLen = rb.innerRadius * (2 * Math.PI / innerCurbs);
-    const curb = new THREE.Mesh(G_BOX, M_CONCRETE_CURB);
-    curb.scale.set(0.35, 0.25, segLen + 0.05);
-    curb.position.set(
-      cx + Math.cos(midAngle) * (rb.innerRadius - 0.15),
-      y + 0.15,
-      cz + Math.sin(midAngle) * (rb.innerRadius - 0.15),
-    );
-    curb.rotation.y = -midAngle + Math.PI / 2;
-    curb.castShadow = true;
-    group.add(curb);
-  }
-
-  // ── Central Park Island ─────────────────────────────────────────────
-  const lawnGeom = new THREE.CircleGeometry(rb.innerRadius - 0.2, 48);
-  lawnGeom.rotateX(-Math.PI / 2);
-  const lawn = new THREE.Mesh(lawnGeom, M_LAWN_GRASS);
-  lawn.position.set(cx, y + 0.22, cz);
-  lawn.receiveShadow = true;
-  group.add(lawn);
-
-  // Concentric flowerbeds on central island
-  const flowerRing1 = new THREE.RingGeometry(6.5, 9.5, 36);
-  flowerRing1.rotateX(-Math.PI / 2);
-  const f1 = new THREE.Mesh(flowerRing1, M_FLOWER_RED);
-  f1.position.set(cx, y + 0.24, cz);
-  group.add(f1);
-
-  const flowerRing2 = new THREE.RingGeometry(3.0, 5.0, 28);
-  flowerRing2.rotateX(-Math.PI / 2);
-  const f2 = new THREE.Mesh(flowerRing2, M_FLOWER_YELLOW);
-  f2.position.set(cx, y + 0.25, cz);
-  group.add(f2);
-
-  // Europe Square Central Column Monument
-  const monBase = new THREE.Mesh(G_CYL, M_DARK_BASALT);
-  monBase.scale.set(4.2, 0.8, 4.2);
-  monBase.position.set(cx, y + 0.6, cz);
-  monBase.castShadow = true;
-  group.add(monBase);
-
-  const monSocle = new THREE.Mesh(G_CYL, M_TUFF_WALL);
-  monSocle.scale.set(2.4, 1.2, 2.4);
-  monSocle.position.set(cx, y + 1.4, cz);
-  monSocle.castShadow = true;
-  group.add(monSocle);
-
-  const monCol = new THREE.Mesh(G_CYL, M_TUFF_WALL);
-  monCol.scale.set(1.1, 7.5, 1.1);
-  monCol.position.set(cx, y + 5.5, cz);
-  monCol.castShadow = true;
-  group.add(monCol);
-
-  const monCross = new THREE.Mesh(G_BOX, M_GOLD_CROSS);
-  monCross.scale.set(0.3, 1.4, 0.3);
-  monCross.position.set(cx, y + 9.8, cz);
-  group.add(monCross);
-
-  // ── Cobblestone Sidewalk Ring & Streetlamps ─────────────────────────
-  const sideGeom = new THREE.RingGeometry(rb.outerRadius + 0.35, rb.outerRadius + 6.0, 48);
-  sideGeom.rotateX(-Math.PI / 2);
-  const sideMesh = new THREE.Mesh(sideGeom, M_COBBLE);
-  sideMesh.position.set(cx, y + 0.12, cz);
-  sideMesh.receiveShadow = true;
-  group.add(sideMesh);
-
-  // 8 Classic vintage cast-iron streetlamps around the circle
-  const lampCount = 8;
-  for (let i = 0; i < lampCount; i++) {
-    const angle = (i / lampCount) * Math.PI * 2;
-    const lx = cx + Math.cos(angle) * (rb.outerRadius + 2.5);
-    const lz = cz + Math.sin(angle) * (rb.outerRadius + 2.5);
-    const groundH = heightAt(lx, lz);
-
-    const post = new THREE.Mesh(G_CYL, M_STEEL_STRUCTURE);
-    post.scale.set(0.2, 4.5, 0.2);
-    post.position.set(lx, groundH + 2.25, lz);
-    post.castShadow = true;
-    group.add(post);
-
-    // Twin horizontal bracket arms
-    const arm = new THREE.Mesh(G_BOX, M_STEEL_STRUCTURE);
-    arm.scale.set(1.4, 0.12, 0.12);
-    arm.position.set(lx, groundH + 4.3, lz);
-    arm.rotation.y = -angle;
-    group.add(arm);
-
-    // Warm glowing lanterns on each arm
-    for (const side of [-0.65, 0.65]) {
-      const lantern = new THREE.Mesh(G_BOX, M_LAMP_GLOW);
-      lantern.scale.set(0.35, 0.45, 0.35);
-      lantern.position.set(
-        lx + Math.sin(angle) * side,
-        groundH + 4.5,
-        lz - Math.cos(angle) * side,
-      );
-      group.add(lantern);
-    }
-  }
-
-  // Zebra pedestrian crossing leading onto Metekhi Bridge
-  const bridgeStart = TBILISI_METEKHI_BRIDGE.start;
-  const bridgeYaw = Math.atan2(TBILISI_METEKHI_BRIDGE.end.x - bridgeStart.x, TBILISI_METEKHI_BRIDGE.end.z - bridgeStart.z);
-  for (let z = -6; z <= 6; z += 1.4) {
-    const stripe = new THREE.Mesh(G_BOX, M_WHITE_LINE);
-    stripe.scale.set(3.2, 0.02, 0.7);
-    stripe.position.set(bridgeStart.x, y + 0.11, bridgeStart.z + z);
-    stripe.rotation.y = bridgeYaw;
-    group.add(stripe);
-  }
-
-  return group;
-}
-
-/**
- * 3. Metekhi Bridge (Мост Метехи)
- * Spans across the emerald Kura gorge connecting Europe Square to Old Town Meidan.
- * Authentic dark aggregate asphalt deck, cobblestone sidewalks, cast-iron balustrades,
- * twin stone under-arches, massive piers, and vintage street lamps.
+ * 2. Metekhi Bridge (Мост Метехи) — Exact match to Google Street View photo.
+ * Spans North-South (Z: 610 -> 490) across the Kura gorge.
+ * Features:
+ * - 4 traffic lanes on asphalt deck flush with terrain collider (14.50m) so tyres sit perfectly.
+ * - Granite cobblestone transition strip on the right side of the bridge.
+ * - White road markings: directional arrows, dashed lane lines, solid white line.
+ * - Left side: solid cut-stone historical parapet with vintage arched streetlamps.
+ * - Right side: ornate cast-iron railing with vintage arched streetlamps.
+ * - Raised granite curbs and cobblestone sidewalks on both sides.
+ * - Ambient realistic cars parked / driving on the bridge shoulders.
  */
 function createMetekhiBridge(): THREE.Group {
   const bridge = new THREE.Group();
   const start = TBILISI_METEKHI_BRIDGE.start;
   const end = TBILISI_METEKHI_BRIDGE.end;
-  const dx = end.x - start.x;
-  const dz = end.z - start.z;
-  const len = Math.hypot(dx, dz);
-  const yaw = Math.atan2(dx, dz);
-  const midX = (start.x + end.x) / 2;
-  const midZ = (start.z + end.z) / 2;
-  const deckY = TBILISI_METEKHI_BRIDGE.deckElevation;
-  const w = TBILISI_METEKHI_BRIDGE.width;
+  const len = Math.abs(start.z - end.z); // 120m
+  const midZ = (start.z + end.z) / 2;    // 550m
+  const y = TBILISI_METEKHI_BRIDGE.deckElevation; // 14.50m
+  const w = TBILISI_METEKHI_BRIDGE.width; // 18.0m
 
-  bridge.position.set(midX, deckY, midZ);
-  bridge.rotation.y = yaw;
+  // ── Road Asphalt Deck (Flush at y + 0.005 to prevent tyre sinking) ──
+  // Main asphalt lanes: from x = 1891.8 to x = 1905.2 (width 13.4m)
+  const asphaltW = 13.4;
+  const asphaltX = 1900 - (w / 2) + 2.2 + (asphaltW / 2); // 1891 + 2.2 + 6.7 = 1899.9
+  const asphaltMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(asphaltW, len),
+    M_ASPHALT,
+  );
+  asphaltMesh.rotateX(-Math.PI / 2);
+  asphaltMesh.position.set(asphaltX, y + 0.005, midZ);
+  asphaltMesh.receiveShadow = true;
+  bridge.add(asphaltMesh);
 
-  // ── Asphalt Roadway Deck ────────────────────────────────────────────
-  const roadwayW = w - 4.4;
-  const deck = new THREE.Mesh(G_BOX, M_ASPHALT);
-  deck.scale.set(roadwayW, 1.0, len);
-  deck.position.y = -0.5;
-  deck.castShadow = true;
-  deck.receiveShadow = true;
-  bridge.add(deck);
+  // ── Right Lane Granite Cobblestone Strip (from photo) ───────────────
+  // Width 3.3m: from x = 1905.2 to x = 1908.5
+  const cobbleW = 3.3;
+  const cobbleX = 1905.2 + cobbleW / 2; // 1906.85
+  const cobbleLane = new THREE.Mesh(
+    new THREE.PlaneGeometry(cobbleW, len),
+    M_COBBLE,
+  );
+  cobbleLane.rotateX(-Math.PI / 2);
+  cobbleLane.position.set(cobbleX, y + 0.006, midZ);
+  cobbleLane.receiveShadow = true;
+  bridge.add(cobbleLane);
 
-  // Double yellow centerline
-  const doubleYellow1 = new THREE.Mesh(G_BOX, M_YELLOW_LINE);
-  doubleYellow1.scale.set(0.14, 0.02, len);
-  doubleYellow1.position.set(-0.12, 0.02, 0);
-  bridge.add(doubleYellow1);
+  // ── Road Markings (Exact from photo) ────────────────────────────────
+  // Solid white divider line between asphalt and cobblestone lane
+  const solidLine = new THREE.Mesh(G_BOX, M_WHITE_MARKING);
+  solidLine.scale.set(0.18, 0.01, len);
+  solidLine.position.set(1905.2, y + 0.012, midZ);
+  bridge.add(solidLine);
 
-  const doubleYellow2 = new THREE.Mesh(G_BOX, M_YELLOW_LINE);
-  doubleYellow2.scale.set(0.14, 0.02, len);
-  doubleYellow2.position.set(0.12, 0.02, 0);
-  bridge.add(doubleYellow2);
+  // Solid white left shoulder line
+  const leftShoulderLine = new THREE.Mesh(G_BOX, M_WHITE_MARKING);
+  leftShoulderLine.scale.set(0.18, 0.01, len);
+  leftShoulderLine.position.set(1892.0, y + 0.012, midZ);
+  bridge.add(leftShoulderLine);
 
-  // White lane shoulder lines
-  for (const side of [-1, 1]) {
-    const whiteLine = new THREE.Mesh(G_BOX, M_WHITE_LINE);
-    whiteLine.scale.set(0.16, 0.02, len);
-    whiteLine.position.set(side * (roadwayW / 2 - 0.4), 0.02, 0);
-    bridge.add(whiteLine);
+  // Dashed white lane lines at x = 1896.4 and x = 1900.8
+  for (const lx of [1896.4, 1900.8]) {
+    for (let lz = end.z + 5; lz < start.z - 5; lz += 5.5) {
+      const dash = new THREE.Mesh(G_BOX, M_WHITE_MARKING);
+      dash.scale.set(0.18, 0.01, 2.5);
+      dash.position.set(lx, y + 0.012, lz);
+      bridge.add(dash);
+    }
   }
 
-  // ── Cobblestone Sidewalks & Curbs ───────────────────────────────────
-  for (const side of [-1, 1]) {
-    const swX = side * (w / 2 - 1.1);
+  // White directional arrows painted on asphalt pointing North (-z)
+  for (const arrowZ of [580, 535]) {
+    for (const arrowX of [1894.2, 1898.6]) {
+      // Arrow stem
+      const stem = new THREE.Mesh(G_BOX, M_WHITE_MARKING);
+      stem.scale.set(0.35, 0.01, 3.2);
+      stem.position.set(arrowX, y + 0.014, arrowZ);
+      bridge.add(stem);
 
-    // Granite curb separating sidewalk from roadway
-    const curb = new THREE.Mesh(G_BOX, M_CONCRETE_CURB);
-    curb.scale.set(0.35, 0.28, len);
-    curb.position.set(side * (roadwayW / 2 + 0.17), 0.14, 0);
-    curb.castShadow = true;
-    bridge.add(curb);
+      // Arrow head wings
+      const headL = new THREE.Mesh(G_BOX, M_WHITE_MARKING);
+      headL.scale.set(0.28, 0.01, 1.4);
+      headL.position.set(arrowX - 0.45, y + 0.014, arrowZ - 1.2);
+      headL.rotation.y = 0.55;
+      bridge.add(headL);
 
-    // Cobblestone pedestrian sidewalk
-    const sidewalk = new THREE.Mesh(G_BOX, M_COBBLE);
-    sidewalk.scale.set(2.2, 0.25, len);
-    sidewalk.position.set(swX, 0.12, 0);
-    sidewalk.receiveShadow = true;
-    bridge.add(sidewalk);
+      const headR = new THREE.Mesh(G_BOX, M_WHITE_MARKING);
+      headR.scale.set(0.28, 0.01, 1.4);
+      headR.position.set(arrowX + 0.45, y + 0.014, arrowZ - 1.2);
+      headR.rotation.y = -0.55;
+      bridge.add(headR);
+    }
+  }
 
-    // Cast-iron balustrade / railing with vertical balusters
-    const parapet = new THREE.Mesh(G_BOX, M_STEEL_STRUCTURE);
-    parapet.scale.set(0.22, 1.1, len);
-    parapet.position.set(side * (w / 2 - 0.12), 0.72, 0);
-    parapet.castShadow = true;
-    bridge.add(parapet);
+  // ── Left Sidewalk, Granite Curb & Stone Parapet Wall (West Side) ────
+  // Granite curb (height 16cm)
+  const curbLeft = new THREE.Mesh(G_BOX, M_CONCRETE_CURB);
+  curbLeft.scale.set(0.35, 0.22, len);
+  curbLeft.position.set(1891.65, y + 0.11, midZ);
+  curbLeft.castShadow = true;
+  bridge.add(curbLeft);
 
-    // Handrail molded top
-    const handrail = new THREE.Mesh(G_BOX, M_STEEL_STRUCTURE);
-    handrail.scale.set(0.36, 0.12, len);
-    handrail.position.set(side * (w / 2 - 0.12), 1.32, 0);
-    bridge.add(handrail);
+  // Cobblestone sidewalk (width 2.0m, from x = 1889.6 to 1891.6)
+  const swLeft = new THREE.Mesh(G_BOX, M_COBBLE);
+  swLeft.scale.set(2.0, 0.16, len);
+  swLeft.position.set(1890.6, y + 0.08, midZ);
+  swLeft.receiveShadow = true;
+  bridge.add(swLeft);
+
+  // Solid cut-stone parapet wall (height 1.15m, thickness 0.45m) matching photo
+  const wallLeft = new THREE.Mesh(G_BOX, M_TUFF_WALL);
+  wallLeft.scale.set(0.45, 1.15, len);
+  wallLeft.position.set(1889.4, y + 0.65, midZ);
+  wallLeft.castShadow = true;
+  wallLeft.receiveShadow = true;
+  bridge.add(wallLeft);
+
+  // Parapet stone coping top
+  const copingLeft = new THREE.Mesh(G_BOX, M_TUFF_WALL);
+  copingLeft.scale.set(0.65, 0.16, len);
+  copingLeft.position.set(1889.4, y + 1.28, midZ);
+  copingLeft.castShadow = true;
+  bridge.add(copingLeft);
+
+  // ── Right Sidewalk, Granite Curb & Cast-Iron Railing (East Side) ────
+  // Granite curb (height 16cm)
+  const curbRight = new THREE.Mesh(G_BOX, M_CONCRETE_CURB);
+  curbRight.scale.set(0.35, 0.22, len);
+  curbRight.position.set(1908.65, y + 0.11, midZ);
+  curbRight.castShadow = true;
+  bridge.add(curbRight);
+
+  // Cobblestone sidewalk (width 2.0m, from x = 1908.8 to 1910.8)
+  const swRight = new THREE.Mesh(G_BOX, M_COBBLE);
+  swRight.scale.set(2.0, 0.16, len);
+  swRight.position.set(1909.8, y + 0.08, midZ);
+  swRight.receiveShadow = true;
+  bridge.add(swRight);
+
+  // Cast-iron balustrade railing (height 1.15m) matching photo
+  const railRight = new THREE.Mesh(G_BOX, M_STEEL_STRUCTURE);
+  railRight.scale.set(0.25, 1.15, len);
+  railRight.position.set(1910.9, y + 0.65, midZ);
+  railRight.castShadow = true;
+  bridge.add(railRight);
+
+  // Handrail molded top
+  const handrailRight = new THREE.Mesh(G_BOX, M_STEEL_STRUCTURE);
+  handrailRight.scale.set(0.38, 0.14, len);
+  handrailRight.position.set(1910.9, y + 1.28, midZ);
+  bridge.add(handrailRight);
+
+  // Stone pilaster posts along right railing every 12 meters
+  for (let pz = end.z; pz <= start.z; pz += 12) {
+    const post = new THREE.Mesh(G_BOX, M_TUFF_WALL);
+    post.scale.set(0.65, 1.35, 0.65);
+    post.position.set(1910.9, y + 0.68, pz);
+    post.castShadow = true;
+    bridge.add(post);
+  }
+
+  // ── Vintage Arched Tbilisi Streetlamps (Matching Photo) ─────────────
+  // Distinctive curved gooseneck arched lamps mounted along the balustrades
+  for (let lz = end.z + 8; lz < start.z; lz += 16) {
+    // Left side lamps (mounted on stone parapet, arching inward toward road)
+    const poleL = new THREE.Mesh(G_CYL, M_STEEL_STRUCTURE);
+    poleL.scale.set(0.18, 5.2, 0.18);
+    poleL.position.set(1889.4, y + 3.8, lz);
+    poleL.castShadow = true;
+    bridge.add(poleL);
+
+    const archL = new THREE.Mesh(G_BOX, M_STEEL_STRUCTURE);
+    archL.scale.set(1.4, 0.14, 0.14);
+    archL.position.set(1890.0, y + 6.3, lz);
+    archL.rotation.z = -0.35;
+    bridge.add(archL);
+
+    const lanternL = new THREE.Mesh(G_BOX, M_LAMP_GLOW);
+    lanternL.scale.set(0.42, 0.55, 0.42);
+    lanternL.position.set(1890.6, y + 6.0, lz);
+    bridge.add(lanternL);
+
+    // Right side lamps (mounted on cast-iron railing, arching inward toward road)
+    const poleR = new THREE.Mesh(G_CYL, M_STEEL_STRUCTURE);
+    poleR.scale.set(0.18, 5.2, 0.18);
+    poleR.position.set(1910.9, y + 3.8, lz);
+    poleR.castShadow = true;
+    bridge.add(poleR);
+
+    const archR = new THREE.Mesh(G_BOX, M_STEEL_STRUCTURE);
+    archR.scale.set(1.4, 0.14, 0.14);
+    archR.position.set(1910.3, y + 6.3, lz);
+    archR.rotation.z = 0.35;
+    bridge.add(archR);
+
+    const lanternR = new THREE.Mesh(G_BOX, M_LAMP_GLOW);
+    lanternR.scale.set(0.42, 0.55, 0.42);
+    lanternR.position.set(1909.7, y + 6.0, lz);
+    bridge.add(lanternR);
   }
 
   // ── Massive Stone Under-Arches and River Piers ──────────────────────
-  // Main supporting bridge understructure
-  const underDeck = new THREE.Mesh(G_BOX, M_TUFF_WALL);
-  underDeck.scale.set(w * 0.94, 2.2, len * 0.98);
-  underDeck.position.y = -1.6;
-  underDeck.castShadow = true;
-  underDeck.receiveShadow = true;
-  bridge.add(underDeck);
-
-  // Twin massive stone piers reaching down to riverbed (-12m)
-  for (const t of [-0.26, 0.26]) {
+  // Center arch piers anchored into the Kura riverbed below
+  for (const pierZ of [530, 570]) {
     const pier = new THREE.Mesh(G_BOX, M_TUFF_WALL);
-    pier.scale.set(w * 0.92, 12, 7.5);
-    pier.position.set(0, -6.5, t * len);
+    pier.scale.set(w * 0.95, 12, 8.5);
+    pier.position.set(1900, y - 6.5, pierZ);
     pier.castShadow = true;
     pier.receiveShadow = true;
     bridge.add(pier);
 
-    // Pier cutwaters (pointed stone wedges against river current)
-    for (const cutSide of [-1, 1]) {
+    // Pointed cutwaters against river current
+    for (const cutX of [1900 - w * 0.52, 1900 + w * 0.52]) {
       const cutwater = new THREE.Mesh(G_BOX, M_TUFF_WALL);
-      cutwater.scale.set(3.5, 9, 7.5);
-      cutwater.position.set(cutSide * (w * 0.52), -7.5, t * len);
-      cutwater.rotation.y = cutSide * 0.78;
+      cutwater.scale.set(3.8, 9, 8.5);
+      cutwater.position.set(cutX, y - 7.5, pierZ);
+      cutwater.rotation.y = cutX < 1900 ? 0.78 : -0.78;
       cutwater.castShadow = true;
       bridge.add(cutwater);
-    }
-  }
-
-  // ── Historic Cast-Iron Streetlamps with Glowing Double Lanterns ─────
-  for (const zOff of [-0.38, -0.13, 0.13, 0.38]) {
-    for (const side of [-1, 1]) {
-      const lx = side * (w / 2 - 0.15);
-      const lz = zOff * len;
-
-      const pole = new THREE.Mesh(G_CYL, M_STEEL_STRUCTURE);
-      pole.scale.set(0.18, 4.2, 0.18);
-      pole.position.set(lx, 2.3, lz);
-      pole.castShadow = true;
-      bridge.add(pole);
-
-      const crossArm = new THREE.Mesh(G_BOX, M_STEEL_STRUCTURE);
-      crossArm.scale.set(1.2, 0.12, 0.12);
-      crossArm.position.set(lx, 4.3, lz);
-      bridge.add(crossArm);
-
-      for (const lanternOffset of [-0.55, 0.55]) {
-        const lantern = new THREE.Mesh(G_BOX, M_LAMP_GLOW);
-        lantern.scale.set(0.38, 0.52, 0.38);
-        lantern.position.set(lx, 4.5, lz + lanternOffset);
-        bridge.add(lantern);
-      }
     }
   }
 
@@ -579,596 +498,678 @@ function createMetekhiBridge(): THREE.Group {
 }
 
 /**
- * 4. Metekhi Cliff (Скала Метехи) & Fortress Retaining Wall
- * Steep rugged stratified bedrock bluff rising 25m out of the Kura gorge,
- * crowned with the ancient Metekhi fortress stone parapet.
+ * Helper to build an authentic ambient vehicle parked on the bridge (matching photo).
  */
-function createMetekhiCliff(heightAt: (x: number, z: number) => number): THREE.Group {
-  const cliffGroup = new THREE.Group();
-  const center = TBILISI_METEKHI_CLIFF.center;
-  const topY = TBILISI_METEKHI_CLIFF.topElevation;
+function createBridgeCar(x: number, y: number, z: number, yaw: number, color: THREE.Material, isSUV = false): THREE.Group {
+  const car = new THREE.Group();
+  car.position.set(x, y, z);
+  car.rotation.y = yaw;
 
-  // Multi-tier layered rock faces protruding along the riverfront
-  const rockSteps = [
-    { dx: -22, dz: 10, w: 26, h: 22, d: 24, yaw: 0.25 },
-    { dx: -14, dz: -12, w: 28, h: 24, d: 26, yaw: -0.15 },
-    { dx: -26, dz: -4, w: 20, h: 20, d: 28, yaw: 0.05 },
-    { dx: -6, dz: 24, w: 24, h: 18, d: 20, yaw: 0.45 },
-    { dx: -18, dz: 30, w: 22, h: 16, d: 22, yaw: 0.30 },
-  ];
+  const w = isSUV ? 2.1 : 1.9;
+  const l = isSUV ? 4.8 : 4.6;
+  const h = isSUV ? 1.7 : 1.45;
 
-  for (const step of rockSteps) {
-    const rx = center.x + step.dx;
-    const rz = center.z + step.dz;
-    const rock = new THREE.Mesh(G_BOX, M_CLIFF_ROCK);
-    rock.scale.set(step.w, step.h, step.d);
-    rock.position.set(rx, 3.5 + step.h / 2, rz);
-    rock.rotation.y = step.yaw;
-    rock.castShadow = true;
-    rock.receiveShadow = true;
-    cliffGroup.add(rock);
+  // Main chassis/body
+  const body = new THREE.Mesh(G_BOX, color);
+  body.scale.set(w, h * 0.55, l);
+  body.position.y = 0.35 + (h * 0.55) / 2;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  car.add(body);
+
+  // Cabin / roof greenhouse
+  const cabin = new THREE.Mesh(G_BOX, M_GLASS_TINTED);
+  cabin.scale.set(w * 0.88, h * 0.45, l * 0.55);
+  cabin.position.set(0, 0.35 + h * 0.55 + (h * 0.45) / 2, isSUV ? -0.1 : -0.2);
+  cabin.castShadow = true;
+  car.add(cabin);
+
+  // 4 Wheels
+  const halfTrack = w * 0.48;
+  const wheelRadius = isSUV ? 0.38 : 0.34;
+  for (const [wx, wz] of [[-halfTrack, l * 0.32], [halfTrack, l * 0.32], [-halfTrack, -l * 0.32], [halfTrack, -l * 0.32]]) {
+    const tyre = new THREE.Mesh(G_CYL, M_CAR_TYRE);
+    tyre.scale.set(wheelRadius * 2, 0.26, wheelRadius * 2);
+    tyre.rotation.z = Math.PI / 2;
+    tyre.position.set(wx, wheelRadius, wz);
+    tyre.castShadow = true;
+    car.add(tyre);
+
+    const rim = new THREE.Mesh(G_CYL, M_CAR_WHEEL_RIM);
+    rim.scale.set(wheelRadius * 1.3, 0.27, wheelRadius * 1.3);
+    rim.rotation.z = Math.PI / 2;
+    rim.position.set(wx, wheelRadius, wz);
+    car.add(rim);
   }
 
-  // Upper cliff plateau cobblestone terrace
-  const plateauGeom = new THREE.CircleGeometry(TBILISI_METEKHI_CLIFF.radius - 8, 36);
-  plateauGeom.rotateX(-Math.PI / 2);
-  const plateau = new THREE.Mesh(plateauGeom, M_COBBLE);
-  plateau.position.set(center.x, topY + 0.05, center.z);
-  plateau.receiveShadow = true;
-  cliffGroup.add(plateau);
-
-  // Ancient stone fortress parapet wall with crenellations along cliff rim
-  const wallCount = 28;
-  for (let i = 0; i < wallCount; i++) {
-    const angle = (i / wallCount) * Math.PI * 1.35 + Math.PI * 0.75;
-    const wx = center.x + Math.cos(angle) * (TBILISI_METEKHI_CLIFF.radius - 7);
-    const wz = center.z + Math.sin(angle) * (TBILISI_METEKHI_CLIFF.radius - 7);
-    const wy = Math.max(26.0, heightAt(wx, wz));
-
-    const segLen = (TBILISI_METEKHI_CLIFF.radius - 7) * (Math.PI * 1.35 / wallCount);
-    const wallSeg = new THREE.Mesh(G_BOX, M_TUFF_WALL);
-    wallSeg.scale.set(0.65, 1.4, segLen + 0.1);
-    wallSeg.position.set(wx, wy + 0.7, wz);
-    wallSeg.rotation.y = -angle + Math.PI / 2;
-    wallSeg.castShadow = true;
-    cliffGroup.add(wallSeg);
-
-    // Battlements / merlons every other segment
-    if (i % 2 === 0) {
-      const merlon = new THREE.Mesh(G_BOX, M_TUFF_WALL);
-      merlon.scale.set(0.7, 0.6, segLen * 0.5);
-      merlon.position.set(wx, wy + 1.7, wz);
-      merlon.rotation.y = -angle + Math.PI / 2;
-      merlon.castShadow = true;
-      cliffGroup.add(merlon);
-    }
-  }
-
-  return cliffGroup;
+  return car;
 }
 
 /**
- * 5. Metekhi Church of the Dormition (Церковь Метехи)
- * Masterpiece of 13th-century Georgian ecclesiastical architecture.
- * Features authentic cruciform plan, yellow-ochre tuff stone masonry,
- * eastern apse with carved blind arches, western portal, pitched gable terracotta roofs,
- * 12-sided drum with lancet windows and blind arcade, conical umbrella roof, and golden cross.
+ * Adds ambient cars on the bridge shoulders exactly as shown in the Google Street View photo.
  */
-function createMetekhiChurch(): THREE.Group {
+function createBridgeAmbientVehicles(): THREE.Group {
+  const group = new THREE.Group();
+  const y = TBILISI_METEKHI_BRIDGE.deckElevation;
+
+  // 1. Dark Grey SUV (Tiguan) parked on left shoulder (matching photo)
+  group.add(createBridgeCar(1893.4, y, 565, Math.PI, M_CAR_GREY, true));
+
+  // 2. Silver Sedan in middle-right lane
+  group.add(createBridgeCar(1904.5, y, 538, Math.PI, M_CAR_SILVER, false));
+
+  // 3. Blue Hatchback parked on right cobblestone shoulder
+  group.add(createBridgeCar(1906.8, y, 575, Math.PI, M_CAR_BLUE, false));
+
+  // 4. Black Crossover on right approach
+  group.add(createBridgeCar(1904.0, y, 510, Math.PI, M_CAR_GREY, true));
+
+  return group;
+}
+
+/**
+ * 3. Gorgasali Square (Мейдан) & Old Tbilisi Street Architecture.
+ * Multi-story merchant houses with authentic 3D depth, stone arcades, cafe awnings,
+ * cantilevered wooden balconies ("шушабанди"), terracotta roofs, and church dome.
+ */
+function createOldTbilisiStreet(): THREE.Group {
+  const street = new THREE.Group();
+  const baseY = TBILISI_MEIDAN.elevation; // 14.50m
+
+  // ── Gorgasali Square Cobblestone Paving ──────────────────────────────
+  const plaza = new THREE.Mesh(
+    new THREE.PlaneGeometry(TBILISI_MEIDAN.width, TBILISI_MEIDAN.length),
+    M_COBBLE,
+  );
+  plaza.rotateX(-Math.PI / 2);
+  plaza.position.set(TBILISI_MEIDAN.center.x, baseY + 0.005, TBILISI_MEIDAN.center.z);
+  plaza.receiveShadow = true;
+  street.add(plaza);
+
+  // ── Left Side Buildings (Merchant Mansions & Cafes) ──────────────────
+  const westBlocks = [
+    { x: 1878, z: 475, w: 14, d: 20, h: 11.5, stories: 3 },
+    { x: 1875, z: 450, w: 16, d: 22, h: 12.5, stories: 3 },
+    { x: 1872, z: 425, w: 18, d: 22, h: 13.0, stories: 3 },
+  ];
+
+  for (const b of westBlocks) {
+    const block = new THREE.Group();
+    block.position.set(b.x, baseY, b.z);
+
+    // Ground floor stone arcade / cafe
+    const groundH = 4.2;
+    const groundFloor = new THREE.Mesh(G_BOX, M_TUFF_WALL);
+    groundFloor.scale.set(b.w, groundH, b.d);
+    groundFloor.position.y = groundH / 2;
+    groundFloor.castShadow = true;
+    groundFloor.receiveShadow = true;
+    block.add(groundFloor);
+
+    // Striped cafe awning over the sidewalk
+    const awning = new THREE.Mesh(G_BOX, M_FLOWER_RED);
+    awning.scale.set(2.2, 0.15, b.d * 0.85);
+    awning.position.set(b.w / 2 + 1.1, groundH - 0.4, 0);
+    awning.rotation.z = 0.25;
+    awning.castShadow = true;
+    block.add(awning);
+
+    // Upper 2 stories with authentic photographic facade
+    const upperH = b.h - groundH;
+    const upper = new THREE.Mesh(G_BOX, M_HOUSE_FACADE);
+    upper.scale.set(b.w * 0.98, upperH, b.d * 0.98);
+    upper.position.set(0, groundH + upperH / 2, 0);
+    upper.castShadow = true;
+    upper.receiveShadow = true;
+    block.add(upper);
+
+    // Cantilevered wooden lace balcony ("шушабанди") jutting out toward the street
+    const balW = 2.2;
+    const balH = upperH * 0.75;
+    const balL = b.d * 0.88;
+
+    // Balcony floor slab
+    const balFloor = new THREE.Mesh(G_BOX, M_TUFF_WALL);
+    balFloor.scale.set(balW, 0.25, balL);
+    balFloor.position.set(b.w / 2 + balW / 2, groundH + 0.12, 0);
+    balFloor.castShadow = true;
+    block.add(balFloor);
+
+    // Street-facing carved turquoise lace panel
+    const balFace = new THREE.Mesh(
+      new THREE.PlaneGeometry(balL, balH),
+      M_BALCONY_FACADE,
+    );
+    balFace.position.set(b.w / 2 + balW, groundH + balH / 2 + 0.2, 0);
+    balFace.rotation.y = Math.PI / 2;
+    balFace.castShadow = true;
+    block.add(balFace);
+
+    // Support timber corbels underneath
+    for (const corbelZ of [-balL * 0.35, 0, balL * 0.35]) {
+      const corbel = new THREE.Mesh(G_BOX, M_TREE_TRUNK);
+      corbel.scale.set(balW, 0.3, 0.35);
+      corbel.position.set(b.w / 2 + balW / 2, groundH - 0.35, corbelZ);
+      corbel.rotation.z = -0.35;
+      block.add(corbel);
+    }
+
+    // Pitched terracotta tile roof with overhanging eaves
+    const roofOverhang = 0.8;
+    const roofW = b.w + roofOverhang * 2;
+    const roofD = b.d + roofOverhang * 2;
+    for (const [sign, rot] of [[-1, 0.48], [1, -0.48]]) {
+      const roofSlope = new THREE.Mesh(G_BOX, M_ROOF_TILES);
+      roofSlope.scale.set(roofW * 0.54, 0.28, roofD);
+      roofSlope.position.set(sign * (roofW * 0.25), b.h + 1.2, 0);
+      roofSlope.rotation.z = rot;
+      roofSlope.castShadow = true;
+      block.add(roofSlope);
+    }
+
+    street.add(block);
+  }
+
+  // ── Right Side Buildings (Old Town Riverfront Quarter & Church) ──────
+  const eastBlocks = [
+    { x: 1922, z: 475, w: 14, d: 20, h: 11.5 },
+    { x: 1925, z: 450, w: 16, d: 22, h: 12.0 },
+  ];
+
+  for (const b of eastBlocks) {
+    const block = new THREE.Group();
+    block.position.set(b.x, baseY, b.z);
+
+    const groundFloor = new THREE.Mesh(G_BOX, M_TUFF_WALL);
+    groundFloor.scale.set(b.w, 4.0, b.d);
+    groundFloor.position.y = 2.0;
+    groundFloor.castShadow = true;
+    block.add(groundFloor);
+
+    const upperH = b.h - 4.0;
+    const upper = new THREE.Mesh(G_BOX, M_HOUSE_FACADE);
+    upper.scale.set(b.w * 0.98, upperH, b.d * 0.98);
+    upper.position.set(0, 4.0 + upperH / 2, 0);
+    upper.castShadow = true;
+    block.add(upper);
+
+    // Balcony facing the street
+    const balW = 2.0;
+    const balH = upperH * 0.72;
+    const balL = b.d * 0.85;
+    const balFace = new THREE.Mesh(
+      new THREE.PlaneGeometry(balL, balH),
+      M_BALCONY_FACADE,
+    );
+    balFace.position.set(-b.w / 2 - balW, 4.0 + balH / 2 + 0.2, 0);
+    balFace.rotation.y = -Math.PI / 2;
+    balFace.castShadow = true;
+    block.add(balFace);
+
+    // Roof
+    for (const [sign, rot] of [[-1, 0.48], [1, -0.48]]) {
+      const roofSlope = new THREE.Mesh(G_BOX, M_ROOF_TILES);
+      roofSlope.scale.set(b.w * 0.54, 0.28, b.d + 1.6);
+      roofSlope.position.set(sign * (b.w * 0.25), b.h + 1.2, 0);
+      roofSlope.rotation.z = rot;
+      roofSlope.castShadow = true;
+      block.add(roofSlope);
+    }
+
+    street.add(block);
+  }
+
+  // ── Traditional Georgian Church Dome (St. George / Sioni in Meidan) ──
+  // Nestled among the rooftops on the right, exactly as visible in the photo
+  const churchGroup = new THREE.Group();
+  churchGroup.position.set(1930, baseY, 425);
+
+  const churchBase = new THREE.Mesh(G_BOX, M_TUFF_WALL);
+  churchBase.scale.set(16, 12, 18);
+  churchBase.position.y = 6.0;
+  churchBase.castShadow = true;
+  churchGroup.add(churchBase);
+
+  // Cylindrical drum with lancet windows
+  const drum = new THREE.Mesh(
+    new THREE.CylinderGeometry(3.6, 3.6, 6.2, 16),
+    M_CHURCH_DRUM,
+  );
+  drum.position.y = 15.1;
+  drum.castShadow = true;
+  churchGroup.add(drum);
+
+  // Conical stone umbrella roof
+  const cone = new THREE.Mesh(
+    new THREE.ConeGeometry(4.2, 6.5, 24),
+    M_CHURCH_ROOF,
+  );
+  cone.position.y = 21.4;
+  cone.castShadow = true;
+  churchGroup.add(cone);
+
+  // Golden cross
+  const crossV = new THREE.Mesh(G_BOX, M_GOLD_CROSS);
+  crossV.scale.set(0.18, 2.2, 0.18);
+  crossV.position.y = 25.4;
+  churchGroup.add(crossV);
+
+  street.add(churchGroup);
+
+  return street;
+}
+
+/**
+ * 4. Narikala Mountain Ridge & Fortress (Крепость Нарикала)
+ * Towering green Caucasian mountain rising behind Old Tbilisi with:
+ * - Ancient stone fortress curtain walls and cylindrical watchtowers ascending the ridge.
+ * - Monumental 20-meter silver Kartlis Deda (Mother of Georgia) statue on the crest.
+ * - Dense green Caucasian pine and cypress trees carpeting the slope.
+ */
+function createNarikalaRidge(): THREE.Group {
+  const ridge = new THREE.Group();
+
+  // ── Narikala Fortress Ancient Stone Walls & Towers ──────────────────
+  // Fortification segments winding up the mountain from z = 430 to z = 330
+  const wallWaypoints = [
+    { x: 1845, z: 420, y: 32.0, w: 2.2, h: 7.5, len: 26, yaw: -0.35 },
+    { x: 1835, z: 395, y: 48.0, w: 2.2, h: 8.5, len: 28, yaw: -0.42 },
+    { x: 1830, z: 365, y: 64.0, w: 2.4, h: 9.0, len: 32, yaw: -0.25 },
+    { x: 1838, z: 335, y: 80.0, w: 2.5, h: 9.5, len: 34, yaw: 0.15 },
+    { x: 1865, z: 325, y: 86.0, w: 2.8, h: 9.0, len: 30, yaw: 0.85 },
+  ];
+
+  for (const wp of wallWaypoints) {
+    const wallSeg = new THREE.Mesh(G_BOX, M_TUFF_WALL);
+    wallSeg.scale.set(wp.w, wp.h, wp.len);
+    wallSeg.position.set(wp.x, wp.y + wp.h / 2, wp.z);
+    wallSeg.rotation.y = wp.yaw;
+    wallSeg.castShadow = true;
+    wallSeg.receiveShadow = true;
+    ridge.add(wallSeg);
+
+    // Crenellated battlements along wall top
+    const merlonCount = Math.floor(wp.len / 2.2);
+    for (let m = 0; m < merlonCount; m += 2) {
+      const merlon = new THREE.Mesh(G_BOX, M_TUFF_WALL);
+      merlon.scale.set(wp.w * 1.1, 0.9, 1.2);
+      const frac = (m / merlonCount) - 0.5;
+      merlon.position.set(
+        wp.x + Math.sin(wp.yaw) * (frac * wp.len),
+        wp.y + wp.h + 0.45,
+        wp.z + Math.cos(wp.yaw) * (frac * wp.len),
+      );
+      merlon.rotation.y = wp.yaw;
+      merlon.castShadow = true;
+      ridge.add(merlon);
+    }
+  }
+
+  // Cylindrical Stone Bastion Towers
+  const towers = [
+    { x: 1850, z: 410, y: 35.0, r: 4.2, h: 14.0 },
+    { x: 1832, z: 380, y: 55.0, r: 4.8, h: 15.0 },
+    { x: 1828, z: 350, y: 72.0, r: 5.2, h: 16.0 },
+    { x: 1852, z: 328, y: 85.0, r: 5.5, h: 16.5 },
+  ];
+
+  for (const tow of towers) {
+    const towerMesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(tow.r * 0.85, tow.r, tow.h, 16),
+      M_TUFF_WALL,
+    );
+    towerMesh.position.set(tow.x, tow.y + tow.h / 2, tow.z);
+    towerMesh.castShadow = true;
+    towerMesh.receiveShadow = true;
+    ridge.add(towerMesh);
+
+    // Conical timber roof
+    const roof = new THREE.Mesh(
+      new THREE.ConeGeometry(tow.r * 1.05, 4.5, 16),
+      M_ROOF_TILES,
+    );
+    roof.position.set(tow.x, tow.y + tow.h + 2.25, tow.z);
+    roof.castShadow = true;
+    ridge.add(roof);
+  }
+
+  // ── Kartlis Deda (Мать Картли - Mother of Georgia) ──────────────────
+  // 20-meter monumental silver/aluminum statue standing on the mountain peak
+  const statue = new THREE.Group();
+  statue.position.set(TBILISI_NARIKALA.statuePos.x, TBILISI_NARIKALA.statuePos.y, TBILISI_NARIKALA.statuePos.z);
+
+  // Basalt foundation plinth
+  const plinth = new THREE.Mesh(G_BOX, M_DARK_BASALT);
+  plinth.scale.set(6.5, 3.5, 6.5);
+  plinth.position.y = 1.75;
+  statue.add(plinth);
+
+  // Flowing silver Georgian robe (lower volume)
+  const robe = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.4, 3.6, 11.0, 16),
+    M_SILVER_STATUE,
+  );
+  robe.position.y = 3.5 + 5.5;
+  robe.castShadow = true;
+  statue.add(robe);
+
+  // Torso
+  const torso = new THREE.Mesh(G_BOX, M_SILVER_STATUE);
+  torso.scale.set(4.2, 5.0, 2.5);
+  torso.position.y = 14.5;
+  torso.castShadow = true;
+  statue.add(torso);
+
+  // Head and traditional Georgian headdress
+  const head = new THREE.Mesh(G_BOX, M_SILVER_STATUE);
+  head.scale.set(2.2, 2.6, 2.2);
+  head.position.y = 18.0;
+  head.castShadow = true;
+  statue.add(head);
+
+  // Left arm holding bowl of wine (for friends)
+  const armL = new THREE.Mesh(G_BOX, M_SILVER_STATUE);
+  armL.scale.set(3.5, 0.7, 0.7);
+  armL.position.set(-2.8, 14.2, 0.8);
+  armL.rotation.z = -0.35;
+  statue.add(armL);
+
+  const wineBowl = new THREE.Mesh(G_CYL, M_SILVER_STATUE);
+  wineBowl.scale.set(1.4, 0.6, 1.4);
+  wineBowl.position.set(-4.2, 14.8, 0.8);
+  statue.add(wineBowl);
+
+  // Right arm holding sword (for enemies)
+  const armR = new THREE.Mesh(G_BOX, M_SILVER_STATUE);
+  armR.scale.set(3.5, 0.7, 0.7);
+  armR.position.set(2.8, 13.5, 0.6);
+  armR.rotation.z = 0.45;
+  statue.add(armR);
+
+  const sword = new THREE.Mesh(G_BOX, M_SILVER_STATUE);
+  sword.scale.set(0.35, 7.5, 0.15);
+  sword.position.set(4.2, 15.0, 0.6);
+  statue.add(sword);
+
+  ridge.add(statue);
+
+  // ── Dense Caucasian Mountain Pine & Cypress Forest ─────────────────
+  const mountainTrees = [
+    { x: 1860, z: 410, y: 36.0, h: 13, type: 'cypress' },
+    { x: 1875, z: 390, y: 46.0, h: 14, type: 'plane' },
+    { x: 1840, z: 375, y: 58.0, h: 12, type: 'cypress' },
+    { x: 1885, z: 365, y: 65.0, h: 15, type: 'plane' },
+    { x: 1855, z: 350, y: 74.0, h: 13, type: 'cypress' },
+    { x: 1890, z: 340, y: 80.0, h: 14, type: 'plane' },
+    { x: 1835, z: 330, y: 82.0, h: 12, type: 'cypress' },
+    { x: 1880, z: 320, y: 86.0, h: 11, type: 'cypress' },
+    { x: 1815, z: 360, y: 62.0, h: 13, type: 'plane' },
+    { x: 1910, z: 370, y: 60.0, h: 14, type: 'cypress' },
+  ];
+
+  for (const t of mountainTrees) {
+    if (t.type === 'cypress') ridge.add(createCypressTree(t.x, t.y, t.z, t.h));
+    else ridge.add(createPlaneTree(t.x, t.y, t.z, t.h));
+  }
+
+  return ridge;
+}
+
+/**
+ * 5. Rike-Narikala Aerial Cable Car (Канатная дорога)
+ * High-tension steel cables stretching across the sky from Rike Park over the river
+ * up to Narikala mountain summit, with modern glass observation cabins suspended in mid-air.
+ */
+function createAerialCableCar(): THREE.Group {
+  const cableGroup = new THREE.Group();
+
+  const startPt = new THREE.Vector3(1945, 22.0, 580); // Rike Park lower station side
+  const endPt = new THREE.Vector3(1845, 88.0, 330);   // Narikala summit station
+
+  const dir = new THREE.Vector3().subVectors(endPt, startPt);
+  const totalLen = dir.length();
+  const midPoint = new THREE.Vector3().addVectors(startPt, endPt).multiplyScalar(0.5);
+
+  // Two parallel steel cables
+  for (const sideOffset of [-0.65, 0.65]) {
+    const cable = new THREE.Mesh(G_CYL, M_STEEL_STRUCTURE);
+    cable.scale.set(0.06, totalLen, 0.06);
+    cable.position.copy(midPoint);
+    cable.position.x += sideOffset;
+
+    // Orient cylinder along the cable vector
+    cable.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    cableGroup.add(cable);
+  }
+
+  // 3 Observation Cable Car Cabins (Gondolas) suspended along the cable in the sky
+  const cabinFractions = [0.28, 0.58, 0.85];
+  const cabinColors = [M_CAR_BLUE, M_FLOWER_RED, M_FLOWER_YELLOW];
+
+  for (let i = 0; i < cabinFractions.length; i++) {
+    const t = cabinFractions[i];
+    const pos = new THREE.Vector3().lerpVectors(startPt, endPt, t);
+    pos.x += i % 2 === 0 ? -0.65 : 0.65;
+
+    const cabinGroup = new THREE.Group();
+    cabinGroup.position.copy(pos);
+
+    // Hanger arm connecting cabin to cable
+    const hanger = new THREE.Mesh(G_BOX, M_STEEL_STRUCTURE);
+    hanger.scale.set(0.12, 2.2, 0.12);
+    hanger.position.y = -1.1;
+    cabinGroup.add(hanger);
+
+    // Aerodynamic glass observation cabin
+    const cabinBody = new THREE.Mesh(G_BOX, cabinColors[i]);
+    cabinBody.scale.set(2.4, 2.2, 2.8);
+    cabinBody.position.y = -3.2;
+    cabinBody.castShadow = true;
+    cabinGroup.add(cabinBody);
+
+    // Panoramic panoramic glass windows
+    const glass = new THREE.Mesh(G_BOX, M_GLASS_TINTED);
+    glass.scale.set(2.45, 1.4, 2.6);
+    glass.position.y = -3.1;
+    cabinGroup.add(glass);
+
+    cableGroup.add(cabinGroup);
+  }
+
+  return cableGroup;
+}
+
+/**
+ * 6. Metekhi Cliff & Church (East Riverbank View)
+ * Perched atop the dramatic cliff on the east side of the river gorge.
+ */
+function createMetekhiCliffAndChurch(): THREE.Group {
+  const group = new THREE.Group();
+  const center = TBILISI_METEKHI_CLIFF.center;
+  const topY = TBILISI_METEKHI_CLIFF.topElevation;
+
+  // Layered rock cliff faces
+  const cliffSteps = [
+    { dx: -18, dz: 6, w: 24, h: 22, d: 22, yaw: 0.2 },
+    { dx: -10, dz: -12, w: 26, h: 24, d: 24, yaw: -0.15 },
+    { dx: -20, dz: -4, w: 18, h: 20, d: 24, yaw: 0.05 },
+    { dx: -4, dz: 18, w: 22, h: 18, d: 20, yaw: 0.35 },
+  ];
+
+  for (const step of cliffSteps) {
+    const rock = new THREE.Mesh(G_BOX, M_CLIFF_ROCK);
+    rock.scale.set(step.w, step.h, step.d);
+    rock.position.set(center.x + step.dx, 3.5 + step.h / 2, center.z + step.dz);
+    rock.rotation.y = step.yaw;
+    rock.castShadow = true;
+    rock.receiveShadow = true;
+    group.add(rock);
+  }
+
+  // Fortress parapet wall along cliff edge
+  const wallCount = 20;
+  for (let i = 0; i < wallCount; i++) {
+    const angle = (i / wallCount) * Math.PI * 1.2 + Math.PI * 0.8;
+    const wx = center.x + Math.cos(angle) * (TBILISI_METEKHI_CLIFF.radius - 6);
+    const wz = center.z + Math.sin(angle) * (TBILISI_METEKHI_CLIFF.radius - 6);
+    const seg = new THREE.Mesh(G_BOX, M_TUFF_WALL);
+    seg.scale.set(0.65, 1.4, 4.2);
+    seg.position.set(wx, topY + 0.7, wz);
+    seg.rotation.y = -angle + Math.PI / 2;
+    seg.castShadow = true;
+    group.add(seg);
+  }
+
+  // ── Metekhi Church of the Dormition ─────────────────────────────────
   const church = new THREE.Group();
   church.position.set(TBILISI_METEKHI_CHURCH.pos.x, TBILISI_METEKHI_CHURCH.pos.y, TBILISI_METEKHI_CHURCH.pos.z);
   church.rotation.y = TBILISI_METEKHI_CHURCH.yaw;
 
-  // ── Stepped Foundation Socle ────────────────────────────────────────
+  // Stepped socle
   const socle = new THREE.Mesh(G_BOX, M_DARK_BASALT);
   socle.scale.set(22, 1.2, 26);
   socle.position.y = 0.6;
   socle.castShadow = true;
   church.add(socle);
 
-  // ── Western Nave (Central Long Hall) ─────────────────────────────────
+  // Nave & transepts
   const nave = new THREE.Mesh(G_BOX, M_TUFF_WALL);
   nave.scale.set(13, 10.5, 23);
   nave.position.y = 5.85;
   nave.castShadow = true;
-  nave.receiveShadow = true;
   church.add(nave);
 
-  // ── North & South Transepts (Cross Arms) ─────────────────────────────
   const transept = new THREE.Mesh(G_BOX, M_TUFF_WALL);
   transept.scale.set(19, 10.0, 11);
   transept.position.y = 5.6;
   transept.castShadow = true;
-  transept.receiveShadow = true;
   church.add(transept);
 
-  // ── Eastern Semicircular Apse with Carved Georgian Relief Arches ────
+  // Eastern Apse
   const apse = new THREE.Mesh(G_CYL, M_CHURCH_FACADE);
   apse.scale.set(9.2, 9.8, 6.5);
   apse.position.set(0, 5.5, -11.5);
   apse.castShadow = true;
   church.add(apse);
 
-  // Apse half-conical roof
-  const apseRoof = new THREE.Mesh(G_CONE, M_ROOF_TILES);
-  apseRoof.scale.set(9.6, 3.8, 6.8);
-  apseRoof.position.set(0, 12.3, -11.5);
-  apseRoof.castShadow = true;
-  church.add(apseRoof);
-
-  // ── Western & Southern Arched Entrance Portals ──────────────────────
-  // Western main entrance portal
-  const westPortal = new THREE.Mesh(G_BOX, M_TUFF_WALL);
-  westPortal.scale.set(6.2, 5.5, 3.2);
-  westPortal.position.set(0, 2.75, 12.8);
-  westPortal.castShadow = true;
-  church.add(westPortal);
-
-  const westPortalArch = new THREE.Mesh(G_CYL, M_CHURCH_FACADE);
-  westPortalArch.scale.set(4.0, 1.8, 4.0);
-  westPortalArch.position.set(0, 5.5, 12.8);
-  westPortalArch.rotation.x = Math.PI / 2;
-  church.add(westPortalArch);
-
-  // Southern portal porch
-  const southPortal = new THREE.Mesh(G_BOX, M_TUFF_WALL);
-  southPortal.scale.set(3.0, 5.2, 5.0);
-  southPortal.position.set(10.2, 2.6, 0);
-  southPortal.castShadow = true;
-  church.add(southPortal);
-
-  // ── Gable Pitched Terracotta Roofs with Stone Eaves Cornices ────────
-  // Nave North/South sloping roof wings
-  for (const [sign, rot] of [[-1, 0.52], [1, -0.52]]) {
-    const roofWing = new THREE.Mesh(G_BOX, M_ROOF_TILES);
-    roofWing.scale.set(7.2, 0.35, 23.5);
-    roofWing.position.set(sign * 3.4, 12.2, 0);
-    roofWing.rotation.z = rot;
-    roofWing.castShadow = true;
-    church.add(roofWing);
-  }
-
-  // Transept East/West sloping roof wings
-  for (const [sign, rot] of [[-1, -0.52], [1, 0.52]]) {
-    const roofWing = new THREE.Mesh(G_BOX, M_ROOF_TILES);
-    roofWing.scale.set(19.5, 0.35, 6.2);
-    roofWing.position.set(0, 11.8, sign * 2.8);
-    roofWing.rotation.x = rot;
-    roofWing.castShadow = true;
-    church.add(roofWing);
-  }
-
-  // ── Square Pediment Crossing Base ───────────────────────────────────
-  const crossingBase = new THREE.Mesh(G_BOX, M_TUFF_WALL);
-  crossingBase.scale.set(8.2, 2.4, 8.2);
-  crossingBase.position.y = 13.0;
-  crossingBase.castShadow = true;
-  church.add(crossingBase);
-
-  // ── 12-Sided Cylindrical Drum with Lancet Windows & Blind Arches ────
-  // Textured with authentic photography of Metekhi Church's drum
+  // 12-sided drum
   const drum = new THREE.Mesh(
     new THREE.CylinderGeometry(3.6, 3.6, 6.8, 12),
     M_CHURCH_DRUM,
   );
   drum.position.y = 17.6;
   drum.castShadow = true;
-  drum.receiveShadow = true;
   church.add(drum);
 
-  // Drum stone cornice frieze
-  const drumEaves = new THREE.Mesh(
-    new THREE.CylinderGeometry(4.1, 3.7, 0.6, 24),
-    M_TUFF_WALL,
-  );
-  drumEaves.position.y = 21.3;
-  drumEaves.castShadow = true;
-  church.add(drumEaves);
-
-  // ── Characteristic Georgian Conical Stone Umbrella Tent Roof ───────
-  // Textured with authentic conical stone roof tiles
-  const coneRoof = new THREE.Mesh(
+  // Conical stone tent roof
+  const cone = new THREE.Mesh(
     new THREE.ConeGeometry(4.2, 7.2, 24),
     M_CHURCH_ROOF,
   );
-  coneRoof.position.y = 25.2;
-  coneRoof.castShadow = true;
-  church.add(coneRoof);
+  cone.position.y = 25.2;
+  cone.castShadow = true;
+  church.add(cone);
 
-  // ── Detailed Golden Cross at Apex ───────────────────────────────────
-  const crossGroup = new THREE.Group();
-  crossGroup.position.y = 29.6;
-
-  // Vertical staff
+  // Golden cross
   const crossV = new THREE.Mesh(G_BOX, M_GOLD_CROSS);
   crossV.scale.set(0.18, 2.6, 0.18);
-  crossGroup.add(crossV);
+  crossV.position.y = 29.6;
+  church.add(crossV);
 
-  // Horizontal main bar
   const crossH = new THREE.Mesh(G_BOX, M_GOLD_CROSS);
   crossH.scale.set(1.5, 0.18, 0.18);
-  crossH.position.y = 0.45;
-  crossGroup.add(crossH);
+  crossH.position.y = 30.0;
+  church.add(crossH);
 
-  // Upper bar (Orthodox cross)
-  const crossU = new THREE.Mesh(G_BOX, M_GOLD_CROSS);
-  crossU.scale.set(0.65, 0.14, 0.14);
-  crossU.position.y = 0.95;
-  crossGroup.add(crossU);
+  group.add(church);
 
-  // Lower slanted footrest
-  const crossF = new THREE.Mesh(G_BOX, M_GOLD_CROSS);
-  crossF.scale.set(0.7, 0.14, 0.14);
-  crossF.position.y = -0.55;
-  crossF.rotation.z = 0.35;
-  crossGroup.add(crossF);
-
-  church.add(crossGroup);
-
-  return church;
-}
-
-/**
- * 6. King Vakhtang Gorgasali Monument (Памятник Вахтангу Горгасали)
- * The legendary equestrian monument on the cliff edge overlook.
- * Comprises a massive stepped dark basalt plinth, 3D bronze horse and king volume,
- * and high-resolution photographic cutout star-planes for authentic photographic likeness.
- */
-function createGorgasaliMonument(): THREE.Group {
+  // ── King Vakhtang Gorgasali Equestrian Monument ────────────────────
   const monument = new THREE.Group();
   monument.position.set(TBILISI_GORGASALI_STATUE.pos.x, TBILISI_GORGASALI_STATUE.pos.y, TBILISI_GORGASALI_STATUE.pos.z);
   monument.rotation.y = TBILISI_GORGASALI_STATUE.yaw;
 
-  // ── Stepped Dark Basalt Pedestal ────────────────────────────────────
-  const step1 = new THREE.Mesh(G_BOX, M_DARK_BASALT);
-  step1.scale.set(6.4, 0.7, 7.8);
-  step1.position.y = 0.35;
-  step1.castShadow = true;
-  monument.add(step1);
+  const ped = new THREE.Mesh(G_BOX, M_DARK_BASALT);
+  ped.scale.set(4.2, 4.0, 5.6);
+  ped.position.y = 2.0;
+  ped.castShadow = true;
+  monument.add(ped);
 
-  const step2 = new THREE.Mesh(G_BOX, M_DARK_BASALT);
-  step2.scale.set(5.0, 0.6, 6.4);
-  step2.position.y = 0.95;
-  step2.castShadow = true;
-  monument.add(step2);
-
-  // Main vertical plinth with molded edges
-  const mainPlinth = new THREE.Mesh(G_BOX, M_DARK_BASALT);
-  mainPlinth.scale.set(3.8, 3.6, 5.4);
-  mainPlinth.position.y = 3.05;
-  mainPlinth.castShadow = true;
-  mainPlinth.receiveShadow = true;
-  monument.add(mainPlinth);
-
-  // Plinth upper cornice
-  const cornice = new THREE.Mesh(G_BOX, M_DARK_BASALT);
-  cornice.scale.set(4.1, 0.4, 5.7);
-  cornice.position.y = 5.05;
-  cornice.castShadow = true;
-  monument.add(cornice);
-
-  // Memorial plaque on plinth front
-  const plaque = new THREE.Mesh(G_BOX, M_GOLD_CROSS);
-  plaque.scale.set(2.2, 1.2, 0.08);
-  plaque.position.set(0, 3.4, 2.75);
-  monument.add(plaque);
-
-  // ── High-Resolution Photographic Cutout Billboard Plates ───────────
-  // Cross-plane (0 deg and 90 deg) planes mapped with transparent PNG/WebP cutout
-  const cardW = 6.2;
-  const cardH = 6.5;
-  const cardY = 5.25 + cardH / 2;
-
-  // Plane along horse spine
-  const cardZ = new THREE.Mesh(
-    new THREE.PlaneGeometry(cardW, cardH),
-    M_GORGASALI_CUTOUT,
-  );
-  cardZ.position.set(0, cardY, 0);
+  const cardZ = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 6.5), M_GORGASALI_CUTOUT);
+  cardZ.position.set(0, 7.25, 0);
   cardZ.rotation.y = Math.PI / 2;
   cardZ.castShadow = true;
   monument.add(cardZ);
 
-  // Diagonal card 1
-  const cardDiag1 = new THREE.Mesh(
-    new THREE.PlaneGeometry(cardW * 0.95, cardH),
-    M_GORGASALI_CUTOUT,
-  );
-  cardDiag1.position.set(0, cardY, 0);
-  cardDiag1.rotation.y = Math.PI * 0.25;
-  monument.add(cardDiag1);
+  const cardX = new THREE.Mesh(new THREE.PlaneGeometry(5.8, 6.5), M_GORGASALI_CUTOUT);
+  cardX.position.set(0, 7.25, 0);
+  cardX.castShadow = true;
+  monument.add(cardX);
 
-  // Diagonal card 2
-  const cardDiag2 = new THREE.Mesh(
-    new THREE.PlaneGeometry(cardW * 0.95, cardH),
-    M_GORGASALI_CUTOUT,
-  );
-  cardDiag2.position.set(0, cardY, 0);
-  cardDiag2.rotation.y = -Math.PI * 0.25;
-  monument.add(cardDiag2);
+  const horse = new THREE.Mesh(G_BOX, M_BRONZE_STATUE);
+  horse.scale.set(1.4, 2.2, 3.6);
+  horse.position.set(0, 5.8, 0);
+  horse.castShadow = true;
+  monument.add(horse);
 
-  // ── Solid 3D Patinated Bronze Volume Core ───────────────────────────
-  // Gives real directional lighting and solid shadow casting
-  const bronzeCore = new THREE.Group();
-  bronzeCore.position.y = 5.25;
+  group.add(monument);
 
-  // Horse body
-  const horseBody = new THREE.Mesh(G_BOX, M_BRONZE_STATUE);
-  horseBody.scale.set(1.4, 1.6, 3.4);
-  horseBody.position.set(0, 1.8, 0.1);
-  horseBody.castShadow = true;
-  bronzeCore.add(horseBody);
-
-  // Horse neck & head
-  const horseNeck = new THREE.Mesh(G_BOX, M_BRONZE_STATUE);
-  horseNeck.scale.set(0.9, 1.8, 1.3);
-  horseNeck.position.set(0, 3.1, 1.5);
-  horseNeck.rotation.x = 0.45;
-  horseNeck.castShadow = true;
-  bronzeCore.add(horseNeck);
-
-  // 4 Legs
-  for (const [lx, lz] of [[-0.55, 1.3], [0.55, 1.3], [-0.55, -1.2], [0.55, -1.2]]) {
-    const leg = new THREE.Mesh(G_CYL, M_BRONZE_STATUE);
-    leg.scale.set(0.28, 2.2, 0.28);
-    leg.position.set(lx, 0.9, lz);
-    leg.castShadow = true;
-    bronzeCore.add(leg);
-  }
-
-  // King Vakhtang torso & raised arm
-  const kingTorso = new THREE.Mesh(G_BOX, M_BRONZE_STATUE);
-  kingTorso.scale.set(1.2, 1.8, 0.9);
-  kingTorso.position.set(0, 3.5, 0.1);
-  kingTorso.castShadow = true;
-  bronzeCore.add(kingTorso);
-
-  const kingHead = new THREE.Mesh(G_BOX, M_BRONZE_STATUE);
-  kingHead.scale.set(0.8, 0.9, 0.8);
-  kingHead.position.set(0, 4.7, 0.1);
-  kingHead.castShadow = true;
-  bronzeCore.add(kingHead);
-
-  const crown = new THREE.Mesh(G_CYL, M_GOLD_CROSS);
-  crown.scale.set(0.85, 0.35, 0.85);
-  crown.position.set(0, 5.25, 0.1);
-  bronzeCore.add(crown);
-
-  const arm = new THREE.Mesh(G_BOX, M_BRONZE_STATUE);
-  arm.scale.set(1.8, 0.32, 0.32);
-  arm.position.set(1.0, 4.1, 0.6);
-  arm.rotation.y = 0.4;
-  arm.rotation.z = 0.3;
-  bronzeCore.add(arm);
-
-  monument.add(bronzeCore);
-
-  return monument;
+  return group;
 }
 
 /**
- * 7. Old Tbilisi Houses with Carved Wooden Balconies ("Шушабанди")
- * Authentic Georgian vernacular architecture: solid masonry brick/stone basement,
- * multi-story painted house facade, wide cantilevered wooden balconies with carved
- * turquoise/teal lace fretwork, wooden columns, and terracotta hipped roofs.
+ * 7. Europe Square (South Approach Roundabout & Plazas)
  */
-function createOldTbilisiHouse(
-  x: number, y: number, z: number,
-  w: number, d: number, h: number, yaw: number,
-  hasTurquoiseBalcony = true,
-): THREE.Group {
-  const house = new THREE.Group();
-  house.position.set(x, y, z);
-  house.rotation.y = yaw;
+function createEuropeSquare(): THREE.Group {
+  const group = new THREE.Group();
+  const rb = TBILISI_ROUNDABOUT;
+  const y = rb.roadElevation;
 
-  // 1. Masonry Basement / Lower Floor
-  const baseH = h * 0.4;
-  const basement = new THREE.Mesh(G_BOX, M_TUFF_WALL);
-  basement.scale.set(w, baseH, d);
-  basement.position.y = baseH / 2;
-  basement.castShadow = true;
-  basement.receiveShadow = true;
-  house.add(basement);
+  // Asphalt roundabout road ring
+  const roadGeom = new THREE.RingGeometry(rb.innerRadius, rb.outerRadius, 64);
+  roadGeom.rotateX(-Math.PI / 2);
+  const roadMesh = new THREE.Mesh(roadGeom, M_ASPHALT);
+  roadMesh.position.set(rb.center.x, y + 0.005, rb.center.z);
+  roadMesh.receiveShadow = true;
+  group.add(roadMesh);
 
-  // 2. Upper Living Floors (Photographic Georgian House Facade)
-  const upperH = h * 0.6;
-  const upperBody = new THREE.Mesh(G_BOX, M_HOUSE_FACADE);
-  upperBody.scale.set(w * 0.98, upperH, d * 0.98);
-  upperBody.position.y = baseH + upperH / 2;
-  upperBody.castShadow = true;
-  upperBody.receiveShadow = true;
-  house.add(upperBody);
+  // Central park island lawn
+  const lawnGeom = new THREE.CircleGeometry(rb.innerRadius - 0.2, 48);
+  lawnGeom.rotateX(-Math.PI / 2);
+  const lawn = new THREE.Mesh(lawnGeom, M_LAWN_GRASS);
+  lawn.position.set(rb.center.x, y + 0.02, rb.center.z);
+  lawn.receiveShadow = true;
+  group.add(lawn);
 
-  // 3. Cantilevered Carved Wooden Balcony ("Шушабанди")
-  if (hasTurquoiseBalcony) {
-    const balW = w * 0.88;
-    const balH = upperH * 0.72;
-    const balD = 2.0;
+  // Circular flower beds
+  const fRing = new THREE.RingGeometry(5.0, 8.5, 36);
+  fRing.rotateX(-Math.PI / 2);
+  const f1 = new THREE.Mesh(fRing, M_FLOWER_RED);
+  f1.position.set(rb.center.x, y + 0.03, rb.center.z);
+  group.add(f1);
 
-    // Balcony floor extension
-    const balFloor = new THREE.Mesh(G_BOX, M_TUFF_WALL);
-    balFloor.scale.set(balW, 0.25, balD);
-    balFloor.position.set(0, baseH + 0.12, d / 2 + balD / 2);
-    balFloor.castShadow = true;
-    house.add(balFloor);
+  // Central commemorative column monument
+  const colBase = new THREE.Mesh(G_CYL, M_DARK_BASALT);
+  colBase.scale.set(3.8, 0.8, 3.8);
+  colBase.position.set(rb.center.x, y + 0.4, rb.center.z);
+  colBase.castShadow = true;
+  group.add(colBase);
 
-    // Front carved lace wooden panel
-    const balFront = new THREE.Mesh(
-      new THREE.PlaneGeometry(balW, balH),
-      M_BALCONY_FACADE,
-    );
-    balFront.position.set(0, baseH + balH / 2 + 0.2, d / 2 + balD);
-    balFront.castShadow = true;
-    house.add(balFront);
+  const column = new THREE.Mesh(G_CYL, M_TUFF_WALL);
+  column.scale.set(1.2, 8.5, 1.2);
+  column.position.set(rb.center.x, y + 4.65, rb.center.z);
+  column.castShadow = true;
+  group.add(column);
 
-    // Left and right side panels
-    for (const side of [-1, 1]) {
-      const balSide = new THREE.Mesh(
-        new THREE.PlaneGeometry(balD, balH),
-        M_BALCONY_FACADE,
-      );
-      balSide.position.set(side * (balW / 2), baseH + balH / 2 + 0.2, d / 2 + balD / 2);
-      balSide.rotation.y = side * Math.PI / 2;
-      house.add(balSide);
+  const star = new THREE.Mesh(G_BOX, M_GOLD_CROSS);
+  star.scale.set(0.4, 1.6, 0.4);
+  star.position.set(rb.center.x, y + 9.6, rb.center.z);
+  group.add(star);
 
-      // Wooden support corbel brackets underneath
-      const corbel = new THREE.Mesh(G_BOX, M_TREE_TRUNK);
-      corbel.scale.set(0.25, 1.2, balD);
-      corbel.position.set(side * (balW / 2 - 0.3), baseH - 0.5, d / 2 + balD / 2);
-      corbel.rotation.x = 0.35;
-      house.add(corbel);
-    }
-  }
-
-  // 4. Hipped Overhanging Roof with Terracotta Barrel Tiles
-  const roofOverhang = 0.8;
-  const roofW = w + roofOverhang * 2;
-  const roofD = d + roofOverhang * 2 + (hasTurquoiseBalcony ? 1.8 : 0);
-  const roofH = 2.2;
-
-  // Sloping roof geometry using four pitched segments
-  for (const [sign, rot] of [[-1, 0.48], [1, -0.48]]) {
-    const roofSlope = new THREE.Mesh(G_BOX, M_ROOF_TILES);
-    roofSlope.scale.set(roofW * 0.54, 0.25, roofD);
-    roofSlope.position.set(sign * (roofW * 0.25), h + roofH * 0.45, (hasTurquoiseBalcony ? 0.9 : 0));
-    roofSlope.rotation.z = rot;
-    roofSlope.castShadow = true;
-    house.add(roofSlope);
-  }
-
-  return house;
+  return group;
 }
 
 /**
- * 8. Old Tbilisi Traditional Quarters
- * Houses placed along the Metekhi cliffside, Meidan square, and Wine Ascent.
- */
-function createOldTbilisiQuarters(): THREE.Group {
-  const quarters = new THREE.Group();
-
-  const houses = [
-    // Metekhi Cliffside (promontory overlooking river)
-    { x: 1855, y: 26.5, z: 480, w: 12, d: 10, h: 9.0, yaw: 0.1, balcony: true },
-    { x: 1895, y: 25.5, z: 465, w: 14, d: 11, h: 9.5, yaw: -0.2, balcony: true },
-    { x: 1860, y: 24.5, z: 545, w: 13, d: 10, h: 8.5, yaw: 0.35, balcony: true },
-
-    // Meidan / Gorgasali Square (West Bank bridgehead)
-    { x: 1835, y: 14.5, z: 575, w: 14, d: 12, h: 8.5, yaw: -0.6, balcony: true },
-    { x: 1845, y: 14.5, z: 525, w: 16, d: 12, h: 9.0, yaw: -0.4, balcony: true },
-    { x: 1820, y: 14.5, z: 545, w: 15, d: 14, h: 8.5, yaw: -0.5, balcony: false },
-
-    // Wine Ascent (Ghvini Agmarti) climbing east from Europe Square
-    { x: 1980, y: 15.0, z: 660, w: 14, d: 11, h: 8.0, yaw: 0.4, balcony: true },
-    { x: 1995, y: 15.5, z: 630, w: 15, d: 12, h: 8.5, yaw: 0.35, balcony: true },
-    { x: 1970, y: 16.0, z: 570, w: 14, d: 10, h: 8.0, yaw: -0.1, balcony: true },
-  ];
-
-  for (const h of houses) {
-    quarters.add(createOldTbilisiHouse(h.x, h.y, h.z, h.w, h.d, h.h, h.yaw, h.balcony));
-  }
-
-  return quarters;
-}
-
-/**
- * 9. Authentic Italian Cypress Trees & Caucasian Flora
- * Tall slender dark green cypresses iconic to Metekhi church and Tbilisi hillsides.
- */
-function createCypressTree(x: number, y: number, z: number, height = 11): THREE.Group {
-  const tree = new THREE.Group();
-  tree.position.set(x, y, z);
-
-  // Trunk
-  const trunk = new THREE.Mesh(G_CYL, M_TREE_TRUNK);
-  trunk.scale.set(0.35, height * 0.28, 0.35);
-  trunk.position.y = height * 0.14;
-  trunk.castShadow = true;
-  tree.add(trunk);
-
-  // Tiered slender conical evergreen foliage
-  const foliageTiers = [
-    { y: height * 0.32, h: height * 0.45, r: 1.2 },
-    { y: height * 0.52, h: height * 0.42, r: 1.0 },
-    { y: height * 0.72, h: height * 0.38, r: 0.75 },
-    { y: height * 0.88, h: height * 0.28, r: 0.45 },
-  ];
-
-  for (const tier of foliageTiers) {
-    const cone = new THREE.Mesh(G_CONE, M_CYPRESS_FOLIAGE);
-    cone.scale.set(tier.r * 2, tier.h, tier.r * 2);
-    cone.position.y = tier.y;
-    cone.castShadow = true;
-    tree.add(cone);
-  }
-
-  return tree;
-}
-
-/**
- * Broad Leafy Plane Tree for Rike Park & River Promenades
- */
-function createPlaneTree(x: number, y: number, z: number, height = 9): THREE.Group {
-  const tree = new THREE.Group();
-  tree.position.set(x, y, z);
-
-  const trunk = new THREE.Mesh(G_CYL, M_TREE_TRUNK);
-  trunk.scale.set(0.5, height * 0.45, 0.5);
-  trunk.position.y = height * 0.225;
-  trunk.castShadow = true;
-  tree.add(trunk);
-
-  const canopy = new THREE.Mesh(
-    new THREE.DodecahedronGeometry(height * 0.48, 1),
-    M_PLANE_TREE_FOLIAGE,
-  );
-  canopy.position.y = height * 0.65;
-  canopy.scale.set(1.1, 0.85, 1.1);
-  canopy.castShadow = true;
-  tree.add(canopy);
-
-  return tree;
-}
-
-/**
- * Clusters of authentic vegetation around Metekhi Church and Europe Square.
- */
-function createVegetation(heightAt: (x: number, z: number) => number): THREE.Group {
-  const veg = new THREE.Group();
-
-  // Cypresses in Metekhi Church courtyard atop the cliff
-  const churchCypresses = [
-    { x: 1870, z: 485, h: 12 },
-    { x: 1895, z: 512, h: 11 },
-    { x: 1865, z: 510, h: 13 },
-    { x: 1888, z: 478, h: 10 },
-    { x: 1858, z: 495, h: 12 },
-  ];
-  for (const c of churchCypresses) {
-    const y = heightAt(c.x, c.z);
-    veg.add(createCypressTree(c.x, y, c.z, c.h));
-  }
-
-  // Cypresses and plane trees along Rike Park promenade
-  const parkTrees = [
-    { x: 1930, z: 540, h: 10, type: 'cypress' },
-    { x: 1945, z: 520, h: 9, type: 'plane' },
-    { x: 1920, z: 490, h: 11, type: 'cypress' },
-    { x: 1935, z: 460, h: 9, type: 'plane' },
-    { x: 1955, z: 440, h: 10, type: 'cypress' },
-    { x: 1910, z: 420, h: 8, type: 'plane' },
-  ];
-  for (const t of parkTrees) {
-    const y = heightAt(t.x, t.z);
-    if (t.type === 'cypress') veg.add(createCypressTree(t.x, y, t.z, t.h));
-    else veg.add(createPlaneTree(t.x, y, t.z, t.h));
-  }
-
-  return veg;
-}
-
-/**
- * 10. Emerald Kura River (Река Кура / Мтквари)
- * Rich emerald water flowing through the canyon between vertical stone quays.
+ * 8. Emerald Kura River Water (Река Кура / Мтквари)
  */
 function createKuraRiverWater(): THREE.Group {
   const waterGroup = new THREE.Group();
@@ -1193,86 +1194,94 @@ function createKuraRiverWater(): THREE.Group {
 }
 
 /**
- * 11. Bridge of Peace (Мост Мира)
- * Modern waving glass and steel canopy pedestrian bridge.
+ * Italian Cypress Tree Helper
  */
-function createBridgeOfPeace(): THREE.Group {
-  const bridge = new THREE.Group();
-  const start = TBILISI_PEACE_BRIDGE.start;
-  const end = TBILISI_PEACE_BRIDGE.end;
-  const dx = end.x - start.x;
-  const dz = end.z - start.z;
-  const len = Math.hypot(dx, dz);
-  const yaw = Math.atan2(dx, dz);
-  const midX = (start.x + end.x) / 2;
-  const midZ = (start.z + end.z) / 2;
-  const w = TBILISI_PEACE_BRIDGE.width;
+function createCypressTree(x: number, y: number, z: number, height = 11): THREE.Group {
+  const tree = new THREE.Group();
+  tree.position.set(x, y, z);
 
-  bridge.position.set(midX, TBILISI_PEACE_BRIDGE.deckElevation, midZ);
-  bridge.rotation.y = yaw;
+  const trunk = new THREE.Mesh(G_CYL, M_TREE_TRUNK);
+  trunk.scale.set(0.35, height * 0.28, 0.35);
+  trunk.position.y = height * 0.14;
+  trunk.castShadow = true;
+  tree.add(trunk);
 
-  // Pedestrian bridge deck
-  const deck = new THREE.Mesh(G_BOX, M_STEEL_STRUCTURE);
-  deck.scale.set(w * 0.7, 0.4, len);
-  deck.castShadow = true;
-  deck.receiveShadow = true;
-  bridge.add(deck);
+  const tiers = [
+    { y: height * 0.32, h: height * 0.45, r: 1.2 },
+    { y: height * 0.52, h: height * 0.42, r: 1.0 },
+    { y: height * 0.72, h: height * 0.38, r: 0.75 },
+    { y: height * 0.88, h: height * 0.28, r: 0.45 },
+  ];
 
-  // Glass canopy arch
-  const canopy = new THREE.Mesh(G_CYL, M_CANOPY_GLASS);
-  canopy.scale.set(w * 1.1, len * 0.95, w * 0.7);
-  canopy.rotation.x = Math.PI / 2;
-  canopy.position.y = 3.6;
-  bridge.add(canopy);
-
-  // Steel framework ribs
-  for (let t = -0.4; t <= 0.4; t += 0.1) {
-    const rib = new THREE.Mesh(G_CYL, M_STEEL_STRUCTURE);
-    rib.scale.set(w * 1.12, 0.25, w * 0.72);
-    rib.rotation.x = Math.PI / 2;
-    rib.position.set(0, 3.6, t * len);
-    bridge.add(rib);
+  for (const tier of tiers) {
+    const cone = new THREE.Mesh(G_CONE, M_CYPRESS_FOLIAGE);
+    cone.scale.set(tier.r * 2, tier.h, tier.r * 2);
+    cone.position.y = tier.y;
+    cone.castShadow = true;
+    tree.add(cone);
   }
 
-  return bridge;
+  return tree;
 }
 
 /**
- * Builds and returns the complete photorealistic Tbilisi Europe Square district.
+ * Deciduous Plane Tree Helper
+ */
+function createPlaneTree(x: number, y: number, z: number, height = 9): THREE.Group {
+  const tree = new THREE.Group();
+  tree.position.set(x, y, z);
+
+  const trunk = new THREE.Mesh(G_CYL, M_TREE_TRUNK);
+  trunk.scale.set(0.5, height * 0.45, 0.5);
+  trunk.position.y = height * 0.225;
+  trunk.castShadow = true;
+  tree.add(trunk);
+
+  const canopy = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(height * 0.48, 1),
+    M_PLANE_TREE_FOLIAGE,
+  );
+  canopy.position.y = height * 0.65;
+  canopy.scale.set(1.1, 0.85, 1.1);
+  canopy.castShadow = true;
+  tree.add(canopy);
+
+  return tree;
+}
+
+/**
+ * Builds and returns the complete photorealistic Tbilisi Europe Square & Metekhi Bridge scene.
  */
 export function buildTbilisiDistrict(heightAt: (x: number, z: number) => number): THREE.Group {
   const group = new THREE.Group();
   group.name = 'tbilisi-district';
 
-  // 1. Satellite Orthophoto Ground
+  // 1. Satellite Orthophoto base
   group.add(createOrthophotoGround(heightAt));
 
-  // 2. Europe Square Roundabout & Plazas
-  group.add(createEuropeSquare(heightAt));
-
-  // 3. Metekhi Bridge across the Kura
+  // 2. Metekhi Bridge (Foregrouund - 100% matching Google Street View photo)
   group.add(createMetekhiBridge());
 
-  // 4. Metekhi Cliff & Fortress Retaining Wall
-  group.add(createMetekhiCliff(heightAt));
+  // 3. Ambient parked / driving cars on Metekhi Bridge (matching photo)
+  group.add(createBridgeAmbientVehicles());
 
-  // 5. Metekhi Church of the Dormition
-  group.add(createMetekhiChurch());
+  // 4. Gorgasali Square (Meidan) & Old Tbilisi Architecture (Midground)
+  group.add(createOldTbilisiStreet());
 
-  // 6. King Vakhtang Gorgasali Equestrian Monument
-  group.add(createGorgasaliMonument());
+  // 5. Narikala Mountain Ridge, Ancient Fortress & Kartlis Deda (Background)
+  group.add(createNarikalaRidge());
 
-  // 7. Old Tbilisi Traditional Houses with Carved Balconies
-  group.add(createOldTbilisiQuarters());
+  // 6. Rike-Narikala Aerial Cable Car (Across the sky with suspended gondolas)
+  group.add(createAerialCableCar());
 
-  // 8. Italian Cypresses & Trees
-  group.add(createVegetation(heightAt));
+  // 7. Metekhi Cliff & Church of the Dormition (East Riverbank View)
+  group.add(createMetekhiCliffAndChurch());
+
+  // 8. Europe Square Roundabout (South Approach)
+  group.add(createEuropeSquare());
 
   // 9. Emerald Kura River Water
   group.add(createKuraRiverWater());
-
-  // 10. Bridge of Peace
-  group.add(createBridgeOfPeace());
 
   return group;
 }

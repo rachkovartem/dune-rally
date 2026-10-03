@@ -6,6 +6,7 @@ import {
   TBILISI_CENTER, TBILISI_RADIUS, TBILISI_ROUNDABOUT,
   TBILISI_METEKHI_CLIFF, TBILISI_KURA_LINE, TBILISI_KURA_RIVER,
   TBILISI_HIGHWAY, TBILISI_HIGHWAY_WIDTH, TBILISI_METEKHI_BRIDGE,
+  TBILISI_NARIKALA, TBILISI_MEIDAN,
 } from './tbilisiDef';
 
 function distToPolyline(points: readonly Point2[], x: number, z: number): number {
@@ -35,16 +36,7 @@ export function tbilisiCoverAt(x: number, z: number, _height: number, slope: num
   // Outside Tbilisi district
   if (distToCenter > TBILISI_RADIUS) return null;
 
-  // 2. Kura River
-  const riverDist = distToPolyline(TBILISI_KURA_LINE, x, z);
-  if (riverDist <= TBILISI_KURA_RIVER.halfWidth) {
-    return 'water';
-  }
-  if (riverDist <= TBILISI_KURA_RIVER.halfWidth + 6) {
-    return 'rock'; // Stone embankment quays
-  }
-
-  // 3. Metekhi Bridge
+  // 2. Metekhi Bridge Road Surface: Always solid 'road' (zero tyre sinkage)
   const bridgeHit = segDist(
     x, z,
     TBILISI_METEKHI_BRIDGE.start.x, TBILISI_METEKHI_BRIDGE.start.z,
@@ -54,16 +46,28 @@ export function tbilisiCoverAt(x: number, z: number, _height: number, slope: num
     return 'road';
   }
 
-  // 4. Metekhi Cliff
-  const cliffDist = Math.hypot(x - TBILISI_METEKHI_CLIFF.center.x, z - TBILISI_METEKHI_CLIFF.center.z);
-  if (cliffDist <= TBILISI_METEKHI_CLIFF.radius) {
-    if (slope > 0.4 || cliffDist > TBILISI_METEKHI_CLIFF.radius - 8) {
-      return 'rock';
-    }
-    return 'gravel'; // Courtyard around Metekhi church
+  // 3. Meidan Square at North bridgehead: Solid 'road'
+  const meidanDist = Math.hypot(x - TBILISI_MEIDAN.center.x, z - TBILISI_MEIDAN.center.z);
+  if (meidanDist <= 28) {
+    return 'road';
   }
 
-  // 5. Europe Square Roundabout & Island
+  // 4. Narikala Mountain Ridge: Forest and rock
+  if (z < TBILISI_NARIKALA.baseZ) {
+    if (slope > 0.45) return 'rock';
+    return 'forest';
+  }
+
+  // 5. Kura River
+  const riverDist = distToPolyline(TBILISI_KURA_LINE, x, z);
+  if (riverDist <= TBILISI_KURA_RIVER.halfWidth) {
+    return 'water';
+  }
+  if (riverDist <= TBILISI_KURA_RIVER.halfWidth + 6) {
+    return 'rock'; // Stone embankment quays
+  }
+
+  // 6. Europe Square Roundabout & Island
   const rbDist = Math.hypot(x - TBILISI_ROUNDABOUT.center.x, z - TBILISI_ROUNDABOUT.center.z);
   if (rbDist <= TBILISI_ROUNDABOUT.outerRadius + 3) {
     if (rbDist <= TBILISI_ROUNDABOUT.innerRadius) {
@@ -72,9 +76,13 @@ export function tbilisiCoverAt(x: number, z: number, _height: number, slope: num
     return 'road'; // Asphalt circle
   }
 
-  // 6. Rike Park & Plaza
-  if (z < TBILISI_ROUNDABOUT.center.z - 20) {
-    return 'grass';
+  // 7. Metekhi Cliff
+  const cliffDist = Math.hypot(x - TBILISI_METEKHI_CLIFF.center.x, z - TBILISI_METEKHI_CLIFF.center.z);
+  if (cliffDist <= TBILISI_METEKHI_CLIFF.radius) {
+    if (slope > 0.4 || cliffDist > TBILISI_METEKHI_CLIFF.radius - 8) {
+      return 'rock';
+    }
+    return 'gravel';
   }
 
   if (slope > 0.5) return 'rock';

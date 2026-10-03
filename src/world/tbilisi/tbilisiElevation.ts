@@ -1,11 +1,12 @@
 // src/world/tbilisi/tbilisiElevation.ts
-// Heightfield shaping for the Tbilisi Europe Square district, Kura river gorge, Metekhi cliff, and highway.
+// Heightfield shaping for Tbilisi Metekhi Bridge, Kura gorge, Meidan, Narikala Mountain ridge, and Europe Square.
 import { lerp, smoothstep } from '../blend';
 import { segDist, type Point2 } from '../polyline';
 import {
   TBILISI_CENTER, TBILISI_RADIUS, TBILISI_ROUNDABOUT,
   TBILISI_METEKHI_CLIFF, TBILISI_KURA_LINE, TBILISI_KURA_RIVER,
   TBILISI_HIGHWAY, TBILISI_HIGHWAY_WIDTH, TBILISI_METEKHI_BRIDGE,
+  TBILISI_NARIKALA, TBILISI_MEIDAN,
 } from './tbilisiDef';
 
 function distToPolyline(points: readonly Point2[], x: number, z: number): { dist: number; t: number; segIdx: number } {
@@ -25,10 +26,12 @@ function distToPolyline(points: readonly Point2[], x: number, z: number): { dist
 
 /**
  * Modifies ground height for the Tbilisi district:
- * - Carves the deep gorge for the Kura river with steep quay walls
- * - Raises the dramatic Metekhi cliff (26.5m)
- * - Levels the Europe Square roundabout and plazas (14.5m)
- * - Grades the highway connecting Europe Square to the desert rally
+ * - Carves the deep Kura river gorge with steep quay walls
+ * - Elevates Metekhi Bridge deck (14.50m) continuously with 100% solid road surface from end to end
+ * - Levels Europe Square and Gorgasali Square (Meidan) at 14.50m
+ * - Raises the dramatic Sololaki / Narikala mountain ridge (86m) behind Old Tbilisi
+ * - Raises the rocky Metekhi cliff (28m) on the east riverbank
+ * - Grades the connecting highway to the desert rally map
  */
 export function applyTbilisiHeight(baseHeight: number, x: number, z: number): number {
   const distToCenter = Math.hypot(x - TBILISI_CENTER.x, z - TBILISI_CENTER.z);
@@ -42,7 +45,7 @@ export function applyTbilisiHeight(baseHeight: number, x: number, z: number): nu
   }
 
   // Base urban terrace elevation
-  let urbanHeight = 14.5;
+  let urbanHeight = 14.50;
 
   // 2. Kura River Canyon (глубокий каньон реки Куры)
   const river = distToPolyline(TBILISI_KURA_LINE, x, z);
@@ -60,15 +63,24 @@ export function applyTbilisiHeight(baseHeight: number, x: number, z: number): nu
     }
   }
 
-  // 3. Metekhi Cliff (Скала Метехи)
-  // Steep dramatic bluff rising above the river on the south-east side
-  const cliffDist = Math.hypot(x - TBILISI_METEKHI_CLIFF.center.x, z - TBILISI_METEKHI_CLIFF.center.z);
-  if (cliffDist < TBILISI_METEKHI_CLIFF.radius + 15) {
-    const cliffT = 1 - smoothstep(TBILISI_METEKHI_CLIFF.radius - 12, TBILISI_METEKHI_CLIFF.radius + 8, cliffDist);
-    urbanHeight = Math.max(urbanHeight, lerp(urbanHeight, TBILISI_METEKHI_CLIFF.topElevation, cliffT));
+  // 3. Metekhi Bridge Roadway Surface (Мост Метехи)
+  // CRITICAL: The bridge deck MUST be solid at 14.50m across its entire length so cars never fall through
+  const bridgeHit = segDist(
+    x, z,
+    TBILISI_METEKHI_BRIDGE.start.x, TBILISI_METEKHI_BRIDGE.start.z,
+    TBILISI_METEKHI_BRIDGE.end.x, TBILISI_METEKHI_BRIDGE.end.z,
+  );
+  if (bridgeHit.dist <= TBILISI_METEKHI_BRIDGE.width / 2) {
+    urbanHeight = Math.max(urbanHeight, TBILISI_METEKHI_BRIDGE.deckElevation);
   }
 
-  // 4. Europe Square Roundabout & Center Island (Flat terrace for spawn & driving)
+  // 4. Gorgasali Square (Meidan) at North bridgehead
+  const meidanDist = Math.hypot(x - TBILISI_MEIDAN.center.x, z - TBILISI_MEIDAN.center.z);
+  if (meidanDist <= 28) {
+    urbanHeight = Math.max(urbanHeight, TBILISI_MEIDAN.elevation);
+  }
+
+  // 5. Europe Square Roundabout at South bridgehead
   const rbDist = Math.hypot(x - TBILISI_ROUNDABOUT.center.x, z - TBILISI_ROUNDABOUT.center.z);
   if (rbDist <= TBILISI_ROUNDABOUT.outerRadius) {
     urbanHeight = TBILISI_ROUNDABOUT.roadElevation;
@@ -77,27 +89,33 @@ export function applyTbilisiHeight(baseHeight: number, x: number, z: number): nu
     urbanHeight = lerp(TBILISI_ROUNDABOUT.roadElevation, urbanHeight, rbBlend);
   }
 
-  // 5. Metekhi Bridge Road Surface Approach
-  const bridgeHit = segDist(
-    x, z,
-    TBILISI_METEKHI_BRIDGE.start.x, TBILISI_METEKHI_BRIDGE.start.z,
-    TBILISI_METEKHI_BRIDGE.end.x, TBILISI_METEKHI_BRIDGE.end.z,
-  );
-  if (bridgeHit.dist <= TBILISI_METEKHI_BRIDGE.width / 2) {
-    // Keep approach ramps flush with deck
-    if (bridgeHit.t < 0.15 || bridgeHit.t > 0.85) {
-      urbanHeight = Math.max(urbanHeight, TBILISI_METEKHI_BRIDGE.deckElevation);
-    }
+  // 6. Sololaki / Narikala Mountain Ridge (Гора Нарикала)
+  // Towering green Caucasus mountain rising behind Old Tbilisi to 86m
+  if (z < TBILISI_NARIKALA.baseZ) {
+    const hillZ = TBILISI_NARIKALA.baseZ - z;
+    const progress = Math.min(1, Math.max(0, hillZ / (TBILISI_NARIKALA.baseZ - TBILISI_NARIKALA.ridgeZ)));
+    const mountainT = smoothstep(0, 1, progress);
+    const xDist = Math.abs(x - 1860);
+    const widthFade = 1 - smoothstep(100, 180, xDist);
+    const mountainH = lerp(14.50, TBILISI_NARIKALA.peakHeight, mountainT);
+    urbanHeight = Math.max(urbanHeight, lerp(urbanHeight, mountainH, widthFade));
   }
 
-  // 6. Blend urban sector into surrounding terrain
+  // 7. Metekhi Cliff (Скала Метехи) on East riverbank
+  const cliffDist = Math.hypot(x - TBILISI_METEKHI_CLIFF.center.x, z - TBILISI_METEKHI_CLIFF.center.z);
+  if (cliffDist < TBILISI_METEKHI_CLIFF.radius + 15) {
+    const cliffT = 1 - smoothstep(TBILISI_METEKHI_CLIFF.radius - 12, TBILISI_METEKHI_CLIFF.radius + 8, cliffDist);
+    urbanHeight = Math.max(urbanHeight, lerp(urbanHeight, TBILISI_METEKHI_CLIFF.topElevation, cliffT));
+  }
+
+  // 8. Blend urban sector into surrounding terrain
   let result = urbanHeight;
   if (distToCenter > TBILISI_RADIUS - 30) {
     const sectorBlend = smoothstep(TBILISI_RADIUS - 30, TBILISI_RADIUS, distToCenter);
     result = lerp(urbanHeight, baseHeight, sectorBlend);
   }
 
-  // 7. Connecting Highway grading
+  // 9. Connecting Highway grading
   if (hw.dist < highwayReach) {
     const totalSegs = TBILISI_HIGHWAY.length - 1;
     const progress = Math.min(1, Math.max(0, (hw.segIdx + hw.t) / totalSegs));

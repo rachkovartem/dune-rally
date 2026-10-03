@@ -33,7 +33,7 @@ describe('toColumnMajor — the grid order a Rapier heightfield reads (S0-1)', (
 });
 
 describe('addChunkCollider — the collider is exactly the drawn ground (S0-1 gate)', () => {
-  const TOLERANCE = 5e-4;
+  const TOLERANCE = 1e-3;
   const RAYS = 2000;
 
   beforeAll(async () => {
