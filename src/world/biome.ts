@@ -13,6 +13,7 @@ import { inPoort, quarryPartAt } from './terrain/cuts';
 import { nearestTrack, onTrackStep } from './terrain/tracks';
 import { nearestRoad, ROAD_HALF, ROAD_SHOULDER } from './worldDef';
 import { forestWeight } from './terrain/forest';
+import { tbilisiCoverAt } from './tbilisi/tbilisiBiome';
 
 // Coverage palette (hex; converted to vertex colours by the mesh builder).
 export const COVER = {
@@ -105,6 +106,9 @@ export function createBiome(seed: number): Biome {
     if (canyon) return 'rock';
     const quarry = quarryPartAt(x, z);
     if (quarry) return quarry === 'wall' && slope > STEEP_ROCK ? 'rock' : 'gravel';
+
+    const tbilisi = tbilisiCoverAt(x, z, height, slope);
+    if (tbilisi !== null) return tbilisi;
 
     // The salt first: where the river opens onto the pan, its sand spreads out as a fan.
     const pan = panWeight(x, z);

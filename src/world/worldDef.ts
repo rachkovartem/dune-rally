@@ -6,7 +6,7 @@ import { CHUNK_SIZE } from './chunk';
 import { createNearestSegmentIndex } from './featureIndex';
 import { nearestOnPolyline, type Point2 } from './polyline';
 import {
-  DIE_SPRONG, EERSTE_BULT, FARM_GATE, MAP_SIZE, NURSERY_WHOOPS, ROAD_SHOULDER_WIDTH, ROAD_WIDTH, SPAWN_GRID, SPAWN_RISE,
+  DIE_SPRONG, EERSTE_BULT, MAP_SIZE, NURSERY_WHOOPS, ROAD_SHOULDER_WIDTH, ROAD_WIDTH, SPAWN_GRID, SPAWN_RISE,
 } from './mapLayout';
 import { ROAD_LINES } from './terrain/roads';
 import { padAt } from './terrain/pads';
@@ -22,6 +22,8 @@ export { smoothstep, lerp } from './blend';
 export { borderDistance, borderFaceDepth, SOLID_FOOT_DEPTH } from './terrain/border';
 export { rockKindAt, type RockKind } from './terrain/landforms';
 import { DORP_BUILDINGS } from './dorpLayout';
+import { TBILISI_BUILDINGS } from './tbilisi/tbilisiBuildings';
+import { TBILISI_SPAWN } from './tbilisi/tbilisiDef';
 import { treesInChunk, type TreeFeature } from './forestTrees';
 
 export { type TreeFeature } from './forestTrees';
@@ -29,8 +31,8 @@ export { type TreeFeature } from './forestTrees';
 export const WORLD_SIZE = MAP_SIZE;
 export const WORLD_CHUNKS = WORLD_SIZE / CHUNK_SIZE;
 
-/** Centre of the spawn rise (Suidhek); the server builds the ground around it before anyone joins. */
-export const SPAWN = { x: SPAWN_RISE.x, z: SPAWN_RISE.z } as const;
+/** Centre of the spawn (Europe Square, Tbilisi); the server builds the ground around it before anyone joins. */
+export const SPAWN = { x: TBILISI_SPAWN.x, z: TBILISI_SPAWN.z } as const;
 
 // ── spawn slots ───────────────────────────────────────────────────────
 /** Where a car starts and which way it faces: forward = (sin yaw, 0, cos yaw), so north (−z) is π. */
@@ -52,8 +54,8 @@ export function spawnPoseFor(slot: number): SpawnPose {
   const column = index % SPAWN_GRID.columns;
   const row = Math.floor(index / SPAWN_GRID.columns);
   return {
-    x: FARM_GATE.x + (column - (SPAWN_GRID.columns - 1) / 2) * SPAWN_GRID.columnSpacing,
-    z: FARM_GATE.z + SPAWN_GRID.frontRowBehindGate + row * SPAWN_GRID.rowSpacing,
+    x: TBILISI_SPAWN.x + (column - (SPAWN_GRID.columns - 1) / 2) * SPAWN_GRID.columnSpacing,
+    z: TBILISI_SPAWN.z + (row - (SPAWN_GRID.rows - 1) / 2) * SPAWN_GRID.rowSpacing,
     yaw: NORTH_YAW,
   };
 }
@@ -102,6 +104,7 @@ const TRACK_CLEARANCE = 2;
  */
 export function isPropExcluded(x: number, z: number): boolean {
   if (Math.hypot(x - SPAWN_RISE.x, z - SPAWN_RISE.z) < SPAWN_RISE.top + SPAWN_CLEARANCE) return true;
+  if (Math.hypot(x - TBILISI_SPAWN.x, z - TBILISI_SPAWN.z) < 180) return true;
   if (panInsideDistance(x, z) >= 0 || padAt(x, z) !== null || inEersteBultLanding(x, z)) return true;
   if (inDuneField(x, z) || inWhoopsLane(x, z) || inDieSprongCorridor(x, z)) return true;
   if (inQuarryLane(x, z) || nearestTrack(x, z, TRACK_CLEARANCE) !== null) return true;
@@ -268,7 +271,7 @@ export function featuresInChunk(cx: number, cz: number): ChunkFeatures {
   const minZ = cz * CHUNK_SIZE;
   const maxZ = minZ + CHUNK_SIZE;
 
-  const buildings = DORP_BUILDINGS.filter(
+  const buildings = [...DORP_BUILDINGS, ...TBILISI_BUILDINGS].filter(
     (b) => b.x >= minX && b.x < maxX && b.z >= minZ && b.z < maxZ,
   );
 

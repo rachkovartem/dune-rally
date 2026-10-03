@@ -51,6 +51,7 @@ import { setHighTierPropsVisible, setPropMaterials, updatePropVisibility } from 
 import { boulderRockTexture, GRASS_MODEL_ID, POLY_PROP_IDS, polyPropUrl, registerPolyProps } from './render/polyProps';
 import { FarTerrain, meanTextureColor, type LinearColor } from './render/farTerrain';
 import { Grass } from './render/grass';
+import { buildTbilisiDistrict } from './render/tbilisi/tbilisiLandmarks';
 import { otherQuality } from './render/qualityTiers';
 import { SRGBColorSpace, RepeatWrapping, Object3D, Vector3, type DataTexture, type Group, type Texture } from 'three';
 import { readSavedCarId, saveCarId } from './ui/carChoice';
@@ -407,6 +408,9 @@ terrain.requestFarGrid(FAR_GRID_STEP, FAR_GRID_MARGIN).then((grid) => {
   }
   console.error('[far terrain]', error);
 });
+
+const tbilisiDistrict = buildTbilisiDistrict((x, z) => terrainSurfaceHeight(heightField, x, z));
+ctx.scene.add(tbilisiDistrict);
 
 // Each player starts in the spawn slot the server gave them, so the local car and the server's
 // copy of it start at the same spot, facing north.

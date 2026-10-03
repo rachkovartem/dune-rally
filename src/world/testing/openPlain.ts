@@ -6,6 +6,8 @@ import { applyLandforms } from '../terrain/landforms';
 import { nearestOnPolyline } from '../polyline';
 import { nearestRoad } from '../worldDef';
 import { BOSVELD, DAM, DORP_YARD, GRUISGAT, SANDRIVIER, SOUTPAN, SOUTPAN_BLEND, WIT_DUINE, type Box } from '../mapLayout';
+import { TBILISI_CENTER, TBILISI_RADIUS, TBILISI_HIGHWAY, TBILISI_HIGHWAY_WIDTH } from '../tbilisi/tbilisiDef';
+import { segDist } from '../polyline';
 
 const CLEARANCE = 100;
 const RIVER_SEGMENTS = SANDRIVIER.line.slice(0, -1).map((_point, segmentIndex) => segmentIndex);
@@ -15,6 +17,14 @@ const nearBox = (box: Box, x: number, z: number, margin: number): boolean =>
 
 const nearPoint = (point: { x: number; z: number }, x: number, z: number, radius: number): boolean =>
   Math.hypot(x - point.x, z - point.z) < radius;
+
+function nearTbilisiHighway(x: number, z: number, reach: number): boolean {
+  for (let i = 0; i < TBILISI_HIGHWAY.length - 1; i++) {
+    const s = segDist(x, z, TBILISI_HIGHWAY[i].x, TBILISI_HIGHWAY[i].z, TBILISI_HIGHWAY[i + 1].x, TBILISI_HIGHWAY[i + 1].z);
+    if (s.dist < reach) return true;
+  }
+  return false;
+}
 
 export function isOpenPlain(x: number, z: number): boolean {
   if (borderAt(x, z).surface !== null || borderFaceDepth(x, z) > -CLEARANCE) return false;
@@ -29,5 +39,7 @@ export function isOpenPlain(x: number, z: number): boolean {
   if (nearPoint(DAM.water, x, z, DAM.wall.length + CLEARANCE)) return false;
   if (nearPoint(DORP_YARD, x, z, DORP_YARD.width + CLEARANCE)) return false;
   if (nearPoint(GRUISGAT, x, z, GRUISGAT.width + CLEARANCE)) return false;
+  if (Math.hypot(x - TBILISI_CENTER.x, z - TBILISI_CENTER.z) < TBILISI_RADIUS + 5) return false;
+  if (nearTbilisiHighway(x, z, TBILISI_HIGHWAY_WIDTH / 2 + 15)) return false;
   return nearestRoad(x, z, 30) === null;
 }
